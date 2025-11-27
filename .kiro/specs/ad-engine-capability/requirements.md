@@ -459,13 +459,32 @@ result = await mcp_client.call_tool(
 
 **用户故事**：作为 Unified AI Agent，我需要创建和分析 A/B 测试，以便找到最佳素材。
 
+#### 统计方法说明
+
+A/B 测试采用 **卡方检验（Chi-Square Test）** 判断统计显著性：
+
+```
+统计方法：卡方检验（Chi-Square Test）
+显著性水平：α = 0.05（对应 95% 置信度）
+最小样本量：每个变体至少 100 次转化事件
+
+判定条件：
+- p-value < 0.05 → 差异显著，可宣布获胜者
+- p-value >= 0.05 → 差异不显著，建议继续测试或增加样本量
+
+获胜者判定：
+- 转化率差异显著 + 转化率更高的变体 → 获胜者
+- 若样本量不足，返回"数据不足，建议继续测试"
+```
+
 #### 验收标准
 
 1. WHEN 调用 create_ab_test action THEN Ad Engine Capability SHALL 创建 A/B 测试 Campaign
 2. WHEN 测试创建 THEN Ad Engine Capability SHALL 为每个素材分配相等预算
-3. WHEN 调用 analyze_ab_test action THEN Ad Engine Capability SHALL 分析测试结果
-4. WHEN 分析完成 THEN Ad Engine Capability SHALL 识别获胜素材（统计显著性 > 95%）
-5. WHEN 识别获胜者 THEN Ad Engine Capability SHALL 提供优化建议
+3. WHEN 调用 analyze_ab_test action THEN Ad Engine Capability SHALL 使用卡方检验分析测试结果
+4. WHEN 分析完成且样本充足 THEN Ad Engine Capability SHALL 识别获胜素材（p-value < 0.05）
+5. WHEN 样本不足（转化 < 100） THEN Ad Engine Capability SHALL 返回"数据不足，建议继续测试"
+6. WHEN 识别获胜者 THEN Ad Engine Capability SHALL 提供优化建议
 
 ---
 
@@ -575,8 +594,9 @@ result = await mcp_client.call_tool(
 
 ### AI 模型
 
-- **文案生成**：Gemini 2.5 Flash
-- **意图识别**：Gemini 2.5 Flash
+- **文案生成**：Gemini 2.5 Pro
+- **策略分析**：Gemini 2.5 Pro
+- **数据理解**：Gemini 2.5 Flash
 
 ### 部署约束
 

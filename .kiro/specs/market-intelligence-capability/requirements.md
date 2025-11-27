@@ -520,8 +520,8 @@ result = await mcp_client.call_tool(
 
 ### AI 模型
 
-- **策略生成**：Gemini 2.5 Flash
-- **素材分析**：Gemini 2.5 Flash Vision
+- **策略生成**：Gemini 2.5 Pro
+- **素材分析**：Gemini 2.5 Flash（图片/视频理解）
 - **文本分析**：Gemini 2.5 Flash
 
 ### 技术栈

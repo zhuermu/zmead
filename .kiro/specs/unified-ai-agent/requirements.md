@@ -23,7 +23,7 @@
 │                                                         │
 │  ┌───────────────────────────────────────────────┐    │
 │  │         对话理解与意图识别                     │    │
-│  │      (Gemini 2.5 Flash / Claude 4.5)          │    │
+│  │           (Gemini 2.5 Pro)                    │    │
 │  └───────────────────────────────────────────────┘    │
 │                        │                               │
 │                        ▼                               │
@@ -514,7 +514,11 @@ Unified AI Agent 的所有接口协议详见：**[INTERFACES.md](../INTERFACES.m
 ### 核心框架
 
 - **Agent 框架**：LangGraph（LangChain 生态的状态机框架）
-- **LLM 模型**：Gemini 2.5 Flash（主）/ AWS Bedrock Claude 3.5 Sonnet（备）
+- **LLM 模型**：
+  - Gemini 2.5 Pro（Chat 对话、MCP Tools 调用）
+  - Gemini 2.5 Flash（图片/视频理解、素材分析）
+  - Gemini Imagen 3（广告图片生成）
+  - Gemini Veo 3.1（广告视频生成）
 - **MCP 通信**：MCP SDK (Python)
 - **后端框架**：FastAPI (Python 3.11+)
 - **WebSocket**：FastAPI WebSocket + LangGraph streaming
@@ -715,7 +719,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
 # 初始化 LLM
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
 
 # Router 节点：意图识别
 async def router_node(state: AgentState) -> AgentState:

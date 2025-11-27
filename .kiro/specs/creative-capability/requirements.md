@@ -129,7 +129,7 @@ class CreativeCapability:
 #### 验收标准
 
 1. WHEN 用户粘贴 TikTok 广告链接 THEN Creative Agent SHALL 提取广告素材
-2. WHEN 素材提取成功 THEN Creative Agent SHALL 使用 Gemini Vision 分析构图、色彩、卖点
+2. WHEN 素材提取成功 THEN Creative Agent SHALL 使用 Gemini 2.5 Flash 分析构图、色彩、卖点
 3. WHEN 分析完成 THEN Creative Agent SHALL 显示分析结果（构图、色彩、卖点、文案结构）
 4. WHEN 分析失败 THEN Creative Agent SHALL 显示错误提示并建议手动上传
 5. WHEN 用户保存分析结果 THEN Creative Agent SHALL 存储分析数据供后续使用
@@ -143,10 +143,10 @@ class CreativeCapability:
 #### 验收标准
 
 1. WHEN 用户点击"生成素材"按钮 THEN Creative Agent SHALL 显示生成配置选项
-2. WHEN 用户选择生成数量（3/10 张） THEN Creative Agent SHALL 调用 AWS Bedrock Stable Diffusion XL
+2. WHEN 用户选择生成数量（3/10 张） THEN Creative Agent SHALL 调用 Gemini Imagen 3
 3. WHEN 生成过程中 THEN Creative Agent SHALL 显示进度条和预计时间
 4. WHEN 生成完成 THEN Creative Agent SHALL 显示所有生成的图片
-5. WHEN 生成失败 THEN Creative Agent SHALL 自动切换到 Gemini Imagen 3 重试
+5. WHEN 生成失败 THEN Creative Agent SHALL 自动重试最多 3 次
 
 ---
 
@@ -182,12 +182,35 @@ class CreativeCapability:
 
 **用户故事**：作为一个用户，我想要看到 AI 对素材的评分，以便选择最佳素材。
 
+#### 评分机制说明
+
+素材评分采用 **AI 多维度评估 + 加权计算** 的方式：
+
+```
+总分 = 视觉冲击力 × 0.3 + 构图平衡 × 0.25 + 色彩和谐 × 0.25 + 文案清晰 × 0.2
+
+评分流程：
+1. 调用 Gemini 2.5 Flash 分析素材
+2. AI 输出各维度分数（0-100）和分析说明
+3. 系统计算加权总分
+4. 存储评分结果到 User Portal
+```
+
+**评分维度定义：**
+
+| 维度 | 权重 | 评估标准 |
+|------|------|---------|
+| 视觉冲击力 | 30% | 画面是否吸引眼球、主体是否突出 |
+| 构图平衡 | 25% | 元素布局是否合理、视觉重心是否稳定 |
+| 色彩和谐 | 25% | 配色是否协调、对比度是否适中 |
+| 文案清晰 | 20% | 文字是否可读、信息是否清晰（无文字则默认满分） |
+
 #### 验收标准
 
-1. WHEN 素材生成完成 THEN Creative Agent SHALL 使用 Gemini Vision 分析素材质量
-2. WHEN 分析完成 THEN Creative Agent SHALL 显示 0-100 分的评分
-3. WHEN 显示评分 THEN Creative Agent SHALL 显示评分维度（视觉冲击力、构图平衡、色彩和谐、文案清晰）
-4. WHEN 用户点击评分 THEN Creative Agent SHALL 显示详细分析报告
+1. WHEN 素材生成完成 THEN Creative Agent SHALL 使用 Gemini 2.5 Flash 分析素材质量
+2. WHEN 分析完成 THEN Creative Agent SHALL 显示 0-100 分的加权总分
+3. WHEN 显示评分 THEN Creative Agent SHALL 显示各评分维度及其分数
+4. WHEN 用户点击评分 THEN Creative Agent SHALL 显示详细分析报告（含 AI 分析说明）
 5. WHEN 素材列表显示 THEN Creative Agent SHALL 按评分从高到低排序
 
 ---
@@ -206,17 +229,17 @@ class CreativeCapability:
 
 ---
 
-### 需求 9：使用限额控制
+### 需求 9：Credit 余额控制
 
-**用户故事**：作为系统，我需要根据用户订阅控制素材生成次数。
+**用户故事**：作为系统，我需要根据用户 Credit 余额控制素材生成。
 
 #### 验收标准
 
-1. WHEN 免费版用户生成素材 THEN Creative Agent SHALL 检查每日限额（3 次）
-2. WHEN 用户达到限额 THEN Creative Agent SHALL 拒绝生成并显示升级提示
-3. WHEN 付费版用户生成素材 THEN Creative Agent SHALL 允许无限制生成
-4. WHEN 每日 0 点 THEN Creative Agent SHALL 重置免费版用户的每日限额
-5. WHEN 用户升级订阅 THEN Creative Agent SHALL 立即解除限额
+1. WHEN 用户请求生成素材 THEN Creative Agent SHALL 检查 Credit 余额是否足够
+2. WHEN Credit 余额不足 THEN Creative Agent SHALL 返回错误码 6011 并提示充值
+3. WHEN Credit 余额充足 THEN Creative Agent SHALL 执行生成并扣减 Credit
+4. WHEN 生成失败 THEN Creative Agent SHALL 退还已扣减的 Credit
+5. WHEN 批量生成（10张以上） THEN Creative Agent SHALL 享受 8 折优惠（0.4 credits/张）
 
 ---
 
@@ -284,9 +307,10 @@ class CreativeCapability:
 ## 技术约束（Technical Constraints）
 
 - AI 模型：
-  - 对话理解：Gemini 2.5 Flash
-  - 图片生成：AWS Bedrock Stable Diffusion XL（主）+ Gemini Imagen 3（备）
-  - 素材分析：Gemini 2.5 Flash Vision
+  - 图片生成：Gemini Imagen 3
+  - 视频生成：Gemini Veo 3.1（MVP 阶段暂不实现）
+  - 素材分析：Gemini 2.5 Flash（图片/视频理解）
+  - MCP 调用：Gemini 2.5 Pro
 - 通信协议：MCP (Model Context Protocol) + A2A
 - 数据存储：通过 User Portal API（不直接访问数据库）
 - 文件存储：AWS S3（通过 User Portal）
@@ -331,27 +355,4 @@ Creative Agent 作为 MCP Client，调用 User Portal 提供的工具：
 }
 ```
 
-Creative Agent 同时作为 MCP Server，提供工具给其他 Agent：
-
-```json
-{
-  "server_tools": [
-    {
-      "name": "generate_creative",
-      "description": "生成广告素材",
-      "parameters": {
-        "product_url": "string",
-        "style": "string",
-        "count": "integer"
-      }
-    },
-    {
-      "name": "analyze_creative",
-      "description": "分析素材质量",
-      "parameters": {
-        "creative_id": "string"
-      }
-    }
-  ]
-}
-```
+**注意**：Creative Capability 不作为 MCP Server，所有能力模块的数据存储和访问都通过 User Portal 的 MCP Server 统一管理。Unified AI Agent 通过 Capability API 直接调用 Creative Capability 的功能。

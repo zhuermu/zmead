@@ -495,13 +495,28 @@ result = await mcp_client.call_tool(
 
 **用户故事**：作为 Unified AI Agent，我需要创建 A/B 测试，以便找到最佳落地页版本。
 
+#### 统计方法说明
+
+落地页 A/B 测试采用 **卡方检验（Chi-Square Test）** 判断统计显著性：
+
+```
+统计方法：卡方检验（Chi-Square Test）
+显著性水平：α = 0.05（对应 95% 置信度）
+最小样本量：每个变体至少 100 次转化事件
+
+流量分配：
+- 随机分配（50/50 或按用户指定比例）
+- 使用 cookie 保持用户会话一致性
+```
+
 #### 验收标准
 
 1. WHEN 调用 create_ab_test action THEN Landing Page Capability SHALL 创建多个变体
-2. WHEN 测试开始 THEN Landing Page Capability SHALL 随机分配流量
-3. WHEN 调用 analyze_ab_test action THEN Landing Page Capability SHALL 分析转化率数据
-4. WHEN 分析完成 THEN Landing Page Capability SHALL 识别获胜变体（统计显著性 > 95%）
-5. WHEN 测试结束 THEN Landing Page Capability SHALL 提供使用建议
+2. WHEN 测试开始 THEN Landing Page Capability SHALL 随机分配流量（保持会话一致性）
+3. WHEN 调用 analyze_ab_test action THEN Landing Page Capability SHALL 使用卡方检验分析转化率数据
+4. WHEN 分析完成且样本充足 THEN Landing Page Capability SHALL 识别获胜变体（p-value < 0.05）
+5. WHEN 样本不足（转化 < 100） THEN Landing Page Capability SHALL 返回"数据不足，建议继续测试"
+6. WHEN 测试结束 THEN Landing Page Capability SHALL 提供使用建议
 
 ---
 
@@ -587,10 +602,12 @@ result = await mcp_client.call_tool(
 
 ### 性能需求
 
-1. Landing Page Capability SHALL 在 10 秒内生成落地页
+1. Landing Page Capability SHALL 在 30 秒内生成落地页（包含 AI 文案 + 配图生成）
 2. Landing Page Capability SHALL 确保落地页加载时间 < 2 秒
 3. Landing Page Capability SHALL 优化图片大小（< 500KB）
 4. Landing Page Capability SHALL 支持 5 个并发生成任务
+
+**性能说明**：落地页生成包含多个 AI 调用步骤（产品信息提取 → 文案生成 → 配图生成 → 页面渲染），因此需要 30 秒的时间预算。
 
 ### 质量需求
 
@@ -619,9 +636,10 @@ result = await mcp_client.call_tool(
 
 ### AI 模型
 
-- **文案优化**：Gemini 2.5 Flash
+- **文案优化**：Gemini 2.5 Pro
 - **翻译**：Gemini 2.5 Flash
 - **内容提取**：Gemini 2.5 Flash
+- **图片生成**：Gemini Imagen 3（落地页图片）
 
 ### 技术栈
 

@@ -9,10 +9,10 @@ AAE 主站是整个 Automated Ad Engine 系统的**用户入口和核心数据�
 - **AAE System**：Automated Ad Engine，自动化广告引擎系统
 - **User Portal**：用户门户，AAE 系统的核心数据管理平台
 - **Ad Account**：广告账户，用户在 Meta/TikTok/Google 的广告账户
-- **Subscription**：订阅，用户的付费套餐
+- **Credit**：积分，用户用于支付 AI 服务和增值功能的虚拟货币
 - **OAuth Token**：OAuth 令牌，用于访问广告平台 API 的授权凭证
 - **Dashboard**：仪表板，用户登录后的主页面
-- **Billing**：计费系统，处理订阅和支付
+- **Billing**：计费系统，处理 Credit 充值和支付
 - **Creative Library**：素材库，存储所有生成的广告素材
 - **Campaign Management**：投放管理，管理所有广告投放数据
 - **Landing Page Library**：落地页库，存储所有生成的落地页
@@ -137,109 +137,179 @@ User Portal 作为用户入口和核心数据管理平台，包含以下功能�
 
 ---
 
-### 需求 3：订阅管理（Credit 计费模式）
+### 需求 3：Credit 计费模式
 
-**用户故事**：作为一个用户，我想要订阅付费套餐获取 Credit 额度，以便使用 AI 功能。
+**用户故事**：作为一个用户，我想要通过 Credit 按需付费，以便灵活使用 AI 功能。
 
 #### 计费模式说明
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Credit 计费模式                              │
+│                    Credit 计费模式（纯 Credit）                   │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  套餐类型：                                                      │
-│  ┌─────────────────┐    ┌─────────────────┐                    │
-│  │   标准版 ¥199   │    │   专业版 ¥1999  │                    │
-│  │                 │    │                 │                    │
-│  │  30,000 Credits │    │ 400,000 Credits │                    │
-│  │     /月         │    │      /月        │                    │
-│  └─────────────────┘    └─────────────────┘                    │
+│  核心原则：无订阅、按需付费、统一 Credit 结算                     │
 │                                                                 │
-│  Credit 消耗规则（可配置）：                                      │
+│  🎁 新用户注册赠送（可配置）：                                    │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  默认 500 Credits（永不过期）                            │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  Credit 消耗规则（后台可动态配置，支持小数）：                     │
 │  ┌────────────────────────────────────────┐                    │
-│  │ 操作类型              │ Credit 消耗     │                    │
+│  │ 消耗类型              │ Credit 消耗     │                    │
 │  ├────────────────────────────────────────┤                    │
-│  │ 普通对话（~2K tokens） │ 1 credit       │                    │
-│  │ 复杂分析（~10K tokens）│ 5 credits      │                    │
-│  │ 素材生成（每张图）     │ 2 credits      │                    │
-│  │ 落地页生成            │ 30 credits     │                    │
-│  │ 广告策略分析          │ 10 credits     │                    │
-│  │ 竞品分析              │ 15 credits     │                    │
+│  │ AI 对话（Gemini Pro） │ 按 token 计算   │                    │
+│  │ 图片生成（Imagen 3）  │ 0.5 credits    │                    │
+│  │ 视频生成（Veo 3.1）   │ 5 credits      │                    │
+│  │ 落地页生成            │ 15 credits     │                    │
+│  │ 竞品深度分析          │ 10 credits     │                    │
+│  │ 投放优化建议          │ 20 credits     │                    │
 │  └────────────────────────────────────────┘                    │
 │                                                                 │
-│  超额计费：                                                      │
-│  - Credit 用完后按 ¥0.01/credit 实时扣费                        │
-│  - 需用户预先充值或绑定支付方式                                   │
+│  Credit 包充值（从 1000 credits 起）：                            │
+│  ┌────────────────────────────────────────┐                    │
+│  │ 包名        │ 价格    │ Credits │ 折扣 │                    │
+│  ├────────────────────────────────────────┤                    │
+│  │ 体验包      │ ¥100    │ 1,000   │ 原价 │                    │
+│  │ 标准包      │ ¥270    │ 3,000   │ 9折  │                    │
+│  │ 专业包      │ ¥800    │ 10,000  │ 8折  │                    │
+│  │ 企业包      │ ¥2,100  │ 30,000  │ 7折  │                    │
+│  └────────────────────────────────────────┘                    │
 │                                                                 │
-│  Credit 换算逻辑（后台可配置）：                                  │
-│  - 基于 AI 模型 token 消耗换算                                   │
-│  - 不同模型有不同换算系数                                        │
-│  - 支持动态调整换算规则                                          │
+│  余额不足处理：                                                   │
+│  - 返回错误码 6011，提示用户充值                                  │
+│  - 不支持透支，必须先充值                                        │
+│                                                                 │
+│  配置管理：                                                       │
+│  - 所有费用和消耗规则均可后台配置                                 │
+│  - 支持动态调整，实时生效（不追溯历史）                           │
+│  - 配置项：注册赠送额度、token 换算系数、增值功能定价、           │
+│           Credit 包价格和折扣                                    │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 #### 验收标准
 
-1. WHEN 用户选择订阅套餐 THEN User Portal SHALL 显示套餐详情、价格和 Credit 额度
-2. WHEN 用户完成支付 THEN User Portal SHALL 激活订阅并充值对应 Credit 额度
-3. WHEN 订阅到期前 7 天和 3 天 THEN User Portal SHALL 发送续费提醒邮件
-4. WHEN 用户取消订阅 THEN User Portal SHALL 在当前计费周期结束后停止服务（剩余 Credit 保留至周期结束）
-5. WHEN 用户升级套餐 THEN User Portal SHALL 立即生效，补充差额 Credit
-6. WHEN 用户续费 THEN User Portal SHALL 重置 Credit 额度（不累积上月剩余）
+1. WHEN 新用户完成注册 THEN User Portal SHALL 自动赠送 500 Credits
+2. WHEN 用户查看余额 THEN User Portal SHALL 显示当前 Credit 余额和消费记录
+3. WHEN 用户执行消耗 Credit 的操作 THEN User Portal SHALL 实时扣减余额
+4. WHEN Credit 余额不足 THEN User Portal SHALL 返回错误码 6011 并提示充值
+5. WHEN 管理员修改消耗规则 THEN User Portal SHALL 对新请求生效（不追溯历史）
 
 ---
 
 ### 需求 3.1：Credit 消耗与计算
 
-**用户故事**：作为系统，我需要根据 AI 模型实际消耗计算 Credit，以便精确计费。
+**用户故事**：作为系统，我需要根据 AI 模型实际消耗和增值功能计算 Credit，以便精确计费。
 
-#### Credit 换算规则（可配置）
+#### Credit 换算规则（后台可动态配置）
+
+**AI 模型用途分配：**
+
+| 功能 | 使用模型 | 说明 |
+|------|---------|------|
+| 图片生成 | Gemini Imagen 3 | 广告素材图片生成 |
+| 视频生成 | Gemini Veo 3.1 | 广告视频生成 |
+| 图片/视频理解 | Gemini 2.5 Flash | 素材分析、内容识别 |
+| Chat 对话 | Gemini 2.5 Pro | 用户对话交互 |
+| MCP Tools 调用 | Gemini 2.5 Pro | 工具调用和代码生成 |
+
+**AI 模型调用（按 token 计费，支持小数）：**
 
 | AI 模型 | Token 类型 | 换算比例（每1K tokens） |
 |---------|-----------|------------------------|
-| Gemini 2.5 Flash | Input | 0.1 credit |
-| Gemini 2.5 Flash | Output | 0.4 credit |
-| Claude 3.5 Sonnet | Input | 2 credits |
-| Claude 3.5 Sonnet | Output | 10 credits |
-| Stable Diffusion XL | 每张图片 | 2 credits |
+| Gemini 2.5 Flash | Input | 0.01 credit |
+| Gemini 2.5 Flash | Output | 0.04 credit |
+| Gemini 2.5 Pro | Input | 0.05 credits |
+| Gemini 2.5 Pro | Output | 0.2 credits |
+
+**增值功能（固定收费，支持小数）：**
+
+| 功能 | Credit 消耗 | 使用模型 | 说明 |
+|------|------------|---------|------|
+| 图片生成 | 0.5 credits/张 | Imagen 3 | 单张图片 |
+| 批量图片生成 | 0.4 credits/张 | Imagen 3 | 10张以上享8折 |
+| 视频生成 | 5 credits/个 | Veo 3.1 | 短视频素材（MVP 暂不实现） |
+| 落地页生成 | 15 credits/个 | Pro + Imagen | 完整落地页 |
+| 竞品深度分析 | 10 credits/次 | Pro + Flash | 含报告 |
+| 投放优化建议 | 20 credits/次 | Pro | 30天数据分析 |
+
+**增值功能 Credit 消耗说明：**
+
+增值功能采用固定定价，包含了 AI 模型调用成本和平台服务费：
+
+| 功能 | 消耗构成 | 说明 |
+|------|---------|------|
+| 图片生成 (0.5 credits) | Imagen 3 API 调用 | 直接调用图片生成模型 |
+| 落地页生成 (15 credits) | Pro 文案生成 (~3 credits) + Imagen 图片 (~2 credits) + 平台服务 (~10 credits) | 包含 AI 文案、多张配图、页面托管 |
+| 竞品深度分析 (10 credits) | Pro 分析 (~5 credits) + Flash 图片理解 (~2 credits) + 平台服务 (~3 credits) | 包含网页抓取、AI 分析、报告生成 |
+| 投放优化建议 (20 credits) | Pro 数据分析 (~10 credits) + 平台服务 (~10 credits) | 包含 30 天数据聚合、AI 分析、策略生成 |
+
+**注意**：以上消耗构成仅供参考，实际以固定定价为准，后台可动态调整。
 
 #### 验收标准
 
 1. WHEN AI Agent 完成一次调用 THEN User Portal SHALL 根据实际 token 消耗计算 Credit
-2. WHEN 计算 Credit THEN User Portal SHALL 使用后台配置的换算规则
-3. WHEN 换算规则更新 THEN User Portal SHALL 对新请求生效（不追溯历史）
-4. WHEN Credit 消耗 THEN User Portal SHALL 实时扣减用户余额
-5. WHEN 扣减失败 THEN User Portal SHALL 回滚操作并返回错误
+2. WHEN 用户使用增值功能 THEN User Portal SHALL 按固定 Credit 收费
+3. WHEN 计算 Credit THEN User Portal SHALL 使用后台配置的换算规则
+4. WHEN 换算规则更新 THEN User Portal SHALL 对新请求生效（不追溯历史）
+5. WHEN Credit 消耗 THEN User Portal SHALL 实时扣减用户余额
+6. WHEN 扣减失败 THEN User Portal SHALL 回滚操作并返回错误
 
 ---
 
-### 需求 3.2：超额按次收费
+### 需求 3.2：Credit 包充值
 
-**用户故事**：作为用户，我希望 Credit 用完后可以继续使用，按实际用量付费。
+**用户故事**：作为用户，我想要购买 Credit 包获得折扣，以便降低使用成本。
+
+#### Credit 包定价（后台可配置）
+
+| 包名 | 价格 | Credits | 折扣 | 单价 |
+|------|------|---------|------|------|
+| 体验包 | ¥100 | 1,000 | 原价 | ¥0.1/credit |
+| 标准包 | ¥270 | 3,000 | 9折 | ¥0.09/credit |
+| 专业包 | ¥800 | 10,000 | 8折 | ¥0.08/credit |
+| 企业包 | ¥2,100 | 30,000 | 7折 | ¥0.07/credit |
 
 #### 验收标准
 
-1. WHEN 用户 Credit 余额不足 THEN User Portal SHALL 检查是否开启超额付费
-2. WHEN 超额付费已开启且有支付方式 THEN User Portal SHALL 允许继续使用并记录欠费
-3. WHEN 超额消费累计达到阈值（如 ¥100） THEN User Portal SHALL 自动扣款
-4. WHEN 自动扣款失败 THEN User Portal SHALL 暂停服务并通知用户
-5. WHEN 用户未开启超额付费且 Credit 不足 THEN User Portal SHALL 返回余额不足错误并提示充值
+1. WHEN 用户访问充值页面 THEN User Portal SHALL 显示所有 Credit 包选项和折扣信息
+2. WHEN 用户选择 Credit 包 THEN User Portal SHALL 显示支付金额和到账 Credits
+3. WHEN 用户完成支付 THEN User Portal SHALL 立即充值对应 Credits
+4. WHEN 充值完成 THEN User Portal SHALL 发送充值成功通知
+5. WHEN Credit 余额 THEN User Portal SHALL 永不过期
 
 ---
 
-### 需求 3.3：Credit 充值
+### 需求 3.3：Credit 配置管理（管理后台）
 
-**用户故事**：作为用户，我想要随时充值 Credit，以便在套餐额度用完后继续使用。
+**用户故事**：作为管理员，我想要在后台配置 Credit 相关参数，以便灵活调整定价策略。
+
+#### 可配置项
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| 注册赠送额度 | 500 credits | 新用户注册赠送（永不过期） |
+| Gemini 2.5 Flash Input | 0.01 credit/1K tokens | 图片/视频理解 |
+| Gemini 2.5 Flash Output | 0.04 credit/1K tokens | 图片/视频理解 |
+| Gemini 2.5 Pro Input | 0.05 credits/1K tokens | Chat 对话/MCP 调用 |
+| Gemini 2.5 Pro Output | 0.2 credits/1K tokens | Chat 对话/MCP 调用 |
+| 图片生成（Imagen 3） | 0.5 credits/张 | 增值功能 |
+| 视频生成（Veo 3.1） | 5 credits/个 | 增值功能 |
+| 落地页生成 | 15 credits/个 | 增值功能 |
+| 竞品分析 | 10 credits/次 | 增值功能 |
+| 投放优化建议 | 20 credits/次 | 增值功能 |
+| Credit 包定价 | 见需求 3.2 | 充值包价格和折扣 |
 
 #### 验收标准
 
-1. WHEN 用户选择充值 THEN User Portal SHALL 显示充值金额选项（¥50/¥100/¥500/自定义）
-2. WHEN 用户完成充值支付 THEN User Portal SHALL 按 ¥0.01/credit 换算并充值
-3. WHEN 充值完成 THEN User Portal SHALL 立即到账可用
-4. WHEN 用户有充值余额和套餐余额 THEN User Portal SHALL 优先消耗套餐余额
-5. WHEN 充值余额 THEN User Portal SHALL 不过期，可跨月使用
+1. WHEN 管理员访问配置页面 THEN User Portal SHALL 显示所有可配置项及当前值
+2. WHEN 管理员修改配置 THEN User Portal SHALL 验证输入并保存
+3. WHEN 配置更新 THEN User Portal SHALL 对新请求立即生效
+4. WHEN 配置更新 THEN User Portal SHALL 不追溯已完成的历史交易
+5. WHEN 配置变更 THEN User Portal SHALL 记录变更日志（时间、操作人、旧值、新值）
 
 ---
 
@@ -300,14 +370,14 @@ User Portal 作为用户入口和核心数据管理平台，包含以下功能�
 
 ### 需求 6：计费
 
-**用户故事**：作为一个用户，我想要查看我的账单历史，以便进行财务管理。
+**用户故事**：作为一个用户，我想要查看我的 Credit 余额和充值记录，以便进行财务管理。
 
 #### 验收标准
 
-1. WHEN 用户访问计费页面 THEN User Portal SHALL 显示当前订阅状态和下次扣款日期
-2. WHEN 用户访问计费页面 THEN User Portal SHALL 显示历史账单列表
-3. WHEN 订阅扣款成功 THEN User Portal SHALL 自动发送订阅信息到用户邮箱
-5. WHEN 订阅扣款失败 THEN User Portal SHALL 发送支付失败通知并暂停服务
+1. WHEN 用户访问计费页面 THEN User Portal SHALL 显示当前 Credit 余额
+2. WHEN 用户访问计费页面 THEN User Portal SHALL 显示充值记录和消费记录
+3. WHEN 用户访问计费页面 THEN User Portal SHALL 显示 Credit 包充值选项
+4. WHEN 充值成功 THEN User Portal SHALL 发送充值确认通知到用户邮箱
 
 ---
 
@@ -423,20 +493,22 @@ User Portal 作为用户入口和核心数据管理平台，包含以下功能�
 │  用户账户                                                        │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │                                                          │   │
-│  │  套餐余额（subscription_credits）                         │   │
-│  │  - 每月重置                                              │   │
-│  │  - 不可跨月累积                                          │   │
+│  │  赠送余额（gifted_credits）                               │   │
+│  │  - 注册赠送的 Credits                                    │   │
+│  │  - 永不过期                                              │   │
 │  │  - 优先消耗                                              │   │
 │  │                                                          │   │
 │  │  充值余额（purchased_credits）                            │   │
+│  │  - 用户购买的 Credits                                    │   │
 │  │  - 永不过期                                              │   │
-│  │  - 套餐余额用完后消耗                                     │   │
+│  │  - 赠送余额用完后消耗                                     │   │
 │  │                                                          │   │
-│  │  可用余额 = 套餐余额 + 充值余额                            │   │
+│  │  可用余额 = 赠送余额 + 充值余额                            │   │
 │  │                                                          │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
-│  消耗顺序：套餐余额 → 充值余额 → 超额扣费                        │
+│  消耗顺序：赠送余额 → 充值余额                                   │
+│  余额不足时：返回错误码 6011，提示充值                           │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -445,9 +517,9 @@ User Portal 作为用户入口和核心数据管理平台，包含以下功能�
 
 1. WHEN AI Agent 调用 MCP 工具 THEN User Portal SHALL 首先检查用户 Credit 余额
 2. WHEN Credit 余额充足 THEN User Portal SHALL 执行工具并扣减 Credit
-3. WHEN Credit 余额不足但开启超额付费 THEN User Portal SHALL 执行工具并记录欠费
-4. WHEN Credit 余额不足且未开启超额付费 THEN User Portal SHALL 返回余额不足错误（error_code: 6011）
-5. WHEN 用户订阅过期 THEN User Portal SHALL 清零套餐余额，保留充值余额
+3. WHEN Credit 余额不足 THEN User Portal SHALL 返回余额不足错误（error_code: 6011）并提示充值
+4. WHEN 用户充值 THEN User Portal SHALL 增加充值余额（永不过期）
+5. WHEN 扣减 Credit THEN User Portal SHALL 优先扣减赠送余额，再扣充值余额
 
 ---
 
@@ -467,15 +539,14 @@ User Portal 作为用户入口和核心数据管理平台，包含以下功能�
 
 ### 需求 13.2：Credit 余额预警
 
-**用户故事**：作为用户，我想要在 Credit 即将用完时收到提醒，以便及时充值。
+**用户故事**：作为用户，我想要在 Credit 即将用完或过期时收到提醒，以便及时使用或充值。
 
 #### 验收标准
 
-1. WHEN 套餐余额低于 20% THEN User Portal SHALL 在界面显示余额预警
-2. WHEN 套餐余额低于 10% THEN User Portal SHALL 发送邮件/站内通知
-3. WHEN 套餐余额耗尽 THEN User Portal SHALL 发送紧急通知
+1. WHEN Credit 余额低于 50 THEN User Portal SHALL 在界面显示余额预警
+2. WHEN Credit 余额低于 10 THEN User Portal SHALL 发送邮件/站内通知
+3. WHEN Credit 余额耗尽 THEN User Portal SHALL 发送紧急通知并提示充值
 4. WHEN 用户设置预警阈值 THEN User Portal SHALL 按用户设置触发预警
-5. WHEN 充值余额低于 1000 credits THEN User Portal SHALL 提示用户充值
 
 ---
 
@@ -488,8 +559,7 @@ User Portal 作为用户入口和核心数据管理平台，包含以下功能�
 1. WHEN AI Agent 调用 MCP 工具前 THEN User Portal SHALL 预估 Credit 消耗并预扣
 2. WHEN 工具执行完成 THEN User Portal SHALL 根据实际消耗调整扣减（多退少补）
 3. WHEN 工具执行失败 THEN User Portal SHALL 全额退还预扣 Credit
-4. WHEN 扣减 Credit THEN User Portal SHALL 优先扣套餐余额，再扣充值余额
-5. WHEN 并发扣减 THEN User Portal SHALL 使用事务保证数据一致性
+4. WHEN 并发扣减 THEN User Portal SHALL 使用事务保证数据一致性
 
 ---
 
@@ -589,9 +659,9 @@ User Portal 作为用户入口和核心数据管理平台，包含以下功能�
 ## 系统边界（System Boundaries）
 
 ### 包含的功能
-- 用户注册、登录、认证
+- 用户注册、登录、认证（注册赠送 500 Credits）
 - 广告账户绑定（Meta/TikTok/Google）
-- 订阅管理和计费
+- Credit 充值和计费
 - Dashboard 仪表板
 - **嵌入式 AI Agent 对话界面**（用户入口）
 - **WebSocket 实时通信**（与 AI Agent 通信）
@@ -637,7 +707,7 @@ User Portal 作为用户入口和核心数据管理平台，包含以下功能�
 ### 后端技术栈
 
 - **后端框架**：FastAPI (Python 3.11+)
-- 数据库：PostgreSQL 14 (AWS RDS) + TimescaleDB 扩展（时序数据）
+- 数据库：MySQL 14 (AWS RDS)
 - 缓存：Redis (AWS ElastiCache)
 - 文件存储：AWS S3
 - CDN：CloudFront

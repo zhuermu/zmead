@@ -580,7 +580,7 @@ result = await mcp_client.call_tool(
 
 #### 架构说明
 
-定时任务采用 **User Portal 调度 + Capability 执行** 的架构：
+定时任务采用 **User Portal 调度 + HTTP API 调用 + Capability 执行** 的架构：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -596,18 +596,26 @@ result = await mcp_client.call_tool(
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │           Celery Worker (执行器)                     │   │
 │  │  - 接收定时任务                                      │   │
-│  │  - 通过 WebSocket 调用 Unified AI Agent              │   │
+│  │  - 通过 HTTP API 调用 Unified AI Agent              │   │
+│  │  - 使用 Service Token 进行服务间认证                │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                           │
+                          │ POST /api/v1/scheduled-task
+                          │ Authorization: Bearer <service_token>
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                  Unified AI Agent                           │
-│  - 接收定时任务请求                                         │
+│  - 接收定时任务请求（HTTP API）                             │
 │  - 调用 Reporting Capability 执行具体任务                  │
 │  - 返回结果给 User Portal                                  │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**说明**：定时任务使用 HTTP API 而非 WebSocket，因为：
+- WebSocket 适合前端实时交互，HTTP API 更适合服务间通信
+- HTTP API 支持重试和超时控制
+- 服务间认证使用 Service Token，与用户认证分离
 
 #### 验收标准
 
@@ -674,9 +682,9 @@ result = await mcp_client.call_tool(
 
 ### AI 模型
 
-- **智能分析**：Gemini 2.5 Flash
-- **异常检测**：统计算法 + AI 辅助
-- **建议生成**：Gemini 2.5 Flash
+- **智能分析**：Gemini 2.5 Pro
+- **异常检测**：统计算法 + Gemini 2.5 Flash 辅助
+- **建议生成**：Gemini 2.5 Pro
 
 ### 技术栈
 

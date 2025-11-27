@@ -413,12 +413,9 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
 {
   "status": "success",
   "balance": {
-    "subscription_credits": 25000,
+    "gifted_credits": 500,
     "purchased_credits": 5000,
-    "total_available": 30000,
-    "subscription_plan": "standard",
-    "subscription_expires_at": "2024-12-26T00:00:00Z",
-    "overage_enabled": true
+    "total_available": 5500
   }
 }
 ```
@@ -439,9 +436,9 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
 {
   "status": "success",
   "allowed": true,
-  "current_balance": 30000,
-  "after_balance": 29980,
-  "funding_source": "subscription"
+  "current_balance": 5500,
+  "after_balance": 5480,
+  "funding_source": "gifted"
 }
 ```
 
@@ -455,7 +452,7 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
   "operation_type": "generate_creative",
   "operation_id": "op_123456",
   "details": {
-    "model": "stable-diffusion-xl",
+    "model": "gemini-imagen-3",
     "count": 10
   }
 }
@@ -466,12 +463,12 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
 {
   "status": "success",
   "deducted": 20,
-  "from_subscription": 20,
+  "from_gifted": 20,
   "from_purchased": 0,
   "remaining_balance": {
-    "subscription_credits": 24980,
+    "gifted_credits": 480,
     "purchased_credits": 5000,
-    "total_available": 29980
+    "total_available": 5480
   },
   "transaction_id": "txn_789"
 }
@@ -493,36 +490,46 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
   "config": {
     "model_rates": {
       "gemini-2.5-flash": {
-        "input_per_1k_tokens": 0.1,
-        "output_per_1k_tokens": 0.4
+        "input_per_1k_tokens": 0.01,
+        "output_per_1k_tokens": 0.04
       },
-      "claude-3.5-sonnet": {
-        "input_per_1k_tokens": 2.0,
-        "output_per_1k_tokens": 10.0
+      "gemini-2.5-pro": {
+        "input_per_1k_tokens": 0.05,
+        "output_per_1k_tokens": 0.2
       },
-      "stable-diffusion-xl": {
-        "per_image": 2.0
+      "gemini-imagen-3": {
+        "per_image": 0.5
+      },
+      "gemini-veo-3.1": {
+        "per_video": 5
       }
     },
     "operation_estimates": {
-      "chat_simple": 1,
-      "chat_complex": 5,
-      "generate_creative": 2,
-      "generate_landing_page": 30,
-      "analyze_competitor": 15,
-      "analyze_report": 10
+      "image_generation": 0.5,
+      "video_generation": 5,
+      "landing_page_generation": 15,
+      "competitor_analysis": 10,
+      "optimization_suggestion": 20
     },
-    "subscription_plans": {
+    "credit_packages": {
+      "starter": {
+        "price_cny": 100,
+        "credits": 1000
+      },
       "standard": {
-        "price_cny": 199,
-        "credits": 30000
+        "price_cny": 270,
+        "credits": 3000
       },
       "professional": {
-        "price_cny": 1999,
-        "credits": 400000
+        "price_cny": 800,
+        "credits": 10000
+      },
+      "enterprise": {
+        "price_cny": 2100,
+        "credits": 30000
       }
     },
-    "overage_rate": 0.01
+    "registration_bonus": 500
   }
 }
 ```
@@ -957,7 +964,7 @@ result = await ad_engine_capability.execute(
 | 6006 | PRODUCT_URL_INVALID | 产品链接无效 | 否 | 提示检查链接 |
 | 6007 | PRODUCT_INFO_EXTRACTION_FAILED | 产品信息提取失败 | 是 | 提示手动输入 |
 | 6008 | LANDING_PAGE_DOMAIN_NOT_VERIFIED | 落地页域名未验证 | 否 | 提示验证域名 |
-| 6009 | SUBSCRIPTION_EXPIRED | 订阅已过期 | 否 | 提示续费 |
+| 6009 | RESERVED | 保留 | - | - |
 | 6010 | FEATURE_NOT_AVAILABLE | 功能未开放 | 否 | 提示升级套餐 |
 
 ---
@@ -1004,8 +1011,6 @@ ERROR_MESSAGES = {
     # Credit 相关错误
     "6011": "Credit 余额不足，请充值后继续使用",
     "6012": "扣费失败，请重试",
-    "6013": "订阅已过期，请续费后继续使用",
-    "6014": "超额消费已达上限，请充值后继续",
 
     # AI 服务错误
     "4001": "AI 服务暂时不可用，请稍后重试",
@@ -1095,11 +1100,9 @@ ERROR_MESSAGES = {
     "details": {
       "required_credits": 20,
       "available_credits": 5,
-      "subscription_credits": 0,
+      "gifted_credits": 0,
       "purchased_credits": 5,
-      "overage_enabled": false,
-      "recharge_url": "https://aae.com/billing/recharge",
-      "upgrade_url": "https://aae.com/pricing"
+      "recharge_url": "https://aae.com/billing/recharge"
     },
     "timestamp": "2024-11-26T10:00:15Z",
     "request_id": "req_123456"
@@ -1127,25 +1130,6 @@ ERROR_MESSAGES = {
 }
 ```
 
-#### 订阅过期错误
-
-```json
-{
-  "status": "error",
-  "error": {
-    "code": "6013",
-    "type": "SUBSCRIPTION_EXPIRED",
-    "message": "订阅已过期，请续费后继续使用",
-    "details": {
-      "expired_at": "2024-11-25T23:59:59Z",
-      "purchased_credits": 500,
-      "renew_url": "https://aae.com/billing/renew"
-    },
-    "timestamp": "2024-11-26T10:00:15Z",
-    "request_id": "req_123456"
-  }
-}
-```
 
 ---
 
@@ -1201,11 +1185,15 @@ def verify_permission(user_id: str, action: str) -> bool:
 
 ### Capability Module
 
-- 素材生成：< 60 秒（10 张图片）
-- 报表分析：< 5 秒
-- 竞品分析：< 10 秒
-- 落地页生成：< 10 秒
-- 广告创建：< 10 秒
+| 操作 | 时间要求 | 说明 |
+|------|---------|------|
+| 素材生成 | < 60 秒 | 10 张图片，含 AI 生成和评分 |
+| 报表分析 | < 10 秒 | 含 AI 智能分析 |
+| 竞品分析 | < 15 秒 | 含网页抓取和 AI 分析 |
+| 落地页生成 | < 30 秒 | 含文案生成、配图生成、页面渲染 |
+| 广告创建 | < 10 秒 | 含平台 API 调用 |
+
+**注意**：以上时间要求为 P95 响应时间，不含网络传输延迟。
 
 ---
 

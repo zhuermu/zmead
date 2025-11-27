@@ -10,8 +10,8 @@ AAE（Automated Ad Engine）是一个基于**统一对话式 AI Agent** 的自�
 
 1. **统一对话入口**：用户只需与一个 AI Agent 对话，无需切换不同界面
 2. **能力模块化**：Agent 内部由 5 个能力模块组成，可独立扩展
-3. **User Portal 作为核心数据平台**：所有业务数据统一存储和管理
-4. **MCP 协议通信**：能力模块通过 MCP 协议与 User Portal 通信
+3. **Web Platform 作为核心数据平台**：所有业务数据统一存储和管理
+4. **MCP 协议通信**：功能模块通过 MCP 协议与 Web Platform 通信
 5. **智能意图识别**：Agent 自动识别用户意图并调用相应能力模块
 
 ---
@@ -20,7 +20,7 @@ AAE（Automated Ad Engine）是一个基于**统一对话式 AI Agent** 的自�
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    User Portal (用户入口)                        │
+│                    Web Platform (用户入口)                       │
 │                    (Next.js + WebSocket)                        │
 │                                                                 │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
@@ -41,7 +41,7 @@ AAE（Automated Ad Engine）是一个基于**统一对话式 AI Agent** 的自�
                               │ HTTP (数据管理)
                               │
 ┌─────────────────────────────▼─────────────────────────────────────┐
-│                        User Portal                                │
+│                        Web Platform                               │
 │                   (核心数据管理平台)                               │
 │                                                                   │
 │  ┌─────────────────────────────────────────────────────────┐    │
@@ -136,6 +136,55 @@ AAE（Automated Ad Engine）是一个基于**统一对话式 AI Agent** 的自�
 
 ---
 
+## 两种调用路径（Invocation Paths）
+
+### 路径 1：用户对话式调用（通过 AI Orchestrator）
+
+```
+用户发起 → 需要意图识别和对话管理
+
+前端 
+  → WebSocket 
+  → AI Orchestrator（意图识别 + 协调器）
+  → Functional Module
+  → MCP Client 
+  → Web Platform MCP Server
+  → 数据库/S3
+```
+
+**适用场景**：
+- 用户在对话中说"帮我生成素材"
+- 用户在对话中说"查看报表"
+- 用户在对话中说"创建广告"
+- 所有需要理解用户意图的交互
+
+### 路径 2：系统定时任务调用（直接调用功能模块）
+
+```
+系统定时 → 确定性任务，无需意图识别
+
+Web Platform (Celery Beat 调度器)
+  → Celery Worker（执行器）
+  → Ad Performance（直接 Python 导入）
+  → MCP Client
+  → Web Platform MCP Server
+  → 数据库/S3
+```
+
+**适用场景**：
+- 每 6 小时自动抓取广告数据
+- 每天 9:00 自动生成报告
+- 每小时自动检测异常
+- 每天 2:00 自动检查 Token 有效期
+
+**为什么定时任务不通过 AI Orchestrator？**
+- ❌ AI Orchestrator 是对话式的，专注于意图识别和对话管理
+- ❌ 定时任务是确定性的，不需要意图识别
+- ✅ Celery Worker 直接导入 Capability Python 模块更高效
+- ✅ 减少网络开销和延迟
+
+---
+
 ## 对话流程示例（Conversation Flow Examples）
 
 ### 示例 1：跨能力协作 - 生成素材并创建广告
@@ -144,14 +193,14 @@ AAE（Automated Ad Engine）是一个基于**统一对话式 AI Agent** 的自�
 用户: 帮我生成素材并创建广告
 
 AI Agent:
-  [意图识别] → 需要调用 Creative Capability + Ad Engine Capability
+  [意图识别] → 需要调用 Ad Creative + Campaign Automation
   
-  [调用 Creative Capability]
+  [调用 Ad Creative]
   → 正在为你生成广告素材...
   → 调用 MCP: create_creative()
   → ✅ 已生成 10 张素材
   
-  [调用 Ad Engine Capability]
+  [调用 Campaign Automation]
   → 现在帮你创建广告...
   → 调用 MCP: create_campaign()
   → ✅ 广告已创建
@@ -168,9 +217,9 @@ AI Agent:
 用户: 我的广告表现如何？
 
 AI Agent:
-  [意图识别] → 需要调用 Reporting Capability
+  [意图识别] → 需要调用 Ad Performance
   
-  [调用 Reporting Capability]
+  [调用 Ad Performance]
   → 调用 MCP: get_reports()
   → 调用 MCP: analyze_performance()
   
@@ -195,18 +244,18 @@ AI Agent:
 
 AI Agent:
   [意图识别] → 用户可能需要：
-    1. 查看报表（Reporting Capability）
-    2. 分析市场（Market Intelligence Capability）
-    3. 优化广告（Ad Engine Capability）
+    1. 查看报表（Ad Performance）
+    2. 分析市场（Market Insights）
+    3. 优化广告（Campaign Automation）
   
   → 用户: "我来帮你分析一下。首先看看广告数据...
            
-           [调用 Reporting Capability]
+           [调用 Ad Performance]
            📊 近 7 天数据：
            - CTR: 0.8%（偏低）
            - CPA: $45（偏高）
            
-           [调用 Market Intelligence Capability]
+           [调用 Market Insights]
            🔍 竞品分析：
            - 竞品平均 CTR: 1.5%
            - 你的素材风格较传统
@@ -223,7 +272,7 @@ AI Agent:
 
 ## 模块职责（Module Responsibilities）
 
-### 1. User Portal（用户入口 + 核心数据管理平台）
+### 1. Web Platform（Web 平台 - 用户入口 + 核心数据管理）
 
 **职责**：
 - **用户入口**：提供 Web 界面，用户通过此访问系统
@@ -262,14 +311,14 @@ AI Agent:
 
 ---
 
-### 2. 统一 AI Agent（对话式智能助手）
+### 2. AI Orchestrator（AI 协调器 - 对话引擎 + 能力调度）
 
 **职责**：
 - 提供统一的对话入口
 - 理解用户意图并识别需要调用的能力模块
 - 协调多个能力模块完成复杂任务
 - 管理对话上下文和状态
-- 通过 MCP 与 User Portal 通信
+- 通过 MCP 与 Web Platform 通信
 
 **核心组件**：
 
@@ -285,33 +334,33 @@ AI Agent:
 - 管理能力模块的执行顺序
 - 聚合多个能力模块的结果
 
-#### 2.3 五个能力模块（Capability Modules）
+#### 2.3 五个功能模块（Functional Modules）
 
-**Creative Capability（素材生成能力）**
+**Ad Creative（广告素材生成）**
 - 生成广告素材（图片）
 - 分析竞品素材
 - 评估素材质量
 - MCP 工具：`generate_creative`, `analyze_creative`, `score_creative`
 
-**Market Intelligence Capability（市场洞察能力）**
+**Market Insights（市场洞察）**
 - 竞品分析
 - 趋势洞察
 - 策略建议
 - MCP 工具：`analyze_competitor`, `get_trends`, `generate_strategy`
 
-**Reporting Capability（报表能力）**
+**Ad Performance（性能分析报表）**
 - 数据抓取
 - AI 分析
 - 异常检测
 - MCP 工具：`get_reports`, `analyze_performance`, `detect_anomaly`
 
-**Landing Page Capability（落地页能力）**
+**Landing Page（落地页生成）**
 - 生成落地页
 - 多语言支持
 - A/B 测试
 - MCP 工具：`create_landing_page`, `translate_page`, `ab_test`
 
-**Ad Engine Capability（投放引擎能力）**
+**Campaign Automation（广告投放自动化）**
 - 创建广告
 - 优化预算
 - 规则引擎
@@ -324,7 +373,7 @@ AI Agent:
 - 视频生成：Gemini Veo 3.1
 - 对话管理：LangChain / LlamaIndex
 - 广告 API：Meta/TikTok/Google Ads API
-- MCP：实现 Client（调用 User Portal 工具）
+- MCP：实现 Client（调用 Web Platform 工具）
 
 ---
 
@@ -332,15 +381,15 @@ AI Agent:
 
 ### MCP (Model Context Protocol)
 
-统一 AI Agent 与 User Portal 之间使用 MCP 协议通信：
+AI Orchestrator 与 Web Platform 之间使用 MCP 协议通信：
 
-1. **User Portal 作为 MCP Server**：
+1. **Web Platform 作为 MCP Server**：
    - 提供数据访问工具（get_creatives、get_reports 等）
    - 提供数据写入工具（create_campaign、update_creative 等）
    - 提供业务逻辑工具（analyze_performance、optimize_budget 等）
 
-2. **统一 AI Agent 作为 MCP Client**：
-   - 调用 User Portal 提供的工具
+2. **AI Orchestrator 作为 MCP Client**：
+   - 调用 Web Platform 提供的工具
    - 读取和写入业务数据
    - 不直接访问数据库
 
@@ -362,15 +411,15 @@ AI Agent:
 │  (Orchestrator) │
 └─────────────────┘
     │
-    ├──► Creative Capability
+    ├──► Ad Creative
     │
-    ├──► Market Intelligence Capability
+    ├──► Market Insights
     │
-    ├──► Reporting Capability
+    ├──► Ad Performance
     │
-    ├──► Landing Page Capability
+    ├──► Landing Page
     │
-    └──► Ad Engine Capability
+    └──► Campaign Automation
          │
          ▼
     聚合结果 → 返回用户
@@ -409,14 +458,14 @@ AI Agent:
 2. Creative Agent:
    - 理解意图：需要生成素材 + 创建广告
    - 生成素材
-   - 通过 MCP 调用 User Portal: create_creative()
-   - 通过 A2A 调用 Automated Ad Engine Agent: create_campaign()
+   - 通过 MCP 调用 Web Platform: create_creative()
+   - 调用 Campaign Automation 创建广告
 
-3. Automated Ad Engine Agent:
-   - 接收 A2A 请求
-   - 通过 MCP 调用 User Portal: get_creative()
+3. Campaign Automation:
+   - 接收请求
+   - 通过 MCP 调用 Web Platform: get_creative()
    - 创建 Campaign
-   - 通过 MCP 调用 User Portal: create_campaign()
+   - 通过 MCP 调用 Web Platform: create_campaign()
    - 返回结果给 Creative Agent
 
 4. Creative Agent → 用户: "✅ 素材已生成，广告已创建！"
@@ -427,8 +476,8 @@ AI Agent:
 ```
 1. 用户 → Reporting Agent: "我的广告表现如何？"
 
-2. Reporting Agent:
-   - 通过 MCP 调用 User Portal: get_report_data()
+2. Ad Performance:
+   - 通过 MCP 调用 Web Platform: get_report_data()
    - 分析数据
    - 生成建议
 
@@ -439,9 +488,9 @@ AI Agent:
 5. Reporting Agent:
    - 通过 A2A 调用 Automated Ad Engine Agent: pause_adset()
 
-6. Automated Ad Engine Agent:
+6. Campaign Automation:
    - 执行暂停操作
-   - 通过 MCP 调用 User Portal: update_adset()
+   - 通过 MCP 调用 Web Platform: update_adset()
    - 调用 Meta API 暂停广告
 
 7. Automated Ad Engine Agent → Reporting Agent: "✅ 已暂停"
@@ -494,34 +543,33 @@ AI Agent:
 
 ## 开发优先级（Development Priority）
 
-### 第 1-2 周：User Portal 核心
+### 第 1-2 周：Web Platform 核心
 - 用户认证
 - 数据模块（素材、报表、落地页、投放）
-- Agent API Layer
 - MCP Server 实现
+- 通知中心
 
-### 第 3-4 周：Creative Agent
-- 对话式交互
+### 第 3-4 周：Ad Creative
 - 素材生成
+- 竞品分析
+- 素材评分
 - MCP Client 实现
-- 与 User Portal 集成
 
-### 第 5 周：Reporting Agent
+### 第 5 周：Ad Performance
 - 对话式交互
 - 数据抓取
 - AI 分析
 - MCP Client 实现
 
-### 第 6 周：Market Intelligence Agent + Landing Page Agent
-- 对话式交互
-- 核心功能
+### 第 6 周：Market Insights + Landing Page
+- 市场洞察功能
+- 落地页生成功能
 - MCP Client 实现
 
-### 第 9-10 周：Automated Ad Engine Agent
-- 对话式交互
+### 第 9-10 周：Campaign Automation
 - 广告创建和管理
-- Agent 协调
-- A2A 协议实现
+- 预算优化
+- 规则引擎
 
 ---
 

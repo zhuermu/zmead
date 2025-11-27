@@ -8,7 +8,7 @@
 
 ## 模块边界定义（Module Boundaries）
 
-### 1. User Portal 边界
+### 1. Web Platform 边界
 
 **职责范围**：
 - ✅ 用户界面（Web 前端）
@@ -16,20 +16,21 @@
 - ✅ 数据存储和管理
 - ✅ MCP Server 实现
 - ✅ WebSocket Server 实现
+- ✅ 定时任务调度（Celery）
 
 **不负责**：
 - ❌ AI 对话逻辑
 - ❌ 意图识别
-- ❌ 能力模块协调
+- ❌ 功能模块协调
 
 **对外接口**：
-- WebSocket API（前端 ↔ Unified AI Agent）
-- MCP Server（Unified AI Agent ↔ User Portal）
+- WebSocket API（前端 ↔ AI Orchestrator）
+- MCP Server（AI Orchestrator ↔ Web Platform）
 - RESTful API（可选，用于第三方集成）
 
 ---
 
-### 2. Unified AI Agent 边界
+### 2. AI Orchestrator 边界
 
 **职责范围**：
 - ✅ 对话理解和意图识别
@@ -44,12 +45,12 @@
 
 **对外接口**：
 - WebSocket API（接收前端消息）
-- MCP Client（调用 User Portal 工具）
-- Capability Module API（调用能力模块）
+- MCP Client（调用 Web Platform 工具）
+- Module API（调用功能模块）
 
 ---
 
-### 3. 能力模块边界
+### 3. 功能模块边界
 
 **职责范围**：
 - ✅ 具体业务逻辑实现
@@ -57,19 +58,19 @@
 - ✅ 第三方 API 调用
 
 **不负责**：
-- ❌ 数据存储（通过 MCP 调用 User Portal）
+- ❌ 数据存储（通过 MCP 调用 Web Platform）
 - ❌ 对话管理
 - ❌ 用户认证
 
 **对外接口**：
-- Capability API（被 Unified AI Agent 调用）
-- MCP Client（调用 User Portal 工具）
+- Module API（被 AI Orchestrator 调用）
+- MCP Client（调用 Web Platform 工具）
 
 ---
 
 ## 接口协议定义（Interface Protocols）
 
-### 1. WebSocket 协议（前端 ↔ Unified AI Agent）
+### 1. WebSocket 协议（前端 ↔ AI Orchestrator）
 
 #### 连接建立
 
@@ -156,7 +157,7 @@ Headers:
 
 ---
 
-### 2. MCP 协议（Unified AI Agent ↔ User Portal）
+### 2. MCP 协议（AI Orchestrator ↔ Web Platform）
 
 #### 连接建立
 
@@ -170,7 +171,7 @@ mcp_client = MCPClient(
 
 #### 工具定义
 
-**User Portal 提供的 MCP 工具**：
+**Web Platform 提供的 MCP 工具**：
 
 ```json
 {
@@ -331,61 +332,62 @@ mcp_client = MCPClient(
 
 ### MCP 工具完整清单（Complete MCP Tools List）
 
-User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
+Web Platform 作为 MCP Server，为 AI Orchestrator 提供以下工具：
 
 #### 素材管理工具（Creative Management Tools）
 
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
-| `get_creatives` | 获取素材列表 | Creative Capability 查询素材 |
-| `get_creative` | 获取单个素材详情 | Creative Capability 获取素材信息 |
-| `create_creative` | 创建新素材 | Creative Capability 存储生成的素材 |
-| `update_creative` | 更新素材元数据 | Creative Capability 更新素材评分/标签 |
-| `delete_creative` | 删除素材 | Creative Capability 删除素材 |
+| `get_creatives` | 获取素材列表 | Ad Creative 查询素材 |
+| `get_creative` | 获取单个素材详情 | Ad Creative 获取素材信息 |
+| `create_creative` | 创建新素材 | Ad Creative 存储生成的素材 |
+| `update_creative` | 更新素材元数据 | Ad Creative 更新素材评分/标签 |
+| `delete_creative` | 删除素材 | Ad Creative 删除素材 |
+| `get_upload_url` | 获取 S3 预签名上传 URL | Ad Creative 上传素材文件 |
 
 #### 报表数据工具（Reporting Data Tools）
 
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
-| `get_reports` | 获取报表数据 | Reporting Capability 查询广告数据 |
-| `get_metrics` | 获取指标数据 | Reporting Capability 获取时序数据 |
-| `save_metrics` | 保存指标数据 | Reporting Capability 存储抓取的数据 |
-| `analyze_performance` | 分析广告表现 | Reporting Capability 分析数据 |
+| `get_reports` | 获取报表数据 | Ad Performance 查询广告数据 |
+| `get_metrics` | 获取指标数据 | Ad Performance 获取时序数据 |
+| `save_metrics` | 保存指标数据 | Ad Performance 存储抓取的数据 |
+| `analyze_performance` | 分析广告表现 | Ad Performance 分析数据 |
 
 #### 落地页管理工具（Landing Page Management Tools）
 
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
-| `get_landing_pages` | 获取落地页列表 | Landing Page Capability 查询落地页 |
-| `get_landing_page` | 获取单个落地页 | Landing Page Capability 获取落地页详情 |
-| `create_landing_page` | 创建落地页 | Landing Page Capability 存储生成的落地页 |
-| `update_landing_page` | 更新落地页 | Landing Page Capability 更新落地页内容 |
-| `delete_landing_page` | 删除落地页 | Landing Page Capability 删除落地页 |
+| `get_landing_pages` | 获取落地页列表 | Landing Page 查询落地页 |
+| `get_landing_page` | 获取单个落地页 | Landing Page 获取落地页详情 |
+| `create_landing_page` | 创建落地页 | Landing Page 存储生成的落地页 |
+| `update_landing_page` | 更新落地页 | Landing Page 更新落地页内容 |
+| `delete_landing_page` | 删除落地页 | Landing Page 删除落地页 |
 
 #### 投放管理工具（Campaign Management Tools）
 
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
-| `get_campaigns` | 获取广告系列列表 | Ad Engine Capability 查询广告 |
-| `get_campaign` | 获取单个广告系列 | Ad Engine Capability 获取广告详情 |
-| `create_campaign` | 创建广告系列 | Ad Engine Capability 创建广告 |
-| `update_campaign` | 更新广告系列 | Ad Engine Capability 更新广告状态/预算 |
-| `delete_campaign` | 删除广告系列 | Ad Engine Capability 删除广告 |
+| `get_campaigns` | 获取广告系列列表 | Campaign Automation 查询广告 |
+| `get_campaign` | 获取单个广告系列 | Campaign Automation 获取广告详情 |
+| `create_campaign` | 创建广告系列 | Campaign Automation 创建广告 |
+| `update_campaign` | 更新广告系列 | Campaign Automation 更新广告状态/预算 |
+| `delete_campaign` | 删除广告系列 | Campaign Automation 删除广告 |
 
 #### 市场洞察工具（Market Intelligence Tools）
 
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
-| `save_insight` | 保存洞察结果 | Market Intelligence Capability 存储分析结果 |
-| `get_insights` | 获取历史洞察 | Market Intelligence Capability 查询历史分析 |
-| `analyze_competitor` | 分析竞品 | Market Intelligence Capability 竞品分析 |
-| `get_trends` | 获取市场趋势 | Market Intelligence Capability 趋势分析 |
+| `save_insight` | 保存洞察结果 | Market Insights 存储分析结果 |
+| `get_insights` | 获取历史洞察 | Market Insights 查询历史分析 |
+| `analyze_competitor` | 分析竞品 | Market Insights 竞品分析 |
+| `get_trends` | 获取市场趋势 | Market Insights 趋势分析 |
 
 #### 用户管理工具（User Management Tools）
 
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
-| `get_user_info` | 获取用户信息 | 所有 Capability 获取用户数据 |
+| `get_user_info` | 获取用户信息 | 所有功能模块获取用户数据 |
 
 #### Credit 计费工具（Credit Billing Tools）
 
@@ -538,16 +540,16 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
 
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
-| `save_conversation` | 保存对话历史 | Unified AI Agent 持久化对话 |
-| `get_conversation_history` | 获取历史对话 | Unified AI Agent 恢复对话上下文 |
-| `clear_conversation` | 清除对话上下文 | Unified AI Agent 开始新对话 |
-| `get_conversation_list` | 获取用户对话列表 | User Portal 显示对话历史 |
+| `save_conversation` | 保存对话历史 | AI Orchestrator 持久化对话 |
+| `get_conversation_history` | 获取历史对话 | AI Orchestrator 恢复对话上下文 |
+| `clear_conversation` | 清除对话上下文 | AI Orchestrator 开始新对话 |
+| `get_conversation_list` | 获取用户对话列表 | Web Platform 显示对话历史 |
 
 #### 广告账户管理工具（Ad Account Management Tools）
 
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
-| `get_ad_account_token` | 获取广告账户访问令牌 | Ad Engine/Reporting Capability 调用广告平台 API |
+| `get_ad_account_token` | 获取广告账户访问令牌 | Campaign Automation/Ad Performance 调用广告平台 API |
 | `list_ad_accounts` | 列出用户绑定的所有广告账户 | 选择操作账户 |
 | `get_active_ad_account` | 获取当前选中的广告账户 | 确定操作目标账户 |
 | `set_active_ad_account` | 设置当前操作的广告账户 | 切换操作账户 |
@@ -558,8 +560,75 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
 | 工具名称 | 描述 | 使用场景 |
 |---------|------|---------|
 | `save_lp_event` | 保存落地页事件 | 落地页追踪脚本上报事件 |
-| `get_lp_events` | 获取落地页事件列表 | Reporting Capability 分析转化数据 |
+| `get_lp_events` | 获取落地页事件列表 | Ad Performance 分析转化数据 |
 | `get_lp_conversion_summary` | 获取落地页转化摘要 | 落地页性能分析 |
+
+#### 通知管理工具（Notification Management Tools）
+
+| 工具名称 | 描述 | 使用场景 |
+|---------|------|---------|
+| `create_notification` | 创建通知 | 所有功能模块发送通知给用户 |
+| `get_notifications` | 获取通知列表 | Web Platform 显示通知中心 |
+| `mark_notification_read` | 标记通知为已读 | 用户查看通知 |
+| `get_unread_count` | 获取未读通知数量 | Web Platform 显示未读徽章 |
+
+##### create_notification 工具详情
+
+**请求参数**：
+```json
+{
+  "user_id": "user_123",
+  "type": "urgent",
+  "category": "ad_account_token_expired",
+  "title": "广告账户授权已过期",
+  "message": "您的 Meta 广告账户授权已过期，请重新授权以继续使用。",
+  "action_url": "/settings/ad-accounts",
+  "action_text": "重新授权",
+  "metadata": {
+    "ad_account_id": "act_123456",
+    "platform": "meta"
+  }
+}
+```
+
+**返回结果**：
+```json
+{
+  "status": "success",
+  "notification_id": "notif_789",
+  "created_at": "2024-11-26T10:00:00Z",
+  "channels_sent": ["in_app", "email"]
+}
+```
+
+#### 文件上传工具（File Upload Tools）
+
+| 工具名称 | 描述 | 使用场景 |
+|---------|------|---------|
+| `get_upload_url` | 获取 S3 预签名上传 URL | Ad Creative/Landing Page 上传文件 |
+
+##### get_upload_url 工具详情
+
+**请求参数**：
+```json
+{
+  "user_id": "user_123",
+  "file_name": "creative_001.jpg",
+  "file_type": "image/jpeg",
+  "file_size": 2048576,
+  "purpose": "creative"
+}
+```
+
+**返回结果**：
+```json
+{
+  "status": "success",
+  "upload_url": "https://aae-creatives.s3.amazonaws.com/user_123/creative_001.jpg?X-Amz-Algorithm=...",
+  "file_url": "https://cdn.aae.com/creatives/user_123/creative_001.jpg",
+  "expires_at": "2024-11-26T11:00:00Z"
+}
+```
 
 ---
 
@@ -572,6 +641,7 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
 | P0 | `check_credit` | Credit 计费 | 极高（每次操作前） |
 | P0 | `deduct_credit` | Credit 计费 | 极高（每次操作后） |
 | P0 | `create_creative` | 素材管理 | 高 |
+| P0 | `get_upload_url` | 文件上传 | 高 |
 | P0 | `create_campaign` | 投放管理 | 高 |
 | P0 | `get_reports` | 报表数据 | 高 |
 | P1 | `get_credit_balance` | Credit 计费 | 中 |
@@ -579,13 +649,76 @@ User Portal 作为 MCP Server，为 Unified AI Agent 提供以下工具：
 | P1 | `get_campaigns` | 投放管理 | 中 |
 | P1 | `save_metrics` | 报表数据 | 中 |
 | P1 | `create_landing_page` | 落地页管理 | 中 |
+| P1 | `create_notification` | 通知管理 | 中 |
 | P2 | `refund_credit` | Credit 计费 | 低（失败时） |
 | P2 | `update_creative` | 素材管理 | 低 |
 | P2 | `update_campaign` | 投放管理 | 低 |
 | P2 | `analyze_competitor` | 市场洞察 | 低 |
 | P2 | `get_trends` | 市场洞察 | 低 |
+| P2 | `get_notifications` | 通知管理 | 低 |
+| P2 | `mark_notification_read` | 通知管理 | 低 |
 
 ---
+
+#### get_upload_url 工具详情
+
+**请求参数**：
+```json
+{
+  "user_id": "user_123",
+  "file_name": "creative_001.jpg",
+  "file_type": "image/jpeg",
+  "file_size": 2048576
+}
+```
+
+**返回结果**：
+```json
+{
+  "status": "success",
+  "upload_url": "https://aae-creatives.s3.amazonaws.com/user_123/creative_001.jpg?X-Amz-Algorithm=...",
+  "file_url": "https://cdn.aae.com/creatives/user_123/creative_001.jpg",
+  "expires_at": "2024-11-26T11:00:00Z"
+}
+```
+
+**使用流程**：
+```python
+# 1. Ad Creative 获取预签名 URL
+upload_info = await mcp_client.call_tool(
+    "get_upload_url",
+    {
+        "user_id": context["user_id"],
+        "file_name": "creative_001.jpg",
+        "file_type": "image/jpeg",
+        "file_size": 2048576
+    }
+)
+
+# 2. Ad Creative 使用预签名 URL 上传文件
+async with aiohttp.ClientSession() as session:
+    async with session.put(
+        upload_info["upload_url"],
+        data=file_content,
+        headers={"Content-Type": "image/jpeg"}
+    ) as response:
+        if response.status == 200:
+            print("上传成功")
+
+# 3. Ad Creative 调用 create_creative 存储元数据
+result = await mcp_client.call_tool(
+    "create_creative",
+    {
+        "user_id": context["user_id"],
+        "file_url": upload_info["file_url"],
+        "metadata": {
+            "product_url": "https://shop.com/product",
+            "style": "modern",
+            "score": 92
+        }
+    }
+)
+```
 
 #### 调用示例
 
@@ -614,14 +747,14 @@ result = await mcp_client.call_tool(
 
 ---
 
-### 3. Capability Module API（Unified AI Agent ↔ 能力模块）
+### 3. Module API（AI Orchestrator ↔ 功能模块）
 
 #### 接口定义
 
-每个能力模块提供统一的接口：
+每个功能模块提供统一的接口：
 
 ```python
-class CapabilityModule:
+class FunctionalModule:
     async def execute(
         self,
         action: str,
@@ -642,11 +775,11 @@ class CapabilityModule:
         pass
 ```
 
-#### Creative Capability
+#### Ad Creative
 
 ```python
 # 生成素材
-result = await creative_capability.execute(
+result = await ad_creative.execute(
     action="generate_creative",
     parameters={
         "product_url": "https://shop.com/product",
@@ -667,11 +800,11 @@ result = await creative_capability.execute(
 }
 ```
 
-#### Market Intelligence Capability
+#### Market Insights
 
 ```python
 # 分析竞品
-result = await market_intelligence_capability.execute(
+result = await market_insights.execute(
     action="analyze_competitor",
     parameters={
         "competitor_url": "https://competitor.com/product"
@@ -697,11 +830,11 @@ result = await market_intelligence_capability.execute(
 }
 ```
 
-#### Reporting Capability
+#### Ad Performance
 
 ```python
 # 获取报表
-result = await reporting_capability.execute(
+result = await performance_analytics.execute(
     action="get_performance_report",
     parameters={
         "date_range": {
@@ -731,11 +864,11 @@ result = await reporting_capability.execute(
 }
 ```
 
-#### Landing Page Capability
+#### Landing Page
 
 ```python
 # 生成落地页
-result = await landing_page_capability.execute(
+result = await landing_page.execute(
     action="create_landing_page",
     parameters={
         "product_url": "https://shop.com/product",
@@ -757,11 +890,11 @@ result = await landing_page_capability.execute(
 }
 ```
 
-#### Ad Engine Capability
+#### Campaign Automation
 
 ```python
 # 创建广告
-result = await ad_engine_capability.execute(
+result = await campaign_automation.execute(
     action="create_campaign",
     parameters={
         "budget": 100,
@@ -794,7 +927,7 @@ result = await ad_engine_capability.execute(
 1. 用户在前端输入："帮我生成素材"
    │
    ▼
-2. 前端通过 WebSocket 发送消息到 Unified AI Agent
+2. 前端通过 WebSocket 发送消息到 AI Orchestrator
    {
      "type": "user_message",
      "content": "帮我生成素材",
@@ -802,30 +935,30 @@ result = await ad_engine_capability.execute(
    }
    │
    ▼
-3. Unified AI Agent 识别意图 → Creative Capability
+3. AI Orchestrator 识别意图 → Ad Creative
    │
    ▼
-4. Creative Capability 调用 AI 模型生成素材
+4. Ad Creative 调用 AI 模型生成素材
    │
    ▼
-5. Creative Capability 通过 MCP 调用 User Portal
+5. Ad Creative 通过 MCP 调用 Web Platform
    mcp_client.call_tool("create_creative", {...})
    │
    ▼
-6. User Portal 存储素材到 S3 和 PostgreSQL
+6. Web Platform 存储素材到 S3 和 PostgreSQL
    │
    ▼
-7. User Portal 返回结果给 Creative Capability
+7. Web Platform 返回结果给 Ad Creative
    {
      "creative_id": "creative_789",
      "url": "https://cdn.aae.com/..."
    }
    │
    ▼
-8. Creative Capability 返回结果给 Unified AI Agent
+8. Ad Creative 返回结果给 AI Orchestrator
    │
    ▼
-9. Unified AI Agent 通过 WebSocket 返回给前端
+9. AI Orchestrator 通过 WebSocket 返回给前端
    {
      "type": "agent_message",
      "content": "✅ 素材已生成！"
@@ -841,26 +974,26 @@ result = await ad_engine_capability.execute(
 1. 用户："帮我生成素材并创建广告"
    │
    ▼
-2. Unified AI Agent 识别多意图
-   - 意图1: 生成素材 (Creative Capability)
-   - 意图2: 创建广告 (Ad Engine Capability)
+2. AI Orchestrator 识别多意图
+   - 意图1: 生成素材 (Ad Creative)
+   - 意图2: 创建广告 (Campaign Automation)
    │
    ▼
 3. 协调器规划执行顺序
-   Step 1: Creative Capability
-   Step 2: Ad Engine Capability
+   Step 1: Ad Creative
+   Step 2: Campaign Automation
    │
    ▼
-4. 执行 Step 1: Creative Capability
+4. 执行 Step 1: Ad Creative
    - 生成素材
-   - 通过 MCP 存储到 User Portal
+   - 通过 MCP 存储到 Web Platform
    - 返回 creative_ids
    │
    ▼
-5. 执行 Step 2: Ad Engine Capability
+5. 执行 Step 2: Campaign Automation
    - 使用 Step 1 的 creative_ids
    - 创建 Campaign
-   - 通过 MCP 存储到 User Portal
+   - 通过 MCP 存储到 Web Platform
    - 返回 campaign_id
    │
    ▼
@@ -930,11 +1063,11 @@ result = await ad_engine_capability.execute(
 | 3003 | MCP_EXECUTION_FAILED | 执行失败 | 是 | 重试执行 |
 | 3004 | MCP_TIMEOUT | 执行超时 | 是 | 增加超时时间 |
 
-#### 能力模块错误 (4xxx)
+#### 功能模块错误 (4xxx)
 
 | 代码 | 类型 | 说明 | 是否可重试 | 处理建议 |
 |------|------|------|-----------|---------|
-| 4000 | CAPABILITY_NOT_AVAILABLE | 能力模块不可用 | 是 | 稍后重试 |
+| 4000 | MODULE_NOT_AVAILABLE | 功能模块不可用 | 是 | 稍后重试 |
 | 4001 | AI_MODEL_FAILED | AI 模型失败 | 是 | 切换备选模型 |
 | 4002 | EXTERNAL_API_FAILED | 外部 API 失败 | 是 | 重试调用 |
 | 4003 | GENERATION_FAILED | 生成失败 | 是 | 重新生成 |
@@ -966,6 +1099,8 @@ result = await ad_engine_capability.execute(
 | 6008 | LANDING_PAGE_DOMAIN_NOT_VERIFIED | 落地页域名未验证 | 否 | 提示验证域名 |
 | 6009 | RESERVED | 保留 | - | - |
 | 6010 | FEATURE_NOT_AVAILABLE | 功能未开放 | 否 | 提示升级套餐 |
+| 6011 | INSUFFICIENT_CREDITS | Credit 余额不足 | 否 | 提示用户充值 |
+| 6012 | CREDIT_DEDUCTION_FAILED | Credit 扣减失败 | 是 | 重试操作 |
 
 ---
 
@@ -1006,19 +1141,95 @@ logger.error(
 #### 3. 用户友好的错误消息
 
 ```python
-# 错误消息映射
+# 错误消息映射（中英文）
 ERROR_MESSAGES = {
     # Credit 相关错误
-    "6011": "Credit 余额不足，请充值后继续使用",
-    "6012": "扣费失败，请重试",
+    "6011": {
+        "zh": "Credit 余额不足，请充值后继续使用",
+        "en": "Insufficient credits. Please recharge to continue.",
+        "action": "前往充值",
+        "action_url": "/billing/recharge"
+    },
+    "6012": {
+        "zh": "Credit 扣减失败，请重试",
+        "en": "Credit deduction failed. Please try again.",
+        "action": "重试",
+        "action_url": None
+    },
+
+    # 广告账户错误
+    "6000": {
+        "zh": "广告账户未绑定，请先绑定账户",
+        "en": "Ad account not bound. Please bind your account first.",
+        "action": "绑定账户",
+        "action_url": "/settings/ad-accounts"
+    },
+    "6001": {
+        "zh": "广告账户授权已过期，请重新授权",
+        "en": "Ad account token expired. Please re-authorize.",
+        "action": "重新授权",
+        "action_url": "/settings/ad-accounts"
+    },
 
     # AI 服务错误
-    "4001": "AI 服务暂时不可用，请稍后重试",
-    "4003": "生成失败，请稍后重试",
+    "4001": {
+        "zh": "AI 服务暂时不可用，请稍后重试",
+        "en": "AI service temporarily unavailable. Please try again later.",
+        "action": "稍后重试",
+        "action_url": None
+    },
+    "4003": {
+        "zh": "生成失败，请稍后重试",
+        "en": "Generation failed. Please try again later.",
+        "action": "重试",
+        "action_url": None
+    },
 
     # 数据错误
-    "5000": "未找到相关数据，请检查输入"
+    "5000": {
+        "zh": "未找到相关数据，请检查输入",
+        "en": "Data not found. Please check your input.",
+        "action": None,
+        "action_url": None
+    },
+    "5003": {
+        "zh": "文件上传失败，请检查网络连接后重试",
+        "en": "File upload failed. Please check your connection and try again.",
+        "action": "重试",
+        "action_url": None
+    },
+
+    # 网络错误
+    "2000": {
+        "zh": "连接失败，正在自动重连...",
+        "en": "Connection failed. Reconnecting...",
+        "action": None,
+        "action_url": None
+    },
+    "2003": {
+        "zh": "连接超时，请检查网络连接",
+        "en": "Connection timeout. Please check your network.",
+        "action": "刷新页面",
+        "action_url": None
+    }
 }
+
+# 获取用户友好的错误消息
+def get_user_friendly_error(error_code: str, language: str = "zh") -> dict:
+    """获取用户友好的错误消息"""
+    error_info = ERROR_MESSAGES.get(error_code, {
+        "zh": "发生未知错误，请联系客服",
+        "en": "Unknown error occurred. Please contact support.",
+        "action": "联系客服",
+        "action_url": "/support"
+    })
+    
+    return {
+        "message": error_info.get(language, error_info["zh"]),
+        "action": error_info.get("action"),
+        "action_url": error_info.get("action_url"),
+        "error_code": error_code
+    }
 ```
 
 ---
@@ -1066,7 +1277,7 @@ ERROR_MESSAGES = {
 }
 ```
 
-#### Capability 错误
+#### 功能模块错误
 
 ```json
 {
@@ -1152,14 +1363,14 @@ Authorization: Bearer <jwt_token>
 mcp_client = MCPClient(
     server_url="http://localhost:8000/mcp",
     auth_token="<service_token>",
-    service_name="unified-ai-agent"
+    service_name="ai-orchestrator"
 )
 ```
 
 ### 权限验证
 
 ```python
-# User Portal 验证用户权限
+# Web Platform 验证用户权限
 def verify_permission(user_id: str, action: str) -> bool:
     # 检查用户订阅状态
     # 检查使用限额

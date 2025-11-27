@@ -11,7 +11,7 @@
 AAE 系统采用**统一 AI Agent + 5 种能力模块**的架构：
 
 - **统一对话入口**：用户只需与一个 AI Agent 对话
-- **User Portal**：核心数据管理平台，存储所有业务数据
+- **Web Platform**：核心数据管理平台，存储所有业务数据
 - **5 种能力模块**：Creative、Market Intelligence、Reporting、Landing Page、Ad Engine
 - **MCP 协议**：Agent 与 Portal 之间的通信协议
 - **智能协调器**：根据用户意图调用相应能力模块
@@ -28,7 +28,7 @@ AAE 系统采用**统一 AI Agent + 5 种能力模块**的架构：
 
 ```
 用户: 帮我生成素材并创建广告
-AI Agent: [自动调用 Creative Capability + Ad Engine Capability]
+AI Agent: [自动调用 Ad Creative + Campaign Automation]
          ✅ 素材和广告都已完成！
 ```
 
@@ -42,7 +42,7 @@ AI Agent 会自动：
 
 ## 📁 需求文档列表
 
-### 1. [User Portal - 用户入口 + 核心数据管理平台](./user-portal/requirements.md)
+### 1. [Web Platform - Web 平台（前端 + 后端 + 数据管理）](./web-platform/requirements.md)
 
 **职责**：
 - **用户入口**：提供 Web 界面
@@ -90,7 +90,7 @@ AI Agent 会自动：
 
 ---
 
-### 2. [统一 AI Agent - 对话式智能助手](./unified-ai-agent/requirements.md)
+### 2. [AI Orchestrator - AI 协调器（对话引擎 + 能力调度）](./ai-orchestrator/requirements.md)
 
 **交互方式**：统一对话入口 ✅
 
@@ -103,11 +103,11 @@ AI Agent 会自动：
 **对话示例**：
 ```
 用户: 帮我生成素材并创建广告
-AI Agent: [调用 Creative Capability]
+AI Agent: [调用 Ad Creative]
          正在生成 10 张素材...
          ✅ 素材已生成
          
-         [调用 Ad Engine Capability]
+         [调用 Campaign Automation]
          正在创建广告...
          ✅ 广告已创建
          
@@ -116,31 +116,31 @@ AI Agent: [调用 Creative Capability]
 
 **5 种能力模块**：
 
-#### 2.1 Creative Capability（素材生成能力）
+#### 2.1 Ad Creative（广告素材生成）
 - 生成广告素材（图片）
 - 分析竞品素材
 - 评估素材质量
 - MCP 工具：`generate_creative`, `analyze_creative`
 
-#### 2.2 Market Intelligence Capability（市场洞察能力）
+#### 2.2 Market Insights（市场洞察）
 - 竞品分析
 - 趋势洞察
 - 策略建议
 - MCP 工具：`analyze_competitor`, `get_trends`
 
-#### 2.3 Reporting Capability（报表能力）
+#### 2.3 Ad Performance（广告投放报表）
 - 数据抓取
 - AI 分析
 - 异常检测
 - MCP 工具：`get_reports`, `analyze_performance`
 
-#### 2.4 Landing Page Capability（落地页能力）
+#### 2.4 Landing Page（落地页生成）
 - 生成落地页
 - 多语言支持
 - A/B 测试
 - MCP 工具：`create_landing_page`, `ab_test`
 
-#### 2.5 Ad Engine Capability（投放引擎能力）
+#### 2.5 Campaign Automation（广告投放自动化）
 - 创建广告
 - 优化预算
 - 规则引擎
@@ -164,14 +164,14 @@ AI Agent: [调用 Creative Capability]
 
 2. AI Agent (意图识别):
    - 识别意图：需要生成素材 + 创建广告
-   - 规划执行：Creative Capability → Ad Engine Capability
+   - 规划执行：Ad Creative → Campaign Automation
 
 3. AI Agent (执行):
-   [调用 Creative Capability]
+   [调用 Ad Creative]
    - 调用 MCP: generate_creative()
    - 生成 10 张素材
    
-   [调用 Ad Engine Capability]
+   [调用 Campaign Automation]
    - 调用 MCP: create_campaign()
    - 创建广告并挂载素材
 
@@ -189,14 +189,14 @@ AI Agent: [调用 Creative Capability]
 
 2. AI Agent (意图识别):
    - 识别意图：用户遇到问题，需要诊断
-   - 规划执行：Reporting Capability → Market Intelligence Capability
+   - 规划执行：Ad Performance → Market Insights
 
 3. AI Agent (执行):
-   [调用 Reporting Capability]
+   [调用 Ad Performance]
    - 调用 MCP: get_reports()
    - 分析：CTR 偏低、CPA 偏高
    
-   [调用 Market Intelligence Capability]
+   [调用 Market Insights]
    - 调用 MCP: analyze_competitor()
    - 发现：竞品素材更现代
 
@@ -220,13 +220,13 @@ AI Agent: [调用 Creative Capability]
 
 | 周次 | 模块 | 状态 |
 |------|------|------|
-| 1-2 周 | User Portal（核心数据平台 + MCP Server） | 📝 需求已完成 |
-| 3-6 周 | 统一 AI Agent（对话理解 + 协调器） | 🔄 需要创建 |
-| 3-4 周 | Creative Capability（素材生成能力） | 📝 需求已完成 |
-| 5 周 | Reporting Capability（报表能力） | 📝 需求已完成 |
-| 6 周 | Market Intelligence + Landing Page Capability | 📝 需求已完成 |
-| 9-10 周 | Ad Engine Capability（投放引擎能力） | 📝 需求已完成 |
-| 9-10 周 | 能力模块集成与协调器优化 | 🔄 待开发 |
+| 1-2 周 | Web Platform（核心平台 + MCP Server） | 📝 需求已完成 |
+| 3-6 周 | AI Orchestrator（对话引擎 + 协调器） | 📝 需求已完成 |
+| 3-4 周 | Ad Creative（广告素材生成） | 📝 需求已完成 |
+| 5 周 | Ad Performance（广告投放报表） | 📝 需求已完成 |
+| 6 周 | Market Insights + Landing Page | 📝 需求已完成 |
+| 9-10 周 | Campaign Automation（广告投放自动化） | 📝 需求已完成 |
+| 9-10 周 | 模块集成与优化 | 🔄 待开发 |
 
 ---
 
@@ -260,19 +260,19 @@ AI Agent: [调用 Creative Capability]
 ## 📝 下一步行动
 
 ### 立即行动
-1. ✅ User Portal 需求已完成
-2. ✅ Creative Capability 需求已完成
-3. ✅ Market Intelligence Capability 需求已完成
-4. ✅ Ad Engine Capability 需求已完成
-5. ✅ Landing Page Capability 需求已完成
-6. ✅ Reporting Capability 需求已完成
-7. ✅ Unified AI Agent 需求已完成
+1. ✅ Web Platform 需求已完成
+2. ✅ Ad Creative 需求已完成
+3. ✅ Market Insights 需求已完成
+4. ✅ Campaign Automation 需求已完成
+5. ✅ Landing Page 需求已完成
+6. ✅ Ad Performance 需求已完成
+7. ✅ AI Orchestrator 需求已完成
 8. ✅ 旧 Agent 文件夹已清理
 
 ### 后续步骤
 1. 为每个模块创建 `design.md`（设计文档）
 2. 为每个模块创建 `tasks.md`（任务清单）
-3. 开始开发 User Portal
+3. 开始开发 Web Platform
 4. 逐步开发各个 Agent
 
 ---
@@ -280,9 +280,10 @@ AI Agent: [调用 Creative Capability]
 ## 📚 参考资料
 
 - [系统架构文档](./ARCHITECTURE.md)
+- [接口协议文档](./INTERFACES.md)
+- [需求修复总结](./REQUIREMENTS_FIX_SUMMARY.md)
 - [MCP Protocol](https://modelcontextprotocol.io/)
 - [Google Gemini Agent Example](https://codelabs.developers.google.com/codelabs/currency-agent?hl=zh-cn#0)
-- [需求规划文档](../requirements_plan.md)
 
 ---
 
@@ -292,7 +293,7 @@ AI Agent: [调用 Creative Capability]
 2. **智能意图识别**：AI 自动理解用户需求并调用相应能力
 3. **能力模块化**：5 种能力模块可独立开发和扩展
 4. **智能协调**：自动协调多个能力模块完成复杂任务
-5. **中心化数据**：User Portal 统一管理数据，避免数据分散
+5. **中心化数据**：Web Platform 统一管理数据，避免数据分散
 6. **MCP 协议**：标准化的通信协议，易于扩展新能力
 7. **AI 驱动**：从素材生成到广告优化，全流程 AI 自动化
 

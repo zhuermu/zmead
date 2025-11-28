@@ -61,7 +61,7 @@ class AdAccountResponse(BaseModel):
 class AdAccountListResponse(BaseModel):
     """Response for listing ad accounts."""
 
-    accounts: list[AdAccountResponse]
+    items: list[AdAccountResponse]
     total: int
 
 

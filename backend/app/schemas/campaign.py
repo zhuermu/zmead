@@ -94,7 +94,7 @@ class CampaignResponse(BaseModel):
 class CampaignListResponse(BaseModel):
     """Response for listing campaigns."""
 
-    campaigns: list[CampaignResponse]
+    items: list[CampaignResponse]
     total: int
     page: int
     page_size: int

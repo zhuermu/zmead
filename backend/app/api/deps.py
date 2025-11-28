@@ -1,11 +1,15 @@
 """API dependencies for authentication and database access."""
 
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.user import User
@@ -21,6 +25,10 @@ async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     """Get current authenticated user from JWT token."""
+    # Development mode: skip authentication and use/create test user
+    if settings.disable_auth:
+        return await _get_or_create_dev_user(db, request)
+
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -67,6 +75,42 @@ async def get_current_user(
     request.state.user_id = user.id
     request.state.user = user
 
+    return user
+
+
+async def _get_or_create_dev_user(db: AsyncSession, request: Request) -> User:
+    """Get or create development test user when auth is disabled."""
+    dev_email = "dev@example.com"
+    
+    # Try to find existing dev user
+    stmt = select(User).where(User.email == dev_email)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        # Create dev user
+        user = User(
+            email=dev_email,
+            display_name="Dev User",
+            avatar_url=None,
+            oauth_provider="dev",
+            oauth_id="dev-user-1",
+            gifted_credits=Decimal("10000.00"),  # Generous credits for testing
+            purchased_credits=Decimal("0.00"),
+            last_login_at=datetime.now(UTC),
+        )
+        db.add(user)
+        await db.flush()
+        await db.refresh(user)
+    else:
+        # Update last login
+        user.last_login_at = datetime.now(UTC)
+        await db.flush()
+    
+    # Set user_id in request state for rate limiting
+    request.state.user_id = user.id
+    request.state.user = user
+    
     return user
 
 

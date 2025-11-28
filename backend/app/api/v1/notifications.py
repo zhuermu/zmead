@@ -43,7 +43,7 @@ async def get_notifications(
     total = await service.get_total_count(current_user.id, unread_only=unread_only)
 
     return NotificationListResponse(
-        notifications=[NotificationResponse.model_validate(n) for n in notifications],
+        items=[NotificationResponse.model_validate(n) for n in notifications],
         total=total,
         unread_count=unread_count,
     )

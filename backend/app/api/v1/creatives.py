@@ -49,7 +49,7 @@ async def list_creatives(
     )
 
     return CreativeListResponse(
-        creatives=[CreativeResponse.model_validate(c) for c in result["creatives"]],
+        items=[CreativeResponse.model_validate(c) for c in result["creatives"]],
         total=result["total"],
         page=result["page"],
         page_size=result["page_size"],

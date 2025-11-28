@@ -100,7 +100,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { user, logout } = useAuth();
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-gray-50">
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div
@@ -113,7 +113,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       <aside
         className={`
           fixed inset-y-0 left-0 z-30 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out
-          lg:translate-x-0 lg:static lg:inset-0
+          lg:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
       >
@@ -164,9 +164,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </aside>
 
       {/* Main content */}
-      <div className="lg:pl-64">
+      <div className="flex-1 lg:ml-64">
         {/* Header */}
-        <header className="sticky top-0 z-10 bg-white shadow-sm">
+        <header className="sticky top-0 z-10 bg-white shadow-sm border-b border-gray-200">
           <div className="flex items-center justify-between h-16 px-4 sm:px-6 lg:px-8">
             {/* Mobile menu button */}
             <button

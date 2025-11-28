@@ -28,13 +28,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const { user, isAuthenticated, setUser, logout: clearStore } = useAuthStore();
 
   const refreshUser = useCallback(async () => {
-    if (!hasStoredTokens()) {
-      setUser(null);
-      setIsLoading(false);
-      return;
-    }
-
     try {
+      // Try to get current user (works in dev mode without token)
       const userData = await getCurrentUser();
       setUser({
         id: userData.id,
@@ -44,9 +39,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         giftedCredits: userData.giftedCredits,
         purchasedCredits: userData.purchasedCredits,
       });
-    } catch {
-      // Token invalid or expired, clear auth state
-      clearStore();
+    } catch (error) {
+      // If no token and API call fails, clear auth state
+      if (!hasStoredTokens()) {
+        setUser(null);
+      } else {
+        // Token invalid or expired, clear auth state
+        clearStore();
+      }
     } finally {
       setIsLoading(false);
     }

@@ -57,7 +57,7 @@ class LandingPageResponse(BaseModel):
 class LandingPageListResponse(BaseModel):
     """Response for listing landing pages."""
 
-    landing_pages: list[LandingPageResponse]
+    items: list[LandingPageResponse]
     total: int
     page: int
     page_size: int

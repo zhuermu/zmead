@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +27,7 @@ interface Campaign {
 }
 
 interface CampaignListResponse {
-  campaigns: Campaign[];
+  items: Campaign[];
   total: number;
   page: number;
   page_size: number;
@@ -63,16 +64,16 @@ export default function CampaignsPage() {
       if (platformFilter) params.append("platform", platformFilter);
       if (statusFilter) params.append("status", statusFilter);
 
-      const response = await fetch(`/api/v1/campaigns?${params}`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/campaigns?${params}`, {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
         },
       });
 
       if (!response.ok) throw new Error("Failed to fetch campaigns");
 
       const data: CampaignListResponse = await response.json();
-      setCampaigns(data.campaigns);
+      setCampaigns(data.items);
       setTotal(data.total);
       setHasMore(data.has_more);
     } catch (error) {
@@ -132,7 +133,7 @@ export default function CampaignsPage() {
   };
 
   return (
-    <div className="container mx-auto p-6">
+    <DashboardLayout>
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
@@ -376,6 +377,6 @@ export default function CampaignsPage() {
           </div>
         )}
       </Card>
-    </div>
+    </DashboardLayout>
   );
 }

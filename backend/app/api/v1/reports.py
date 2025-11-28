@@ -52,7 +52,7 @@ async def list_metrics(
     )
 
     return MetricsListResponse(
-        metrics=[MetricsResponse.model_validate(m) for m in result["metrics"]],
+        items=[MetricsResponse.model_validate(m) for m in result["metrics"]],
         total=result["total"],
         page=result["page"],
         page_size=result["page_size"],

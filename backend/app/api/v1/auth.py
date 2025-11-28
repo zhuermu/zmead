@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.config import settings
 from app.schemas.auth import (
     AuthResponse,
     OAuthCallbackRequest,
@@ -114,3 +115,56 @@ async def get_current_user_info(current_user: CurrentUser) -> UserResponse:
         created_at=current_user.created_at,
         last_login_at=current_user.last_login_at,
     )
+
+
+@router.post("/dev/login", response_model=AuthResponse)
+async def dev_login(db: DbSession) -> AuthResponse:
+    """Development-only login endpoint that bypasses OAuth.
+    
+    Only available when DISABLE_AUTH=true in environment.
+    Creates or returns a test user with tokens.
+    """
+    if not settings.disable_auth:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Development login is only available when DISABLE_AUTH is enabled",
+        )
+    
+    auth_service = AuthService(db)
+    
+    # Get or create dev user
+    user, _ = await auth_service.get_or_create_user(
+        oauth_provider="dev",
+        oauth_id="dev-user-1",
+        email="dev@test.local",
+        display_name="Dev User",
+        avatar_url=None,
+    )
+    
+    # Create tokens
+    tokens = auth_service.create_tokens(user)
+    
+    return AuthResponse(
+        tokens=tokens,
+        user=UserResponse(
+            id=user.id,
+            email=user.email,
+            display_name=user.display_name,
+            avatar_url=user.avatar_url,
+            oauth_provider=user.oauth_provider,
+            gifted_credits=user.gifted_credits,
+            purchased_credits=user.purchased_credits,
+            total_credits=user.total_credits,
+            language=user.language,
+            timezone=user.timezone,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            last_login_at=user.last_login_at,
+        ),
+    )
+
+
+@router.get("/dev/status")
+async def dev_auth_status() -> dict[str, bool]:
+    """Check if development authentication mode is enabled."""
+    return {"disable_auth": settings.disable_auth}

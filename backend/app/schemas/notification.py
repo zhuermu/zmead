@@ -58,7 +58,7 @@ class NotificationResponse(BaseModel):
 class NotificationListResponse(BaseModel):
     """Response for notification list endpoint."""
 
-    notifications: list[NotificationResponse]
+    items: list[NotificationResponse]
     total: int
     unread_count: int
 

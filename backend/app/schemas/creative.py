@@ -68,7 +68,7 @@ class CreativeResponse(BaseModel):
 class CreativeListResponse(BaseModel):
     """Response for listing creatives."""
 
-    creatives: list[CreativeResponse]
+    items: list[CreativeResponse]
     total: int
     page: int
     page_size: int

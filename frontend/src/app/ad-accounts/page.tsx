@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +40,7 @@ export default function AdAccountsPage() {
       setLoading(true);
       setError(null);
       const response = await api.get("/ad-accounts");
-      setAccounts(response.data.accounts || []);
+      setAccounts(response.data.items || []);
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to load ad accounts");
     } finally {
@@ -101,16 +102,16 @@ export default function AdAccountsPage() {
 
   if (loading) {
     return (
-      <div className="container mx-auto py-8">
+      <DashboardLayout>
         <div className="flex items-center justify-center h-64">
           <RefreshCw className="w-8 h-8 animate-spin text-gray-400" />
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
   return (
-    <div className="container mx-auto py-8">
+    <DashboardLayout>
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
@@ -233,6 +234,6 @@ export default function AdAccountsPage() {
           ))}
         </div>
       )}
-    </div>
+    </DashboardLayout>
   );
 }

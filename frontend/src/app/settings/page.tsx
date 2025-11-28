@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ProfileSettings } from "@/components/settings/ProfileSettings";
@@ -19,7 +20,7 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-6xl">
+    <DashboardLayout>
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
         <p className="text-gray-600 mt-2">
@@ -60,6 +61,6 @@ export default function SettingsPage() {
           </Card>
         </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

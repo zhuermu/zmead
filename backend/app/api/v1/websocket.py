@@ -135,48 +135,65 @@ async def websocket_chat_endpoint(
     """
     # Authenticate user
     try:
-        # Get user from token
-        if not token:
-            raise WebSocketException(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="Missing authentication token"
-            )
-        
-        # Validate token and get user
-        from app.core.security import decode_token
+        from app.core.config import settings
         from app.core.database import get_db
         from app.services.auth import AuthService
         
-        payload = decode_token(token)
-        if not payload:
-            raise WebSocketException(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="Invalid or expired token"
-            )
-        
-        if payload.get("type") != "access":
-            raise WebSocketException(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="Invalid token type"
-            )
-        
-        user_id = payload.get("sub")
-        if not user_id:
-            raise WebSocketException(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="Invalid token"
-            )
-        
-        # Get database session and user
-        async for db in get_db():
-            auth_service = AuthService(db)
-            user = await auth_service.get_user_by_id(int(user_id))
-            if not user:
+        # Development mode: use dev user
+        if settings.disable_auth:
+            async for db in get_db():
+                from sqlalchemy import select
+                dev_email = "dev@example.com"
+                stmt = select(User).where(User.email == dev_email)
+                result = await db.execute(stmt)
+                user = result.scalar_one_or_none()
+                if not user:
+                    raise WebSocketException(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="Dev user not found"
+                    )
+                break
+        else:
+            # Production mode: validate token
+            if not token:
                 raise WebSocketException(
                     code=status.WS_1008_POLICY_VIOLATION,
-                    reason="User not found"
+                    reason="Missing authentication token"
                 )
-            break
+            
+            # Validate token and get user
+            from app.core.security import decode_token
+            
+            payload = decode_token(token)
+            if not payload:
+                raise WebSocketException(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Invalid or expired token"
+                )
+            
+            if payload.get("type") != "access":
+                raise WebSocketException(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Invalid token type"
+                )
+            
+            user_id = payload.get("sub")
+            if not user_id:
+                raise WebSocketException(
+                    code=status.WS_1008_POLICY_VIOLATION,
+                    reason="Invalid token"
+                )
+            
+            # Get database session and user
+            async for db in get_db():
+                auth_service = AuthService(db)
+                user = await auth_service.get_user_by_id(int(user_id))
+                if not user:
+                    raise WebSocketException(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="User not found"
+                    )
+                break
         
     except Exception as e:
         logger.error(f"WebSocket authentication failed: {e}")

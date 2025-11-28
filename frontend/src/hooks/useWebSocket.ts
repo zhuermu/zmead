@@ -149,7 +149,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       setLastError(null);
       
       // Get auth token
-      const token = localStorage.getItem('auth_token');
+      const token = localStorage.getItem('access_token');
       const wsUrl = token ? `${opts.url}?token=${token}` : opts.url;
       
       const ws = new WebSocket(wsUrl);

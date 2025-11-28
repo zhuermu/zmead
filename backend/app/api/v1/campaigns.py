@@ -53,7 +53,7 @@ async def list_campaigns(
     )
 
     return CampaignListResponse(
-        campaigns=[CampaignResponse.model_validate(c) for c in result["campaigns"]],
+        items=[CampaignResponse.model_validate(c) for c in result["campaigns"]],
         total=result["total"],
         page=result["page"],
         page_size=result["page_size"],

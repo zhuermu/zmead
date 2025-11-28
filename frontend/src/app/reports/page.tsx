@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -101,12 +102,13 @@ export default function ReportsPage() {
     return new Intl.NumberFormat('en-US').format(value);
   };
 
-  const formatPercentage = (value: number) => {
-    return `${(value * 100).toFixed(2)}%`;
+  const formatPercentage = (value: number | undefined) => {
+    return `${((value || 0) * 100).toFixed(2)}%`;
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <DashboardLayout>
+      <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold">Reports</h1>
@@ -198,9 +200,9 @@ export default function ReportsPage() {
               <DollarSign className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(metrics.spend)}</div>
+              <div className="text-2xl font-bold">{formatCurrency(metrics.spend || 0)}</div>
               <div className="flex items-center text-sm text-gray-600 mt-1">
-                <span>{formatNumber(metrics.impressions)} impressions</span>
+                <span>{formatNumber(metrics.impressions || 0)} impressions</span>
               </div>
             </CardContent>
           </Card>
@@ -212,10 +214,10 @@ export default function ReportsPage() {
               <TrendingUp className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{metrics.roas.toFixed(2)}x</div>
+              <div className="text-2xl font-bold">{metrics.roas?.toFixed(2) || '0.00'}x</div>
               <div className="flex items-center text-sm mt-1">
-                <span className={metrics.roas >= 2 ? 'text-green-600' : 'text-red-600'}>
-                  {metrics.roas >= 2 ? '✓ Good' : '⚠ Needs improvement'}
+                <span className={(metrics.roas || 0) >= 2 ? 'text-green-600' : 'text-red-600'}>
+                  {(metrics.roas || 0) >= 2 ? '✓ Good' : '⚠ Needs improvement'}
                 </span>
               </div>
             </CardContent>
@@ -228,9 +230,9 @@ export default function ReportsPage() {
               <Target className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(metrics.cpa)}</div>
+              <div className="text-2xl font-bold">{formatCurrency(metrics.cpa || 0)}</div>
               <div className="flex items-center text-sm text-gray-600 mt-1">
-                <span>{formatNumber(metrics.conversions)} conversions</span>
+                <span>{formatNumber(metrics.conversions || 0)} conversions</span>
               </div>
             </CardContent>
           </Card>
@@ -242,9 +244,9 @@ export default function ReportsPage() {
               <MousePointer className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{formatPercentage(metrics.ctr)}</div>
+              <div className="text-2xl font-bold">{formatPercentage(metrics.ctr || 0)}</div>
               <div className="flex items-center text-sm text-gray-600 mt-1">
-                <span>{formatNumber(metrics.clicks)} clicks</span>
+                <span>{formatNumber(metrics.clicks || 0)} clicks</span>
               </div>
             </CardContent>
           </Card>
@@ -292,6 +294,7 @@ export default function ReportsPage() {
       {!loading && metricsTableData.length > 0 && (
         <MetricsTable data={metricsTableData} />
       )}
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

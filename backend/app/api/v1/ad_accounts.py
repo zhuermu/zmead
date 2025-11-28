@@ -23,7 +23,7 @@ async def list_ad_accounts(
     """List all ad accounts for the current user."""
     service = AdAccountService(db)
     accounts = await service.list_ad_accounts(current_user.id)
-    return AdAccountListResponse(accounts=accounts, total=len(accounts))
+    return AdAccountListResponse(items=accounts, total=len(accounts))
 
 
 @router.post("", response_model=AdAccountResponse, status_code=status.HTTP_201_CREATED)

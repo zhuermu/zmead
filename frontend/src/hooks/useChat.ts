@@ -13,14 +13,17 @@ export function useChat() {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Use any type to bypass strict typing issues with the AI SDK
-  const chatHelpers: any = useVercelChat({});
-  
+  const chatHelpers: any = useVercelChat({
+    api: '/api/chat',
+    initialInput: '',
+  });
+
   const {
-    messages,
-    input,
+    messages = [],
+    input = '',
     handleInputChange,
     handleSubmit: originalHandleSubmit,
-    isLoading,
+    isLoading = false,
     error,
     reload,
     stop,

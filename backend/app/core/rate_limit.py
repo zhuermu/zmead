@@ -55,8 +55,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         call_next: Callable,
     ) -> Response:
         """Process request with rate limiting."""
-        # Skip rate limiting for health check and docs endpoints
-        if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"]:
+        # Skip rate limiting for health check, docs, and WebSocket endpoints
+        if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"] or request.url.path.startswith("/ws/"):
             return await call_next(request)
 
         # Get user identifier from request
@@ -123,7 +123,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         Returns:
             tuple of (allowed, remaining_requests, reset_timestamp)
         """
-        redis = get_redis()
+        redis = await get_redis()
         current_time = time.time()
         window_start = current_time - self.window_size
 
@@ -198,7 +198,7 @@ class RateLimiter:
             else:
                 user_id = f"ip:{request.client.host}" if request.client else "unknown"
 
-        redis = get_redis()
+        redis = await get_redis()
         current_time = time.time()
         window_start = current_time - self.window_size
 

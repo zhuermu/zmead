@@ -25,7 +25,7 @@ export function TokenExpiryBanner({ onDismiss }: TokenExpiryBannerProps) {
   const checkExpiringTokens = async () => {
     try {
       const response = await api.get("/ad-accounts");
-      const accounts: AdAccount[] = response.data.accounts || [];
+      const accounts: AdAccount[] = response.data.items || [];
 
       // Filter accounts with expired or soon-to-expire tokens
       const now = new Date();

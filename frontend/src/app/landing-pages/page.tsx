@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Plus, Search, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +24,7 @@ interface LandingPage {
 }
 
 interface LandingPageListResponse {
-  landing_pages: LandingPage[];
+  items: LandingPage[];
   total: number;
   page: number;
   page_size: number;
@@ -65,7 +66,7 @@ export default function LandingPagesPage() {
         params,
       });
 
-      setLandingPages(response.data.landing_pages);
+      setLandingPages(response.data.items);
       setTotal(response.data.total);
       setHasMore(response.data.has_more);
     } catch (error) {
@@ -101,7 +102,7 @@ export default function LandingPagesPage() {
   };
 
   return (
-    <div className="container mx-auto p-6">
+    <DashboardLayout>
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
@@ -256,6 +257,6 @@ export default function LandingPagesPage() {
           )}
         </>
       )}
-    </div>
+    </DashboardLayout>
   );
 }

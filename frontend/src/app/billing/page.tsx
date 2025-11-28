@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { AlertCircle, AlertTriangle, CreditCard, TrendingUp } from 'lucide-react';
@@ -68,19 +69,19 @@ export default function BillingPage() {
 
   if (loading) {
     return (
-      <div className="container mx-auto p-6">
+      <DashboardLayout>
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-gray-200 rounded w-1/4"></div>
           <div className="h-32 bg-gray-200 rounded"></div>
           <div className="h-64 bg-gray-200 rounded"></div>
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
   if (error) {
     return (
-      <div className="container mx-auto p-6">
+      <DashboardLayout>
         <Card className="p-6 border-red-200 bg-red-50">
           <div className="flex items-center gap-2 text-red-700">
             <AlertCircle className="w-5 h-5" />
@@ -90,12 +91,13 @@ export default function BillingPage() {
             Retry
           </Button>
         </Card>
-      </div>
+      </DashboardLayout>
     );
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <DashboardLayout>
+      <div className="space-y-6">
       {/* Page Header */}
       <div>
         <h1 className="text-3xl font-bold">Billing & Credits</h1>
@@ -132,7 +134,7 @@ export default function BillingPage() {
           </div>
           <div className="space-y-1">
             <p className="text-4xl font-bold text-blue-600">
-              {balance?.totalCredits.toFixed(2)}
+              {balance?.totalCredits?.toFixed(2) || '0.00'}
             </p>
             <p className="text-sm text-gray-500">Credits Available</p>
           </div>
@@ -146,7 +148,7 @@ export default function BillingPage() {
           </div>
           <div className="space-y-1">
             <p className="text-3xl font-bold text-gray-900">
-              {balance?.giftedCredits.toFixed(2)}
+              {balance?.giftedCredits?.toFixed(2) || '0.00'}
             </p>
             <p className="text-sm text-gray-500">From registration & promotions</p>
           </div>
@@ -160,7 +162,7 @@ export default function BillingPage() {
           </div>
           <div className="space-y-1">
             <p className="text-3xl font-bold text-gray-900">
-              {balance?.purchasedCredits.toFixed(2)}
+              {balance?.purchasedCredits?.toFixed(2) || '0.00'}
             </p>
             <p className="text-sm text-gray-500">From recharges</p>
           </div>
@@ -215,6 +217,7 @@ export default function BillingPage() {
           Alert Settings
         </Button>
       </div>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

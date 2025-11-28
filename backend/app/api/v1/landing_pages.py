@@ -44,7 +44,7 @@ async def list_landing_pages(
     )
 
     return LandingPageListResponse(
-        landing_pages=[LandingPageResponse.model_validate(lp) for lp in result["landing_pages"]],
+        items=[LandingPageResponse.model_validate(lp) for lp in result["landing_pages"]],
         total=result["total"],
         page=result["page"],
         page_size=result["page_size"],

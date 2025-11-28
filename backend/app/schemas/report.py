@@ -64,7 +64,7 @@ class MetricsResponse(BaseModel):
 class MetricsListResponse(BaseModel):
     """Response for listing metrics."""
 
-    metrics: list[MetricsResponse]
+    items: list[MetricsResponse]
     total: int
     page: int
     page_size: int

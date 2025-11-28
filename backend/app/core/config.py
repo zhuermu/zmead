@@ -117,6 +117,9 @@ class Settings(BaseSettings):
     ai_orchestrator_url: str = "http://localhost:8001"
     ai_orchestrator_timeout: int = 60  # seconds
 
+    # Development - Disable authentication for local development
+    disable_auth: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

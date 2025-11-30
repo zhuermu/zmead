@@ -2,7 +2,32 @@
   "permissions": {
     "allow": [
       "Bash(tree:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(lsof:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(uvicorn app.main:app:*)",
+      "Bash(pip install:*)",
+      "Bash(/Users/lixiaowei/ws/zmead/venv/bin/pip install:*)",
+      "Bash(/Users/lixiaowei/ws/zmead/venv/bin/python3 -m pip install:*)",
+      "Bash(/opt/homebrew/bin/python3.12 -m venv:*)",
+      "Bash(/Users/lixiaowei/ws/zmead/venv/bin/uvicorn:*)",
+      "Bash(npm run dev:*)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_take_screenshot",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_wait_for",
+      "mcp__playwright__browser_console_messages",
+      "Bash(xxd:*)",
+      "mcp__playwright__browser_evaluate",
+      "WebFetch(domain:sdk.vercel.ai)",
+      "WebFetch(domain:ai-sdk.dev)",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_network_requests",
+      "Bash(npm run build:*)"
     ],
     "deny": [],
     "ask": []

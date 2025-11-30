@@ -74,7 +74,7 @@ class MCPServer:
             # Get tool definition
             tool_def = self.registry.get_tool(request.tool)
             if not tool_def:
-                return MCPResponse.error(
+                return MCPResponse.from_error(
                     code=MCPErrorCode.TOOL_NOT_FOUND,
                     message=f"Tool '{request.tool}' not found",
                     request_id=request_id,
@@ -86,7 +86,7 @@ class MCPServer:
                 try:
                     user = await authenticate_mcp_request(token, self.db)
                 except MCPAuthError as e:
-                    return MCPResponse.error(
+                    return MCPResponse.from_error(
                         code=MCPErrorCode.UNAUTHORIZED,
                         message=str(e),
                         request_id=request_id,
@@ -99,7 +99,7 @@ class MCPServer:
                     tool_def,
                 )
             except ValidationError as e:
-                return MCPResponse.error(
+                return MCPResponse.from_error(
                     code=e.code,
                     message=e.message,
                     details=e.details,
@@ -109,7 +109,7 @@ class MCPServer:
             # Get handler
             handler = self.registry.get_handler(request.tool)
             if not handler:
-                return MCPResponse.error(
+                return MCPResponse.from_error(
                     code=MCPErrorCode.INTERNAL_ERROR,
                     message="Tool handler not found",
                     request_id=request_id,
@@ -136,7 +136,7 @@ class MCPServer:
                 )
 
             except InsufficientCreditsError as e:
-                return MCPResponse.error(
+                return MCPResponse.from_error(
                     code=MCPErrorCode.INSUFFICIENT_CREDITS,
                     message=str(e),
                     details={
@@ -147,20 +147,20 @@ class MCPServer:
                     request_id=request_id,
                 )
             except PermissionError as e:
-                return MCPResponse.error(
+                return MCPResponse.from_error(
                     code=MCPErrorCode.PERMISSION_DENIED,
                     message=str(e),
                     request_id=request_id,
                 )
             except ValueError as e:
-                return MCPResponse.error(
+                return MCPResponse.from_error(
                     code=MCPErrorCode.INVALID_PARAMS,
                     message=str(e),
                     request_id=request_id,
                 )
             except Exception as e:
                 logger.exception(f"Tool execution error: {request.tool}")
-                return MCPResponse.error(
+                return MCPResponse.from_error(
                     code=MCPErrorCode.EXECUTION_ERROR,
                     message=f"Tool execution failed: {str(e)}",
                     request_id=request_id,
@@ -168,7 +168,7 @@ class MCPServer:
 
         except Exception:
             logger.exception("MCP server error")
-            return MCPResponse.error(
+            return MCPResponse.from_error(
                 code=MCPErrorCode.INTERNAL_ERROR,
                 message="Internal server error",
                 request_id=request_id,

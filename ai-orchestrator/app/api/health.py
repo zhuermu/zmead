@@ -79,7 +79,7 @@ async def check_gemini_health() -> dict[str, Any]:
         client = GeminiClient()
         # Simple test - just check if we can create the model
         # A full test would make an API call, but that costs money
-        if client.chat_model is not None:
+        if client.chat_model_name is not None:
             return {"status": "healthy"}
         return {"status": "degraded", "note": "model not initialized"}
     except Exception as e:

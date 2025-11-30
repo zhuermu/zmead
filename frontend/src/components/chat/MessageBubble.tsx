@@ -5,24 +5,37 @@ import type { UIMessage } from 'ai';
 
 interface MessageBubbleProps {
   message: UIMessage;
+  compact?: boolean;
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, compact = false }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   
   // Extract content from message - handle both string content and parts array
   const getMessageContent = () => {
     const msg = message as any;
+
+    // Handle string content (legacy format)
     if (typeof msg.content === 'string') {
       return msg.content;
     }
-    // Handle parts array from UIMessage
+
+    // Handle content array (AI SDK v5 format with content array)
     if (Array.isArray(msg.content)) {
       return msg.content
         .filter((part: any) => part.type === 'text')
         .map((part: any) => part.text)
         .join('');
     }
+
+    // Handle parts array (AI SDK v5 format with parts)
+    if (Array.isArray(msg.parts)) {
+      return msg.parts
+        .filter((part: any) => part.type === 'text')
+        .map((part: any) => part.text)
+        .join('');
+    }
+
     return '';
   };
 

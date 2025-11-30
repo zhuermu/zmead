@@ -4,8 +4,6 @@ import { useState, useEffect } from 'react';
 import { ProtectedRoute, useAuth } from '@/components/auth';
 import { DashboardLayout } from '@/components/layout';
 import { MetricCard, TrendChart, AISuggestionsCard } from '@/components/dashboard';
-import { ChatButton, ChatWindow } from '@/components/chat';
-import { useChatStore } from '@/lib/store';
 
 interface DashboardMetrics {
   today: {
@@ -38,7 +36,6 @@ interface AISuggestion {
 
 function DashboardContent() {
   const { user } = useAuth();
-  const { isOpen, toggleChat, closeChat } = useChatStore();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [trendData, setTrendData] = useState<TrendDataPoint[]>([]);
   const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
@@ -124,10 +121,6 @@ function DashboardContent() {
     alert(`Action: ${suggestion.action}\nThis will be implemented in the AI Agent integration.`);
   };
 
-  const handleChatToggle = () => {
-    toggleChat();
-  };
-
   return (
     <DashboardLayout>
       {/* Welcome Section */}
@@ -206,9 +199,6 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* Chat Interface */}
-      <ChatButton onClick={handleChatToggle} />
-      <ChatWindow isOpen={isOpen} onClose={closeChat} />
     </DashboardLayout>
   );
 }

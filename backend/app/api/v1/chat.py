@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid
 from typing import Any
 
 import httpx
@@ -50,20 +51,27 @@ async def chat_stream(
         try:
             async with httpx.AsyncClient(timeout=settings.ai_orchestrator_timeout) as client:
                 # Prepare request payload
+                # Generate session_id from user_id for conversation continuity
+                session_id = f"session-{current_user.id}-{uuid.uuid4().hex[:8]}"
+
                 payload = {
                     "messages": [
                         {"role": msg.role, "content": msg.content}
                         for msg in request.messages
                     ],
                     "user_id": str(current_user.id),
+                    "session_id": session_id,
                 }
 
                 # Stream response from AI Orchestrator
                 async with client.stream(
                     "POST",
-                    f"{settings.ai_orchestrator_url}/chat",
+                    f"{settings.ai_orchestrator_url}/api/v1/chat",
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {settings.ai_orchestrator_service_token}",
+                    },
                 ) as response:
                     if response.status_code != 200:
                         error_text = await response.aread()

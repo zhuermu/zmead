@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/components/auth';
 import { TokenExpiryBanner } from '@/components/ad-accounts/TokenExpiryBanner';
 import { NotificationDropdown } from '@/components/notifications';
+import { ChatDrawer } from '@/components/chat/ChatDrawer';
 
 interface NavItem {
   name: string;
@@ -96,8 +97,24 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const pathname = usePathname();
   const { user, logout } = useAuth();
+
+  // Sidebar collapsed state: collapsed when chat is open on large screens
+  const sidebarCollapsed = chatOpen;
+
+  // Keyboard shortcut: Cmd+K or Ctrl+K to open chat
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setChatOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -109,17 +126,22 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar - collapses to icons when chat is open */}
       <aside
         className={`
-          fixed inset-y-0 left-0 z-30 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out
+          fixed inset-y-0 left-0 z-30 bg-white shadow-lg transform transition-all duration-300 ease-in-out
           lg:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          ${sidebarCollapsed ? 'lg:w-16' : 'lg:w-64'}
+          w-64
         `}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 h-16 px-6 border-b border-gray-200">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+        <div className={`
+          flex items-center h-16 border-b border-gray-200 transition-all duration-300
+          ${sidebarCollapsed ? 'lg:justify-center lg:px-0 px-6 gap-3' : 'px-6 gap-3'}
+        `}>
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
             <svg
               className="w-5 h-5 text-white"
               fill="none"
@@ -134,11 +156,19 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               />
             </svg>
           </div>
-          <span className="text-lg font-bold text-gray-900">AAE</span>
+          <span className={`
+            text-lg font-bold text-gray-900 transition-opacity duration-300
+            ${sidebarCollapsed ? 'lg:hidden' : ''}
+          `}>
+            AAE
+          </span>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-1">
+        <nav className={`
+          flex-1 py-6 space-y-1 transition-all duration-300
+          ${sidebarCollapsed ? 'lg:px-2 px-4' : 'px-4'}
+        `}>
           {navItems.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -146,7 +176,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 key={item.name}
                 href={item.href}
                 className={`
-                  flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors
+                  flex items-center rounded-lg text-sm font-medium transition-all duration-300 group relative
+                  ${sidebarCollapsed
+                    ? 'lg:justify-center lg:px-0 lg:py-3 px-4 py-3 gap-3'
+                    : 'px-4 py-3 gap-3'
+                  }
                   ${
                     isActive
                       ? 'bg-blue-50 text-blue-600'
@@ -154,17 +188,50 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   }
                 `}
                 onClick={() => setSidebarOpen(false)}
+                title={sidebarCollapsed ? item.name : undefined}
               >
-                {item.icon}
-                {item.name}
+                <span className="flex-shrink-0">{item.icon}</span>
+                <span className={`
+                  transition-opacity duration-300 whitespace-nowrap
+                  ${sidebarCollapsed ? 'lg:hidden' : ''}
+                `}>
+                  {item.name}
+                </span>
+                {/* Tooltip for collapsed state */}
+                {sidebarCollapsed && (
+                  <span className="
+                    absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-xs rounded
+                    opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap
+                    pointer-events-none z-50 hidden lg:block
+                  ">
+                    {item.name}
+                  </span>
+                )}
               </Link>
             );
           })}
         </nav>
+
+        {/* Expand/Collapse button for sidebar (only on desktop when chat is open) */}
+        {chatOpen && (
+          <button
+            onClick={() => setChatOpen(false)}
+            className="hidden lg:flex absolute -right-3 top-20 w-6 h-6 bg-white border border-gray-200 rounded-full items-center justify-center shadow-sm hover:bg-gray-50 transition-colors"
+            title="展开侧边栏"
+          >
+            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
       </aside>
 
-      {/* Main content */}
-      <div className="flex-1 lg:ml-64">
+      {/* Main content - adjusts margin based on sidebar state and chat state */}
+      <div className={`
+        flex-1 transition-all duration-300 ease-in-out
+        ${sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'}
+        ${chatOpen ? 'lg:mr-[45vw] xl:mr-[40vw] 2xl:mr-[35vw]' : ''}
+      `}>
         {/* Header */}
         <header className="sticky top-0 z-10 bg-white shadow-sm border-b border-gray-200">
           <div className="flex items-center justify-between h-16 px-4 sm:px-6 lg:px-8">
@@ -201,13 +268,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                       </span>
                     </div>
                   )}
-                  <div className="hidden sm:block">
+                  <div className={`hidden sm:block transition-opacity duration-300 ${chatOpen ? 'lg:hidden xl:block' : ''}`}>
                     <p className="text-sm font-medium text-gray-700">{user.displayName}</p>
                     <p className="text-xs text-gray-500">{user.email}</p>
                   </div>
                   <button
                     onClick={logout}
-                    className="hidden sm:block px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                    className={`hidden sm:block px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors ${chatOpen ? 'lg:hidden xl:block' : ''}`}
                   >
                     Logout
                   </button>
@@ -224,6 +291,33 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           {children}
         </main>
       </div>
+
+      {/* Floating AI Assistant Button */}
+      <button
+        onClick={() => setChatOpen(true)}
+        className={`
+          fixed right-6 bottom-6 z-30
+          w-14 h-14 bg-gradient-to-r from-blue-600 to-indigo-600
+          rounded-full shadow-lg shadow-blue-500/30
+          flex items-center justify-center
+          hover:shadow-xl hover:shadow-blue-500/40 hover:scale-105
+          transition-all duration-200
+          group
+          ${chatOpen ? 'hidden' : ''}
+        `}
+        title="打开 AI 助手 (⌘K)"
+      >
+        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+        {/* Tooltip */}
+        <span className="absolute right-full mr-3 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+          AI 助手 <kbd className="ml-1 px-1 py-0.5 bg-gray-700 rounded text-[10px]">⌘K</kbd>
+        </span>
+      </button>
+
+      {/* Chat Drawer */}
+      <ChatDrawer isOpen={chatOpen} onClose={() => setChatOpen(false)} />
     </div>
   );
 }

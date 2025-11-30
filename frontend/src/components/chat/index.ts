@@ -8,3 +8,6 @@ export { ToolInvocationCard } from './ToolInvocationCard';
 export { ActionButton } from './ActionButton';
 export { EmbeddedChart } from './EmbeddedChart';
 export { EmbeddedCard } from './EmbeddedCard';
+export { ChatSidebar } from './ChatSidebar';
+export { ChatArea } from './ChatArea';
+export { ChatDrawer } from './ChatDrawer';

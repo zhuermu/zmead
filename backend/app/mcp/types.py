@@ -98,7 +98,7 @@ class MCPResponse(BaseModel):
         )
 
     @classmethod
-    def error(
+    def from_error(
         cls,
         code: MCPErrorCode,
         message: str,

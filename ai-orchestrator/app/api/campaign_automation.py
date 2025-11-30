@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from app.core.auth import verify_service_token
+from app.core.auth import validate_service_token
 from app.modules.campaign_automation.capability import CampaignAutomation
 
 logger = structlog.get_logger(__name__)
@@ -30,7 +30,7 @@ class RuleCheckResponse(BaseModel):
 @router.post("/check-rules", response_model=RuleCheckResponse)
 async def check_rules(
     user_id: str | None = None,
-    _token: str = Depends(verify_service_token),
+    _token: str = Depends(validate_service_token),
 ) -> RuleCheckResponse:
     """
     Check campaign automation rules and execute actions.

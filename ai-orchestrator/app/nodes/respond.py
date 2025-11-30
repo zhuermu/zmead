@@ -10,8 +10,10 @@ import json
 from typing import Any
 
 import structlog
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
 
+from app.core.config import get_settings
 from app.core.state import AgentState
 from app.prompts.response_generation import (
     RESPONSE_GENERATION_SYSTEM_PROMPT,
@@ -20,9 +22,25 @@ from app.prompts.response_generation import (
     format_creative_list,
     format_insights,
 )
-from app.services.gemini_client import GeminiClient, GeminiError
 
 logger = structlog.get_logger(__name__)
+
+# Global LLM instance for streaming (lazy initialized)
+_streaming_llm: ChatGoogleGenerativeAI | None = None
+
+
+def get_streaming_llm() -> ChatGoogleGenerativeAI:
+    """Get or create the streaming LLM instance."""
+    global _streaming_llm
+    if _streaming_llm is None:
+        settings = get_settings()
+        _streaming_llm = ChatGoogleGenerativeAI(
+            model=settings.gemini_model_fast,
+            google_api_key=settings.gemini_api_key,
+            temperature=0.3,
+            streaming=True,  # Enable streaming
+        )
+    return _streaming_llm
 
 
 def generate_insufficient_credit_response(state: AgentState) -> str:
@@ -146,7 +164,44 @@ async def respond_node(state: AgentState) -> dict[str, Any]:
         # No results - might be a general query or clarification
         intent = state.get("current_intent")
 
-        if intent == "general_query":
+        if intent == "clarification_needed":
+            # Clarification message should already be in messages
+            return {}
+
+        # Use streaming LLM for general queries to enable token streaming
+        try:
+            llm = get_streaming_llm()
+
+            # Get user's message for context
+            messages = state.get("messages", [])
+            user_message = ""
+            for msg in reversed(messages):
+                if hasattr(msg, "type") and msg.type == "human":
+                    user_message = msg.content
+                    break
+
+            # Create a conversational prompt
+            system_prompt = """你是 AAE 智能广告助手。你可以帮助用户：
+- 🎨 生成广告素材
+- 📊 查看投放数据和报表
+- 🔍 分析市场趋势和竞品
+- 📄 创建落地页
+- 📢 管理广告投放
+
+请用友好、专业的语气回复用户。保持简洁，每个回复不超过100字。"""
+
+            prompt_messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_message or "你好"),
+            ]
+
+            response = await llm.ainvoke(prompt_messages)
+            log.info("respond_node_general_query_streaming")
+            return {"messages": [response]}
+
+        except Exception as e:
+            log.error("respond_node_general_query_error", error=str(e))
+            # Fallback to static response
             response = (
                 "你好！我是你的广告投放助手。我可以帮你：\n\n"
                 "🎨 生成广告素材\n"
@@ -156,13 +211,7 @@ async def respond_node(state: AgentState) -> dict[str, Any]:
                 "📢 管理广告投放\n\n"
                 "有什么我可以帮你的吗？"
             )
-        elif intent == "clarification_needed":
-            # Clarification message should already be in messages
-            return {}
-        else:
-            response = "操作完成，但没有返回结果。有其他需要帮助的吗？"
-
-        return {"messages": [AIMessage(content=response)]}
+            return {"messages": [AIMessage(content=response)]}
 
     # Check if any result has an error
     error_results = [r for r in results if r.get("status") == "error"]
@@ -187,51 +236,38 @@ async def respond_node(state: AgentState) -> dict[str, Any]:
     # Check if all results are mock
     is_mock = all(r.get("mock", False) for r in results)
 
-    # Try to generate response with LLM
+    # Use streaming LLM for real token streaming
     try:
-        gemini = GeminiClient()
+        llm = get_streaming_llm()
 
         prompt_messages = [
-            {"role": "system", "content": RESPONSE_GENERATION_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": RESPONSE_GENERATION_USER_PROMPT.format(
+            SystemMessage(content=RESPONSE_GENERATION_SYSTEM_PROMPT),
+            HumanMessage(
+                content=RESPONSE_GENERATION_USER_PROMPT.format(
                     results=format_result_for_prompt(results),
                     user_request=user_request,
                     has_error="否",
                     error_message="无",
                     is_mock="是" if is_mock else "否",
-                ),
-            },
+                )
+            ),
         ]
 
-        response = await gemini.fast_completion(
-            messages=prompt_messages,
-            temperature=0.3,
-        )
+        # Use ainvoke - LangGraph's astream_events will capture the streaming tokens
+        response = await llm.ainvoke(prompt_messages)
 
         log.info(
             "respond_node_llm_complete",
-            response_length=len(response),
+            response_length=len(response.content) if response.content else 0,
         )
 
-        return {"messages": [AIMessage(content=response)]}
+        return {"messages": [response]}
 
-    except GeminiError as e:
-        log.error("respond_node_llm_error", error=str(e))
+    except Exception as e:
+        log.error("respond_node_llm_error", error=str(e), exc_info=True)
 
         # Fallback to template-based response
         response = generate_fallback_response(results, is_mock)
-        return {"messages": [AIMessage(content=response)]}
-
-    except Exception as e:
-        log.error("respond_node_unexpected_error", error=str(e), exc_info=True)
-
-        # Fallback to simple response
-        response = "✅ 操作完成！"
-        if is_mock:
-            response += "（模拟数据）"
-
         return {"messages": [AIMessage(content=response)]}
 
 

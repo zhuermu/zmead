@@ -27,7 +27,11 @@
       "WebFetch(domain:ai-sdk.dev)",
       "mcp__playwright__browser_click",
       "mcp__playwright__browser_network_requests",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(/Users/lixiaowei/ws/zmead/venv/bin/pip show:*)",
+      "Bash(xargs kill:*)",
+      "mcp__playwright__browser_press_key"
     ],
     "deny": [],
     "ask": []

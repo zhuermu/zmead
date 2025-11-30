@@ -72,14 +72,13 @@ class Settings(BaseSettings):
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
-    # AWS S3
-    aws_access_key_id: str = Field(default="")
-    aws_secret_access_key: str = Field(default="")
-    aws_region: str = "ap-southeast-1"
-    s3_bucket_creatives: str = "aae-creatives"
-    s3_bucket_landing_pages: str = "aae-landing-pages"
-    s3_bucket_exports: str = "aae-exports"
-    cloudfront_domain: str = Field(default="")
+    # Google Cloud Storage
+    gcs_project_id: str = Field(default="")
+    gcs_credentials_path: str = Field(default="")  # Path to service account JSON
+    gcs_bucket_creatives: str = "aae-creatives"
+    gcs_bucket_landing_pages: str = "aae-landing-pages"
+    gcs_bucket_exports: str = "aae-exports"
+    gcs_cdn_domain: str = Field(default="")  # Custom domain or Cloud CDN domain
 
     # OAuth - Google
     google_client_id: str = Field(default="")

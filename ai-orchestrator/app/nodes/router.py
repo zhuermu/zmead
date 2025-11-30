@@ -27,6 +27,7 @@ logger = structlog.get_logger(__name__)
 # Intent types
 IntentType = Literal[
     "generate_creative",
+    "save_creative",  # Save generated creatives to asset library
     "analyze_report",
     "market_analysis",
     "create_landing_page",
@@ -86,6 +87,7 @@ class IntentSchema(BaseModel):
 # Credit cost estimates per action type
 CREDIT_COSTS = {
     "generate_creative": 5.0,
+    "save_creative": 0.0,  # No cost to save (already paid for generation)
     "analyze_creative": 1.0,
     "get_report": 1.0,
     "analyze_performance": 2.0,

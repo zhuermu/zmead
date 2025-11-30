@@ -1,8 +1,8 @@
 """
-Image generator using Gemini Imagen 3.
+Image generator using Gemini native image generation.
 
 Requirements: 4.2, 4.5, 4.1.4
-- 4.2: Generate images using Gemini Imagen 3
+- 4.2: Generate images using Gemini (gemini-2.0-flash-exp or gemini-2.5-pro-preview-image)
 - 4.5: Auto-retry up to 3 times on failure
 - 4.1.4: Retry file upload up to 3 times
 """
@@ -12,10 +12,12 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+import httpx
 import structlog
 
 from ..models import GeneratedImage, ProductInfo
 from ..utils.aspect_ratio import AspectRatioHandler
+from app.services.gemini_client import GeminiClient, GeminiImageGenerationError
 
 logger = structlog.get_logger(__name__)
 
@@ -36,13 +38,15 @@ class ImageGenerationError(Exception):
 
 
 class ImageGenerator:
-    """Generates ad creative images using Gemini Imagen 3.
+    """Generates ad creative images using Gemini native image generation.
 
     Features:
     - Platform-aware aspect ratio selection
     - Parallel batch generation for efficiency
     - Exponential backoff retry on failures
     - Customizable styles and prompts
+    - Image-to-image generation with reference images
+    - Text-to-image generation
     """
 
     # Supported styles for image generation
@@ -66,18 +70,18 @@ class ImageGenerator:
 
     def __init__(
         self,
-        gemini_client: Any = None,
+        gemini_client: GeminiClient | None = None,
         aspect_ratio_handler: AspectRatioHandler | None = None,
         max_retries: int = MAX_RETRIES,
     ):
         """Initialize image generator.
 
         Args:
-            gemini_client: Gemini client for AI generation
+            gemini_client: Gemini client for AI generation (with image generation support)
             aspect_ratio_handler: Handler for aspect ratio operations
             max_retries: Maximum retry attempts (default 3)
         """
-        self.gemini = gemini_client
+        self.gemini = gemini_client or GeminiClient()
         self.aspect_handler = aspect_ratio_handler or AspectRatioHandler()
         self.max_retries = max_retries
         self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_GENERATIONS)
@@ -172,6 +176,8 @@ class ImageGenerator:
         height: int,
         index: int,
         log: Any,
+        reference_images: list[bytes] | None = None,
+        use_pro_model: bool = False,
     ) -> GeneratedImage:
         """Generate a single image with retry logic.
 
@@ -182,6 +188,8 @@ class ImageGenerator:
             height: Image height
             index: Image index for naming
             log: Bound logger
+            reference_images: Optional reference images for image-to-image
+            use_pro_model: Use pro model for higher quality
 
         Returns:
             Generated image
@@ -200,6 +208,8 @@ class ImageGenerator:
                         width=width,
                         height=height,
                         index=index,
+                        reference_images=reference_images,
+                        use_pro_model=use_pro_model,
                     )
             except Exception as e:
                 last_error = e
@@ -230,8 +240,10 @@ class ImageGenerator:
         width: int,
         height: int,
         index: int,
+        reference_images: list[bytes] | None = None,
+        use_pro_model: bool = False,
     ) -> GeneratedImage:
-        """Generate a single image using Gemini Imagen 3.
+        """Generate a single image using Gemini native image generation.
 
         Args:
             prompt: Generation prompt
@@ -239,6 +251,8 @@ class ImageGenerator:
             width: Image width
             height: Image height
             index: Image index for naming
+            reference_images: Optional reference images for image-to-image
+            use_pro_model: Use pro model for higher quality
 
         Returns:
             Generated image
@@ -250,14 +264,23 @@ class ImageGenerator:
                 retryable=False,
             )
 
-        # Call Gemini Imagen 3 API
-        # Note: The actual API call depends on the Gemini client implementation
-        # This is a placeholder that should be replaced with actual API call
+        # Call Gemini image generation API
         try:
-            image_data = await self._call_imagen_api(prompt, aspect_ratio)
+            image_data = await self.gemini.generate_image(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                use_pro_model=use_pro_model,
+                reference_images=reference_images,
+            )
+        except GeminiImageGenerationError as e:
+            raise ImageGenerationError(
+                f"Gemini image generation failed: {e}",
+                code="AI_MODEL_FAILED",
+                retryable=e.retryable,
+            )
         except Exception as e:
             raise ImageGenerationError(
-                f"Imagen API call failed: {e}",
+                f"Image generation API call failed: {e}",
                 code="AI_MODEL_FAILED",
                 retryable=True,
             )
@@ -274,51 +297,6 @@ class ImageGenerator:
             width=width,
             height=height,
             aspect_ratio=aspect_ratio,
-        )
-
-    async def _call_imagen_api(
-        self,
-        prompt: str,
-        aspect_ratio: str,
-    ) -> bytes:
-        """Call Gemini Imagen 3 API to generate image.
-
-        Args:
-            prompt: Generation prompt
-            aspect_ratio: Aspect ratio for the image
-
-        Returns:
-            Image bytes
-
-        Note:
-            This method should be implemented based on the actual
-            Gemini Imagen 3 API. Currently uses a placeholder.
-        """
-        # Import here to avoid circular imports
-        from app.core.config import get_settings
-
-        settings = get_settings()
-
-        # The actual implementation depends on the Gemini API
-        # For now, we'll use the chat completion to describe what would be generated
-        # In production, this should use the actual Imagen 3 API
-
-        # Placeholder: In real implementation, use google.generativeai
-        # import google.generativeai as genai
-        # model = genai.ImageGenerationModel(settings.gemini_model_imagen)
-        # response = await model.generate_images(
-        #     prompt=prompt,
-        #     number_of_images=1,
-        #     aspect_ratio=aspect_ratio,
-        #     safety_filter_level="block_some",
-        # )
-        # return response.images[0].image_bytes
-
-        # For development/testing, return placeholder bytes
-        # This should be replaced with actual API call in production
-        raise NotImplementedError(
-            "Imagen 3 API integration pending. "
-            "Replace this with actual google.generativeai call."
         )
 
     def _build_prompt(self, product_info: ProductInfo, style: str) -> str:
@@ -369,22 +347,214 @@ Do NOT include:
         original_image_url: str,
         count: int,
         style: str | None = None,
+        aspect_ratio: str = "1:1",
     ) -> list[GeneratedImage]:
-        """Generate variants based on an original image.
+        """Generate variants based on an original image (image-to-image).
 
         Args:
             original_image_url: URL of the original image
             count: Number of variants to generate
             style: Optional style override
+            aspect_ratio: Aspect ratio for generated images
 
         Returns:
             List of generated variant images
 
-        Note:
-            This is a placeholder for variant generation.
-            Implementation depends on Imagen 3 edit/variation capabilities.
+        Raises:
+            ImageGenerationError: If variant generation fails
         """
-        raise NotImplementedError(
-            "Variant generation not yet implemented. "
-            "Requires Imagen 3 image-to-image capabilities."
+        log = logger.bind(
+            original_url=original_image_url[:50],
+            count=count,
+            style=style,
         )
+        log.info("generate_variants_start")
+
+        # Download the original image
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(original_image_url)
+                response.raise_for_status()
+                original_image_bytes = response.content
+        except Exception as e:
+            raise ImageGenerationError(
+                f"Failed to download original image: {e}",
+                code="IMAGE_DOWNLOAD_FAILED",
+                retryable=True,
+            )
+
+        # Build variation prompt
+        style_desc = self.SUPPORTED_STYLES.get(
+            style.lower() if style else self.DEFAULT_STYLE,
+            style or self.DEFAULT_STYLE,
+        )
+
+        prompt = f"""Create a variation of this image for advertising purposes.
+Keep the main subject and composition but apply the following style:
+- Style: {style_desc}
+- Make it suitable for social media advertising
+- Maintain high quality and professional look
+- Add subtle variations while keeping the core visual identity"""
+
+        # Get dimensions for aspect ratio
+        try:
+            width, height = self.aspect_handler.get_dimensions(aspect_ratio)
+        except ValueError:
+            width, height = 1024, 1024  # Default to 1:1
+
+        # Generate variants with reference image
+        tasks = [
+            self._generate_single_with_retry(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                width=width,
+                height=height,
+                index=i,
+                log=log,
+                reference_images=[original_image_bytes],
+            )
+            for i in range(count)
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results
+        variants: list[GeneratedImage] = []
+        errors: list[Exception] = []
+
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                errors.append(result)
+                log.warning("variant_generation_partial_failure", index=i, error=str(result))
+            else:
+                variants.append(result)
+
+        if not variants:
+            error_msg = f"All {count} variant generations failed"
+            log.error("variant_generation_all_failed", errors=[str(e) for e in errors])
+            raise ImageGenerationError(error_msg, code="4003", retryable=True)
+
+        log.info(
+            "generate_variants_complete",
+            generated=len(variants),
+            failed=len(errors),
+        )
+
+        return variants
+
+    async def generate_from_reference(
+        self,
+        reference_urls: list[str],
+        prompt: str,
+        count: int = 3,
+        style: str = "modern",
+        aspect_ratio: str = "1:1",
+        use_pro_model: bool = False,
+    ) -> list[GeneratedImage]:
+        """Generate new images based on reference images (image-to-image).
+
+        Args:
+            reference_urls: URLs of reference images (1-14 images supported)
+            prompt: Description of desired output
+            count: Number of images to generate
+            style: Style to apply
+            aspect_ratio: Aspect ratio for output
+            use_pro_model: Use pro model for higher quality
+
+        Returns:
+            List of generated images
+
+        Raises:
+            ImageGenerationError: If generation fails
+        """
+        log = logger.bind(
+            reference_count=len(reference_urls),
+            prompt=prompt[:50],
+            count=count,
+            style=style,
+        )
+        log.info("generate_from_reference_start")
+
+        # Download reference images
+        reference_images: list[bytes] = []
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for url in reference_urls[:14]:  # Max 14 reference images
+                try:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    reference_images.append(response.content)
+                except Exception as e:
+                    log.warning("reference_download_failed", url=url[:50], error=str(e))
+
+        if not reference_images:
+            raise ImageGenerationError(
+                "Failed to download any reference images",
+                code="IMAGE_DOWNLOAD_FAILED",
+                retryable=True,
+            )
+
+        # Build enhanced prompt
+        style_desc = self.SUPPORTED_STYLES.get(style.lower(), style)
+        enhanced_prompt = f"""Based on the reference image(s), create a new advertising creative.
+
+{prompt}
+
+Style requirements:
+- {style_desc}
+- Professional advertising quality
+- Clear product focus
+- Suitable for social media platforms
+
+Maintain visual consistency with the references while creating something unique."""
+
+        # Get dimensions
+        try:
+            width, height = self.aspect_handler.get_dimensions(aspect_ratio)
+        except ValueError:
+            width, height = 1024, 1024
+
+        # Generate images
+        tasks = [
+            self._generate_single_with_retry(
+                prompt=enhanced_prompt,
+                aspect_ratio=aspect_ratio,
+                width=width,
+                height=height,
+                index=i,
+                log=log,
+                reference_images=reference_images,
+                use_pro_model=use_pro_model,
+            )
+            for i in range(count)
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results
+        images: list[GeneratedImage] = []
+        errors: list[Exception] = []
+
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                errors.append(result)
+                log.warning("reference_generation_partial_failure", index=i, error=str(result))
+            else:
+                images.append(result)
+
+        if not images:
+            error_msg = f"All {count} reference-based generations failed"
+            log.error("reference_generation_all_failed", errors=[str(e) for e in errors[:3]])
+            raise ImageGenerationError(error_msg, code="4003", retryable=True)
+
+        log.info(
+            "generate_from_reference_complete",
+            generated=len(images),
+            failed=len(errors),
+        )
+
+        return images
+
+    async def close(self):
+        """Close resources (Gemini client HTTP connections)."""
+        if self.gemini:
+            await self.gemini.close()

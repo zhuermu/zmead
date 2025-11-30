@@ -1,10 +1,51 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChat as useVercelChat } from '@ai-sdk/react';
 import { useChatStore } from '@/lib/store';
 import { MessageBubble } from './MessageBubble';
 import type { UIMessage } from 'ai';
+
+// Type for agent status from streaming data
+interface AgentStatus {
+  type: 'thinking' | 'status' | 'tool_start' | 'tool_complete';
+  message?: string;
+  node?: string;
+  tool?: string;
+}
+
+// Helper to get icon for agent status type
+function getStatusIcon(type: AgentStatus['type']) {
+  switch (type) {
+    case 'thinking':
+      return (
+        <svg className="w-4 h-4 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+      );
+    case 'status':
+      return (
+        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+      );
+    case 'tool_start':
+      return (
+        <svg className="w-4 h-4 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      );
+    case 'tool_complete':
+      return (
+        <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -131,11 +172,33 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     }
   }, [isOpen, sessions.length, createSession]);
 
+  // State for agent status during streaming
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+
   // Use Vercel AI SDK chat with current session ID
   const chatId = currentSessionId || 'default';
   const chatHelpers = useVercelChat({
     id: chatId,
     api: '/api/chat',
+    // Handle custom data parts from streaming
+    // onData is called for data-* type events
+    onData: (dataPart: any) => {
+      console.log('ChatDrawer onData received:', dataPart);
+      // dataPart contains type and data fields
+      if (dataPart && dataPart.type === 'data-agent-status' && dataPart.data) {
+        const statusData = dataPart.data;
+        setAgentStatus({
+          type: statusData.statusType as AgentStatus['type'],
+          message: statusData.message,
+          node: statusData.node,
+          tool: statusData.tool,
+        });
+      }
+    },
+    onFinish: () => {
+      // Clear agent status when streaming finishes
+      setAgentStatus(null);
+    },
   } as any);
 
   const {
@@ -312,9 +375,39 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     });
   }, []);
 
+  const [isUploading, setIsUploading] = useState(false);
+
+  const uploadFiles = async (files: FileAttachment[]): Promise<Array<{
+    id: string;
+    filename: string;
+    contentType: string;
+    size: number;
+    s3Url: string;
+    cdnUrl: string;
+  }>> => {
+    if (files.length === 0) return [];
+
+    const formData = new FormData();
+    files.forEach(att => {
+      formData.append('files', att.file);
+    });
+
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error('File upload failed');
+    }
+
+    const result = await response.json();
+    return result.uploaded || [];
+  };
+
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if ((!localInput.trim() && attachments.length === 0) || isLoading || isComposing) return;
+    if ((!localInput.trim() && attachments.length === 0) || isLoading || isComposing || isUploading) return;
 
     const messageContent = localInput;
     setLocalInput('');
@@ -325,14 +418,35 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
       parts.push({ type: 'text', text: messageContent });
     }
 
-    for (const att of attachments) {
-      parts.push({
-        type: 'file',
-        fileType: att.type,
-        name: att.file.name,
-        size: att.file.size,
-        mimeType: att.file.type,
-      });
+    // Upload files if any
+    if (attachments.length > 0) {
+      setIsUploading(true);
+      try {
+        const uploadedFiles = await uploadFiles(attachments);
+
+        // Add uploaded file references to message parts
+        for (const uploaded of uploadedFiles) {
+          const att = attachments.find(a => a.file.name === uploaded.filename);
+          parts.push({
+            type: 'file',
+            fileType: att?.type || 'file',
+            name: uploaded.filename,
+            size: uploaded.size,
+            mimeType: uploaded.contentType,
+            url: uploaded.cdnUrl,
+            s3Url: uploaded.s3Url,
+          });
+        }
+      } catch (error) {
+        console.error('File upload failed:', error);
+        // Show error to user but continue with text message
+        parts.push({
+          type: 'text',
+          text: `[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`,
+        });
+      } finally {
+        setIsUploading(false);
+      }
     }
 
     attachments.forEach(att => {
@@ -344,7 +458,9 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
       textareaRef.current.style.height = 'auto';
     }
 
-    await (sendMessage as any)({ parts });
+    if (parts.length > 0) {
+      await (sendMessage as any)({ parts });
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -549,11 +665,18 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 {isLoading && (
                   <div className="flex justify-start">
                     <div className="bg-gray-100 rounded-lg px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                      </div>
+                      {agentStatus ? (
+                        <div className="flex items-center gap-2 text-gray-600 text-sm">
+                          {getStatusIcon(agentStatus.type)}
+                          <span>{agentStatus.message || '正在处理...'}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -636,15 +759,28 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                   />
                 </div>
 
-                {isLoading ? (
+                {isLoading || isUploading ? (
                   <button
                     type="button"
-                    onClick={stop}
-                    className="p-3 bg-red-500 hover:bg-red-600 text-white rounded-xl transition-colors"
+                    onClick={isLoading ? stop : undefined}
+                    disabled={isUploading}
+                    className={`p-3 text-white rounded-xl transition-colors ${
+                      isUploading
+                        ? 'bg-blue-500 cursor-wait'
+                        : 'bg-red-500 hover:bg-red-600'
+                    }`}
+                    title={isUploading ? '上传中...' : '停止生成'}
                   >
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                      <rect x="6" y="6" width="12" height="12" />
-                    </svg>
+                    {isUploading ? (
+                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                        <rect x="6" y="6" width="12" height="12" />
+                      </svg>
+                    )}
                   </button>
                 ) : (
                   <button

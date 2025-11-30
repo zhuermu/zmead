@@ -389,17 +389,30 @@ Web Platform 作为 MCP Server，为 AI Orchestrator 提供以下工具：
 |---------|------|---------|
 | `get_user_info` | 获取用户信息 | 所有功能模块获取用户数据 |
 
-#### Credit 计费工具（Credit Billing Tools）
+#### Credit 计费（系统级 API，非 MCP）
 
-| 工具名称 | 描述 | 使用场景 |
-|---------|------|---------|
-| `get_credit_balance` | 获取 Credit 余额 | 检查用户可用余额 |
-| `check_credit` | 检查 Credit 是否足够 | 执行操作前预检查 |
-| `deduct_credit` | 扣减 Credit | 操作完成后扣费 |
-| `refund_credit` | 退还 Credit | 操作失败时退款 |
-| `get_credit_history` | 获取 Credit 消耗历史 | 查询消费明细 |
-| `get_credit_config` | 获取 Credit 换算配置 | 获取当前计费规则 |
-| `estimate_credit` | 预估操作消耗 | 操作前预估成本 |
+> **重要设计决策**（2024-11-30 更新）：
+>
+> Credit 管理已从 MCP 工具迁移到**系统级直接 HTTP API**。
+>
+> **原因**：Credit 管理是系统基础设施，AI 模型不需要理解或决策是否扣费。
+> Credit 扣除在 LLM 调用时自动发生，对 AI 模型透明。
+>
+> **详细设计**：参见 `ai-orchestrator/requirements.md` 需求 11.1 和 11.2
+
+**Credit 管理通过直接 HTTP API 实现**：
+
+| API 端点 | 方法 | 描述 | 调用方 |
+|---------|------|------|--------|
+| `/api/v1/credits/check` | POST | 检查余额是否足够 | AI Orchestrator |
+| `/api/v1/credits/deduct` | POST | 扣除 Credit | AI Orchestrator |
+| `/api/v1/credits/refund` | POST | 退还 Credit | AI Orchestrator |
+| `/api/v1/credits/balance` | GET | 获取余额 | AI Orchestrator |
+| `/api/v1/credits/history` | GET | 获取消费历史 | Web Platform |
+| `/api/v1/credits/config` | GET | 获取计费配置 | AI Orchestrator |
+
+**关键实现文件**：
+- `ai-orchestrator/app/services/credit_client.py` - Credit HTTP 客户端
 
 ##### get_credit_balance 工具详情
 
@@ -636,21 +649,20 @@ Web Platform 作为 MCP Server，为 AI Orchestrator 提供以下工具：
 
 按使用频率排序的快速索引：
 
+> **注意**（2024-11-30 更新）：Credit 相关操作已迁移到系统级 HTTP API，不再是 MCP 工具。
+> 详见上方 "Credit 计费（系统级 API，非 MCP）" 章节。
+
 | 优先级 | 工具名称 | 类别 | 调用频率 |
 |-------|---------|------|---------|
-| P0 | `check_credit` | Credit 计费 | 极高（每次操作前） |
-| P0 | `deduct_credit` | Credit 计费 | 极高（每次操作后） |
 | P0 | `create_creative` | 素材管理 | 高 |
 | P0 | `get_upload_url` | 文件上传 | 高 |
 | P0 | `create_campaign` | 投放管理 | 高 |
 | P0 | `get_reports` | 报表数据 | 高 |
-| P1 | `get_credit_balance` | Credit 计费 | 中 |
 | P1 | `get_creatives` | 素材管理 | 中 |
 | P1 | `get_campaigns` | 投放管理 | 中 |
 | P1 | `save_metrics` | 报表数据 | 中 |
 | P1 | `create_landing_page` | 落地页管理 | 中 |
 | P1 | `create_notification` | 通知管理 | 中 |
-| P2 | `refund_credit` | Credit 计费 | 低（失败时） |
 | P2 | `update_creative` | 素材管理 | 低 |
 | P2 | `update_campaign` | 投放管理 | 低 |
 | P2 | `analyze_competitor` | 市场洞察 | 低 |
@@ -1426,6 +1438,13 @@ Capability: /api/v1/capability/{name}
 
 ---
 
-**文档版本**：v1.0
-**最后更新**：2024-11-26
+**文档版本**：v1.1
+**最后更新**：2024-11-30
 **维护者**：AAE 开发团队
+
+### 变更历史
+
+| 版本 | 日期 | 变更内容 |
+|------|------|---------|
+| v1.1 | 2024-11-30 | Credit 管理从 MCP 迁移到系统级 HTTP API |
+| v1.0 | 2024-11-26 | 初始版本 |

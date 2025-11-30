@@ -6,15 +6,43 @@ import { useChatStore } from '@/lib/store';
 
 const MESSAGE_TIMEOUT = 60000; // 60 seconds
 
+// Type for agent status from streaming data
+export interface AgentStatus {
+  type: 'thinking' | 'status' | 'tool_start' | 'tool_complete';
+  message?: string;
+  node?: string;
+  tool?: string;
+}
+
 export function useChat() {
   const { clearMessages } = useChatStore();
   const [isTimeout, setIsTimeout] = useState(false);
   const [localInput, setLocalInput] = useState('');
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const chatHelpers = useVercelChat({
     id: 'main-chat',
     api: '/api/chat',
+    // Handle custom data parts from streaming
+    // onData is called for data-* type events
+    onData: (dataPart: any) => {
+      console.log('useChat onData received:', dataPart);
+      // dataPart contains type and data fields
+      if (dataPart && dataPart.type === 'data-agent-status' && dataPart.data) {
+        const statusData = dataPart.data;
+        setAgentStatus({
+          type: statusData.statusType as AgentStatus['type'],
+          message: statusData.message,
+          node: statusData.node,
+          tool: statusData.tool,
+        });
+      }
+    },
+    onFinish: () => {
+      // Clear agent status when streaming finishes
+      setAgentStatus(null);
+    },
   } as any);
 
   const {
@@ -121,6 +149,7 @@ export function useChat() {
     setMessages,
     isTimeout,
     retry,
+    agentStatus,
     clearHistory: () => {
       clearMessages();
       setMessages([]);

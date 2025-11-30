@@ -82,6 +82,9 @@ export async function POST(req: Request) {
 
     const transformStream = new TransformStream({
       async start(controller) {
+        // AI SDK v5 requires a 'start' event with messageId at the beginning
+        const startMessageEvent = `data: ${JSON.stringify({ type: 'start', messageId: messageId })}\n\n`;
+        controller.enqueue(encoder.encode(startMessageEvent));
         // Send text-start event to indicate beginning of text content with message ID
         const startEvent = `data: ${JSON.stringify({ type: 'text-start', id: messageId })}\n\n`;
         controller.enqueue(encoder.encode(startEvent));
@@ -104,6 +107,18 @@ export async function POST(req: Request) {
                   delta: data.content
                 })}\n\n`;
                 controller.enqueue(encoder.encode(deltaEvent));
+              } else if (data.type === 'thinking' || data.type === 'status' || data.type === 'tool_start' || data.type === 'tool_complete') {
+                // Forward agent status events as custom data using AI SDK v5 data-* format
+                const statusEvent = `data: ${JSON.stringify({
+                  type: 'data-agent-status',
+                  data: {
+                    statusType: data.type,
+                    message: data.message,
+                    node: data.node,
+                    tool: data.tool,
+                  }
+                })}\n\n`;
+                controller.enqueue(encoder.encode(statusEvent));
               } else if (data.type === 'done') {
                 // Send text-end and finish events with message ID
                 const textEndEvent = `data: ${JSON.stringify({ type: 'text-end', id: messageId })}\n\n`;

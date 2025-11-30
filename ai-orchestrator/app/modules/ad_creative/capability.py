@@ -44,6 +44,7 @@ class AdCreative:
     # Supported actions for routing
     SUPPORTED_ACTIONS = [
         "generate_creative",
+        "generate_from_reference",  # Image-to-Image generation
         "analyze_creative",
         "score_creative",
         "generate_variants",
@@ -53,6 +54,8 @@ class AdCreative:
         "download_creative",
         "batch_download",
         "upload_reference",
+        "generate_video",  # Video generation
+        "check_video_status",  # Check video generation status
     ]
 
     def __init__(
@@ -114,6 +117,8 @@ class AdCreative:
             # Route to appropriate handler
             if action == "generate_creative":
                 result = await self._generate_creative(parameters, context)
+            elif action == "generate_from_reference":
+                result = await self._generate_from_reference(parameters, context)
             elif action == "analyze_creative":
                 result = await self._analyze_creative(parameters, context)
             elif action == "score_creative":
@@ -132,6 +137,10 @@ class AdCreative:
                 result = await self._batch_download(parameters, context)
             elif action == "upload_reference":
                 result = await self._upload_reference(parameters, context)
+            elif action == "generate_video":
+                result = await self._generate_video(parameters, context)
+            elif action == "check_video_status":
+                result = await self._check_video_status(parameters, context)
             else:
                 log.warning("unknown_action", action=action)
                 return {
@@ -683,24 +692,623 @@ class AdCreative:
         """上传参考图片
 
         Uploads reference images for creative generation.
+        Accepts already-uploaded file URLs from the frontend.
 
         Args:
             parameters: {
-                "file_data": bytes,
-                "file_name": str,
-                "file_type": str
+                "files": list[dict] - List of uploaded files with urls
+                    Each file: {
+                        "name": str,
+                        "url": str (CDN URL),
+                        "s3_url": str (S3 URL),
+                        "type": str (file type category),
+                        "mime_type": str,
+                        "size": int
+                    }
+                "purpose": str - Purpose of the references (default: "creative_generation")
             }
             context: {"user_id": str, "session_id": str}
 
         Returns:
-            Upload result
+            Upload result with reference IDs
 
         Requirements: 2.1, 2.2, 2.3, 2.5
         """
-        logger.info("upload_reference_stub", parameters=parameters)
+        user_id = context.get("user_id")
+        files = parameters.get("files", [])
+        purpose = parameters.get("purpose", "creative_generation")
 
-        # TODO: Implement in task 3 (file validation and upload)
-        return {
-            "status": "success",
-            "message": "Reference upload not yet implemented (task 3)",
+        log = logger.bind(
+            user_id=user_id,
+            file_count=len(files),
+            purpose=purpose,
+        )
+        log.info("upload_reference_start")
+
+        if not files:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "6006",
+                    "type": "INVALID_PARAMS",
+                    "message": "No files provided",
+                },
+            }
+
+        # Validate file types
+        allowed_types = ["image", "video"]
+        invalid_files = [f for f in files if f.get("type") not in allowed_types]
+        if invalid_files:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "6006",
+                    "type": "INVALID_FILE_TYPE",
+                    "message": f"Invalid file types: {[f.get('name') for f in invalid_files]}. Only images and videos are allowed as references.",
+                },
+            }
+
+        try:
+            # Store references via MCP
+            stored_references = []
+            for file_info in files:
+                try:
+                    result = await self.mcp_client.call_tool(
+                        "store_reference",
+                        {
+                            "user_id": user_id,
+                            "file_url": file_info.get("url") or file_info.get("s3_url"),
+                            "file_name": file_info.get("name"),
+                            "file_type": file_info.get("type"),
+                            "mime_type": file_info.get("mime_type"),
+                            "file_size": file_info.get("size"),
+                            "purpose": purpose,
+                        },
+                    )
+                    stored_references.append({
+                        "reference_id": result.get("reference_id"),
+                        "name": file_info.get("name"),
+                        "url": file_info.get("url"),
+                        "type": file_info.get("type"),
+                    })
+                except MCPError as e:
+                    log.warning(
+                        "store_reference_failed",
+                        file_name=file_info.get("name"),
+                        error=str(e),
+                    )
+                    # Continue with other files
+                    continue
+
+            if not stored_references:
+                return {
+                    "status": "error",
+                    "error": {
+                        "code": "5003",
+                        "type": "STORAGE_ERROR",
+                        "message": "Failed to store any reference files",
+                    },
+                }
+
+            log.info(
+                "upload_reference_complete",
+                stored_count=len(stored_references),
+            )
+
+            return {
+                "status": "success",
+                "references": stored_references,
+                "reference_ids": [r["reference_id"] for r in stored_references],
+                "message": f"成功保存 {len(stored_references)} 个参考文件",
+            }
+
+        except Exception as e:
+            log.error("upload_reference_error", error=str(e))
+            raise
+
+    async def _generate_from_reference(self, parameters: dict, context: dict) -> dict:
+        """基于参考图生成新素材 (Image-to-Image)
+
+        Generates new creatives based on uploaded reference images.
+        Uses Gemini's image editing/variation capabilities.
+
+        Args:
+            parameters: {
+                "reference_urls": list[str] - URLs of reference images
+                "prompt": str - Description of desired output
+                "style": str - Style to apply
+                "count": int - Number of variations to generate
+                "strength": float - How much to vary from reference (0.0-1.0)
+            }
+            context: {"user_id": str, "session_id": str}
+
+        Returns:
+            Generated creative results
+
+        Requirements: 4.2, 6.4
+        """
+        user_id = context.get("user_id")
+        reference_urls = parameters.get("reference_urls", [])
+        prompt = parameters.get("prompt", "")
+        style = parameters.get("style", "modern")
+        count = parameters.get("count", 3)
+        strength = parameters.get("strength", 0.7)
+
+        log = logger.bind(
+            user_id=user_id,
+            reference_count=len(reference_urls),
+            style=style,
+            count=count,
+        )
+        log.info("generate_from_reference_start")
+
+        if not reference_urls:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "6006",
+                    "type": "INVALID_PARAMS",
+                    "message": "No reference images provided. Please upload reference images first.",
+                },
+            }
+
+        try:
+            # Import image generator
+            from .generators.image_generator import ImageGenerator, ImageGenerationError
+
+            # Check credits first
+            estimated_cost = count * 0.5  # 0.5 credits per image
+            try:
+                await self.mcp_client.call_tool(
+                    "check_credit",
+                    {
+                        "user_id": user_id,
+                        "required_credits": estimated_cost,
+                        "operation_type": "generate_from_reference",
+                    },
+                )
+            except MCPError as e:
+                if "insufficient" in str(e).lower():
+                    return {
+                        "status": "error",
+                        "error": {
+                            "code": "6011",
+                            "type": "INSUFFICIENT_CREDITS",
+                            "message": f"Credit 不足，需要 {estimated_cost} credits",
+                        },
+                    }
+                raise
+
+            # Build enhanced prompt with reference context
+            enhanced_prompt = f"""Based on the reference image(s), create a new advertising creative.
+Style: {style}
+Instructions: {prompt if prompt else 'Generate a similar but unique variation'}
+Maintain the product focus while applying the requested style."""
+
+            # Generate using Gemini (with reference image context)
+            generator = ImageGenerator(gemini_client=self.gemini_client)
+
+            # For now, we use text-to-image with detailed prompt
+            # TODO: When Imagen 3 supports image-to-image, use that API
+            from .models import ProductInfo
+
+            # Create a synthetic product info from the prompt
+            product_info = ProductInfo(
+                title=prompt or "Product variation",
+                price=0,
+                currency="USD",
+                images=reference_urls,
+                description=prompt or "Generate variation based on reference",
+                selling_points=[],
+                source="manual",
+            )
+
+            try:
+                images = await generator.generate(
+                    product_info=product_info,
+                    count=count,
+                    style=style,
+                    aspect_ratio="1:1",
+                )
+
+                # Upload generated images
+                from .managers.upload_manager import UploadManager
+
+                upload_manager = UploadManager(mcp_client=self.mcp_client)
+                uploaded_creatives = []
+
+                for i, image in enumerate(images):
+                    try:
+                        result = await upload_manager.upload_creative(
+                            user_id=user_id,
+                            image=image,
+                            metadata={
+                                "type": "reference_variation",
+                                "reference_urls": reference_urls,
+                                "style": style,
+                                "prompt": prompt,
+                            },
+                        )
+                        uploaded_creatives.append({
+                            "creative_id": result.creative_id,
+                            "url": result.url,
+                            "created_at": result.created_at,
+                        })
+                    except Exception as e:
+                        log.warning("upload_variation_failed", index=i, error=str(e))
+
+                await upload_manager.close()
+
+                # Deduct credits
+                if uploaded_creatives:
+                    actual_cost = len(uploaded_creatives) * 0.5
+                    await self.mcp_client.call_tool(
+                        "deduct_credit",
+                        {
+                            "user_id": user_id,
+                            "credits": actual_cost,
+                            "operation_type": "generate_from_reference",
+                            "operation_id": f"ref_{user_id}_{len(uploaded_creatives)}",
+                        },
+                    )
+
+                log.info(
+                    "generate_from_reference_complete",
+                    generated=len(uploaded_creatives),
+                )
+
+                return {
+                    "status": "success",
+                    "creative_ids": [c["creative_id"] for c in uploaded_creatives],
+                    "creatives": uploaded_creatives,
+                    "message": f"成功生成 {len(uploaded_creatives)} 张参考变体素材",
+                }
+
+            except ImageGenerationError as e:
+                log.error("generate_from_reference_failed", error=str(e))
+                return {
+                    "status": "error",
+                    "error": {
+                        "code": "4003",
+                        "type": "GENERATION_FAILED",
+                        "message": f"图片生成失败: {e.message}",
+                    },
+                }
+
+        except Exception as e:
+            log.error("generate_from_reference_error", error=str(e))
+            raise
+
+    async def _generate_video(self, parameters: dict, context: dict) -> dict:
+        """生成视频素材
+
+        Generates video creatives using Google Veo models.
+        Supports multiple generation modes:
+        1. Text-to-video: Generate from prompt only
+        2. Image-to-video: Generate from first frame image
+        3. Video-to-video: Analyze reference video and generate similar
+        4. Interpolation: Generate between first and last frames
+
+        Args:
+            parameters: {
+                "prompt": str - Description of the video
+                "mode": str - Generation mode: "text", "image", "video_reference", "interpolation"
+                "first_frame_url": str - URL of first frame image (optional)
+                "last_frame_url": str - URL of last frame image (for interpolation)
+                "reference_video_url": str - URL of reference video (for video_reference mode)
+                "duration": int - Video duration in seconds (4, 6, or 8)
+                "aspect_ratio": str - Video aspect ratio (16:9 or 9:16)
+                "negative_prompt": str - Things to avoid (optional)
+                "use_fast_model": bool - Use faster model (optional)
+                "wait_for_completion": bool - Wait for video to complete (default: False)
+            }
+            context: {"user_id": str, "session_id": str}
+
+        Returns:
+            Generated video result with operation_id for polling
+
+        Requirements: Video generation capability using Veo
+        """
+        user_id = context.get("user_id")
+        prompt = parameters.get("prompt", "")
+        mode = parameters.get("mode", "text")
+        first_frame_url = parameters.get("first_frame_url")
+        last_frame_url = parameters.get("last_frame_url")
+        reference_video_url = parameters.get("reference_video_url")
+        duration = parameters.get("duration", 4)
+        aspect_ratio = parameters.get("aspect_ratio", "16:9")
+        negative_prompt = parameters.get("negative_prompt")
+        use_fast_model = parameters.get("use_fast_model", False)
+        wait_for_completion = parameters.get("wait_for_completion", False)
+
+        log = logger.bind(
+            user_id=user_id,
+            mode=mode,
+            prompt=prompt[:50] if prompt else None,
+            duration=duration,
+            aspect_ratio=aspect_ratio,
+        )
+        log.info("generate_video_start")
+
+        # Validate parameters based on mode
+        if mode == "text" and not prompt:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "6006",
+                    "type": "INVALID_PARAMS",
+                    "message": "Please provide a prompt for text-to-video generation",
+                },
+            }
+
+        if mode == "image" and not first_frame_url and not prompt:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "6006",
+                    "type": "INVALID_PARAMS",
+                    "message": "Please provide a first frame image URL or prompt for image-to-video generation",
+                },
+            }
+
+        if mode == "video_reference" and not reference_video_url:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "6006",
+                    "type": "INVALID_PARAMS",
+                    "message": "Please provide a reference video URL for video-to-video generation",
+                },
+            }
+
+        if mode == "interpolation" and (not first_frame_url or not last_frame_url):
+            return {
+                "status": "error",
+                "error": {
+                    "code": "6006",
+                    "type": "INVALID_PARAMS",
+                    "message": "Please provide both first and last frame URLs for interpolation",
+                },
+            }
+
+        # Check credits (video generation costs more)
+        video_credit_cost = duration * 2  # 2 credits per second
+        try:
+            await self.mcp_client.call_tool(
+                "check_credit",
+                {
+                    "user_id": user_id,
+                    "required_credits": video_credit_cost,
+                    "operation_type": "generate_video",
+                },
+            )
+        except MCPError as e:
+            if "insufficient" in str(e).lower():
+                return {
+                    "status": "error",
+                    "error": {
+                        "code": "6011",
+                        "type": "INSUFFICIENT_CREDITS",
+                        "message": f"Credit 不足，视频生成需要 {video_credit_cost} credits ({duration}秒 x 2 credits/秒)",
+                    },
+                }
+            raise
+
+        try:
+            # Import video generator
+            from .generators.video_generator import VideoGenerator, VideoGenerationError
+
+            generator = VideoGenerator(gemini_client=self.gemini_client)
+
+            try:
+                # Generate based on mode
+                if mode == "text":
+                    # Text-to-video generation
+                    video = await generator.generate_from_prompt(
+                        prompt=prompt,
+                        duration=duration,
+                        aspect_ratio=aspect_ratio,
+                        negative_prompt=negative_prompt,
+                        use_fast_model=use_fast_model,
+                    )
+
+                elif mode == "image":
+                    # Image-to-video generation (first frame animation)
+                    video = await generator.generate_from_image(
+                        prompt=prompt or "Animate this image naturally",
+                        first_frame_url=first_frame_url,
+                        duration=duration,
+                        aspect_ratio=aspect_ratio,
+                        negative_prompt=negative_prompt,
+                        use_fast_model=use_fast_model,
+                    )
+
+                elif mode == "video_reference":
+                    # Video-to-video: analyze reference and generate similar
+                    video = await generator.generate_from_video_reference(
+                        video_url=reference_video_url,
+                        custom_prompt=prompt,
+                        duration=duration,
+                        aspect_ratio=aspect_ratio,
+                        use_fast_model=use_fast_model,
+                    )
+
+                elif mode == "interpolation":
+                    # First/last frame interpolation
+                    video = await generator.generate_with_interpolation(
+                        prompt=prompt or "Smooth transition between frames",
+                        first_frame_url=first_frame_url,
+                        last_frame_url=last_frame_url,
+                        duration=8,  # Interpolation requires 8s
+                        aspect_ratio=aspect_ratio,
+                        use_fast_model=use_fast_model,
+                    )
+
+                else:
+                    return {
+                        "status": "error",
+                        "error": {
+                            "code": "6006",
+                            "type": "INVALID_PARAMS",
+                            "message": f"Unknown video generation mode: {mode}. Supported: text, image, video_reference, interpolation",
+                        },
+                    }
+
+                # Optionally wait for completion
+                if wait_for_completion and video.operation_id:
+                    log.info("waiting_for_video_completion", operation_id=video.operation_id)
+                    result = await generator.wait_for_completion(
+                        video.operation_id,
+                        poll_interval=10,
+                        max_wait=360,
+                    )
+                    video.status = result.get("status", "completed")
+                    video.video_url = result.get("video_uri")
+
+                    # Deduct credits on completion
+                    await self.mcp_client.call_tool(
+                        "deduct_credit",
+                        {
+                            "user_id": user_id,
+                            "credits": video_credit_cost,
+                            "operation_type": "generate_video",
+                            "operation_id": video.operation_id,
+                        },
+                    )
+
+                log.info(
+                    "generate_video_started",
+                    operation_id=video.operation_id,
+                    status=video.status,
+                )
+
+                return {
+                    "status": "success",
+                    "video": video.to_dict(),
+                    "message": "视频生成已启动" if video.status == "processing" else "视频生成完成",
+                    "polling_info": {
+                        "operation_id": video.operation_id,
+                        "poll_endpoint": "/api/v1/video/status",
+                        "estimated_time": f"{duration * 30}-{duration * 60} 秒",
+                    } if video.status == "processing" else None,
+                }
+
+            except VideoGenerationError as e:
+                log.error("generate_video_failed", error=str(e), code=e.code)
+                return {
+                    "status": "error",
+                    "error": {
+                        "code": e.code or "4003",
+                        "type": "VIDEO_GENERATION_FAILED",
+                        "message": f"视频生成失败: {e.message}",
+                        "retryable": e.retryable,
+                    },
+                }
+
+            finally:
+                await generator.close()
+
+        except Exception as e:
+            log.error("generate_video_error", error=str(e), exc_info=True)
+            raise
+
+    async def _check_video_status(self, parameters: dict, context: dict) -> dict:
+        """检查视频生成状态
+
+        Checks the status of an ongoing video generation operation.
+
+        Args:
+            parameters: {
+                "operation_id": str - The operation ID from generate_video
+            }
+            context: {"user_id": str, "session_id": str}
+
+        Returns:
+            Video generation status
+
+        Requirements: Video generation capability
+        """
+        user_id = context.get("user_id")
+        operation_id = parameters.get("operation_id")
+
+        log = logger.bind(user_id=user_id, operation_id=operation_id)
+        log.info("check_video_status_start")
+
+        if not operation_id:
+            return {
+                "status": "error",
+                "error": {
+                    "code": "6006",
+                    "type": "INVALID_PARAMS",
+                    "message": "operation_id is required",
+                },
+            }
+
+        try:
+            from .generators.video_generator import VideoGenerator, VideoGenerationError
+
+            generator = VideoGenerator(gemini_client=self.gemini_client)
+
+            try:
+                result = await generator.check_status(operation_id)
+
+                log.info(
+                    "check_video_status_complete",
+                    status=result.get("status"),
+                    has_video=result.get("video_uri") is not None,
+                )
+
+                # If completed, deduct credits
+                if result.get("status") == "completed" and result.get("video_uri"):
+                    # Get video duration from result or default to 4
+                    duration = result.get("duration", 4)
+                    video_credit_cost = duration * 2
+
+                    try:
+                        await self.mcp_client.call_tool(
+                            "deduct_credit",
+                            {
+                                "user_id": user_id,
+                                "credits": video_credit_cost,
+                                "operation_type": "generate_video",
+                                "operation_id": operation_id,
+                            },
+                        )
+                    except MCPError as e:
+                        log.warning("credit_deduction_failed", error=str(e))
+
+                return {
+                    "status": "success",
+                    "video_status": result.get("status"),
+                    "video_url": result.get("video_uri"),
+                    "progress": result.get("progress"),
+                    "message": self._get_status_message(result.get("status")),
+                }
+
+            except VideoGenerationError as e:
+                log.error("check_video_status_failed", error=str(e), code=e.code)
+                return {
+                    "status": "error",
+                    "error": {
+                        "code": e.code or "4003",
+                        "type": "VIDEO_STATUS_CHECK_FAILED",
+                        "message": f"状态查询失败: {e.message}",
+                    },
+                }
+
+            finally:
+                await generator.close()
+
+        except Exception as e:
+            log.error("check_video_status_error", error=str(e), exc_info=True)
+            raise
+
+    def _get_status_message(self, status: str | None) -> str:
+        """Get user-friendly status message."""
+        messages = {
+            "processing": "视频正在生成中，请稍候...",
+            "completed": "视频生成完成！",
+            "failed": "视频生成失败",
+            None: "状态未知",
         }
+        return messages.get(status, f"状态: {status}")

@@ -210,12 +210,12 @@ class LandingPageService:
             raise LandingPageNotFoundError(landing_page_id)
 
         if hard_delete:
-            # Delete S3 file
+            # Delete GCS file
             try:
                 if landing_page.s3_key:
                     landing_pages_storage.delete_file(landing_page.s3_key)
             except Exception:
-                # Log but don't fail if S3 deletion fails
+                # Log but don't fail if GCS deletion fails
                 pass
 
             await self.db.delete(landing_page)
@@ -232,7 +232,7 @@ class LandingPageService:
         landing_page_id: int,
         user_id: int,
     ) -> LandingPage:
-        """Publish a landing page to S3 and CloudFront.
+        """Publish a landing page to GCS and CDN.
 
         Args:
             landing_page_id: Landing page ID
@@ -253,7 +253,7 @@ class LandingPageService:
         if not landing_page.html_content:
             raise ValueError("Landing page has no HTML content to publish")
 
-        # Upload HTML to S3
+        # Upload HTML to GCS
         landing_pages_storage.upload_file(
             key=landing_page.s3_key,
             data=landing_page.html_content.encode("utf-8"),

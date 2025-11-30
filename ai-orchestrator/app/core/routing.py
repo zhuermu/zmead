@@ -18,6 +18,7 @@ logger = structlog.get_logger(__name__)
 # Node names for routing
 NODE_ROUTER = "router"
 NODE_CREATIVE = "creative"  # Real implementation (was creative_stub)
+NODE_SAVE_CREATIVE = "save_creative"  # Save generated creatives to asset library
 NODE_REPORTING = "reporting"  # Real implementation (was reporting_stub)
 NODE_AD_ENGINE = "ad_engine"  # Real implementation (was ad_engine_stub)
 NODE_LANDING_PAGE = "landing_page"  # Real implementation (was landing_page_stub)
@@ -32,6 +33,7 @@ NODE_END = "__end__"
 # Module to node mapping
 MODULE_NODE_MAP = {
     "creative": NODE_CREATIVE,  # Real implementation
+    "save_creative": NODE_SAVE_CREATIVE,  # Save creatives to asset library
     "reporting": NODE_REPORTING,  # Real implementation
     "ad_engine": NODE_AD_ENGINE,  # Real implementation
     "landing_page": NODE_LANDING_PAGE,  # Real implementation
@@ -49,6 +51,7 @@ def route_by_intent(
 ) -> Literal[
     "creative",
     "creative_stub",
+    "save_creative",
     "reporting",
     "reporting_stub",
     "ad_engine",

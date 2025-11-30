@@ -208,13 +208,13 @@ class CreativeService:
             raise CreativeNotFoundError(creative_id)
 
         if hard_delete:
-            # Delete S3 file
+            # Delete GCS file
             try:
-                file_key = self._extract_s3_key(creative.file_url)
+                file_key = self._extract_gcs_key(creative.file_url)
                 if file_key:
                     creatives_storage.delete_file(file_key)
             except Exception:
-                # Log but don't fail if S3 deletion fails
+                # Log but don't fail if GCS deletion fails
                 pass
 
             await self.db.delete(creative)
@@ -226,23 +226,26 @@ class CreativeService:
         await self.db.flush()
         return True
 
-    def _extract_s3_key(self, s3_url: str) -> str | None:
-        """Extract S3 key from S3 URL.
+    def _extract_gcs_key(self, gcs_url: str) -> str | None:
+        """Extract GCS key from GCS URL.
 
         Args:
-            s3_url: S3 URL (s3://bucket/key or https://...)
+            gcs_url: GCS URL (gs://bucket/key or https://storage.googleapis.com/...)
 
         Returns:
-            S3 key or None
+            GCS key or None
         """
-        if s3_url.startswith("s3://"):
-            # s3://bucket/key format
-            parts = s3_url.replace("s3://", "").split("/", 1)
+        if gcs_url.startswith("gs://"):
+            # gs://bucket/key format
+            parts = gcs_url.replace("gs://", "").split("/", 1)
             return parts[1] if len(parts) > 1 else None
-        elif ".s3." in s3_url:
-            # https://bucket.s3.region.amazonaws.com/key format
-            parts = s3_url.split(".amazonaws.com/", 1)
-            return parts[1] if len(parts) > 1 else None
+        elif "storage.googleapis.com/" in gcs_url:
+            # https://storage.googleapis.com/bucket/key format
+            parts = gcs_url.split("storage.googleapis.com/", 1)
+            if len(parts) > 1:
+                # Remove bucket name from path
+                path_parts = parts[1].split("/", 1)
+                return path_parts[1] if len(path_parts) > 1 else None
         return None
 
     def generate_presigned_upload_url(
@@ -276,14 +279,14 @@ class CreativeService:
         )
 
         # Get URLs
-        s3_url = f"s3://{creatives_storage.bucket}/{file_key}"
+        gcs_url = f"gs://{creatives_storage.bucket_name}/{file_key}"
         cdn_url = creatives_storage.get_cdn_url(file_key)
 
         return {
             "upload_url": presigned["url"],
             "upload_fields": presigned["fields"],
             "file_key": file_key,
-            "s3_url": s3_url,
+            "gcs_url": gcs_url,
             "cdn_url": cdn_url,
             "expires_in": expires_in,
         }

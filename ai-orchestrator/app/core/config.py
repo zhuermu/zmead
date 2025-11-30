@@ -33,13 +33,22 @@ class Settings(BaseSettings):
     # Gemini API configuration
     gemini_api_key: str = Field(..., description="Google Gemini API key (required)")
     gemini_model_chat: str = Field(
-        default="gemini-2.5-pro", description="Gemini model for chat/intent recognition"
+        default="gemini-3-pro-preview", description="Gemini 3 Pro model for chat/complex reasoning"
     )
     gemini_model_fast: str = Field(
-        default="gemini-2.5-flash", description="Gemini model for fast responses"
+        default="gemini-2.5-flash", description="Gemini model for fast responses/intent recognition"
     )
     gemini_model_imagen: str = Field(
-        default="imagen-3.0-generate-002", description="Gemini Imagen 3 model for image generation"
+        default="gemini-3-pro-image-preview", description="Gemini 3 Pro Image model for image generation"
+    )
+    gemini_model_imagen_pro: str = Field(
+        default="gemini-3-pro-image-preview", description="Gemini 3 Pro Image model for high-quality image generation"
+    )
+    gemini_model_veo: str = Field(
+        default="veo-3.1-generate-preview", description="Veo 3.1 model for video generation"
+    )
+    gemini_model_veo_fast: str = Field(
+        default="veo-3.1-generate-preview", description="Veo 3.1 model for video generation"
     )
 
     # Web Platform integration

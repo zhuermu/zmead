@@ -3,8 +3,19 @@
 This module implements the Ad Creative functionality with:
 - Gemini Imagen 3 for image generation
 - Gemini 2.5 Flash for image analysis and quality scoring
-- S3 upload via MCP
+- Google Cloud Storage for image uploads (replaces S3)
+- Temporary storage in Redis for preview (MCP save deferred to user request)
 - Credit management with refund on failure
+
+Flow:
+1. User requests creative generation
+2. Check credits via MCP
+3. Generate images using Imagen 3
+4. Upload to GCS for chat display
+5. Store temp references in Redis (30 min TTL)
+6. Deduct credits
+7. Return preview URLs to user
+8. User can later explicitly save to asset library via MCP
 
 Requirements: 需求 6 (Ad Creative), 需求 12.4 (Error Recovery)
 """
@@ -22,12 +33,15 @@ from app.core.config import get_settings
 from app.core.errors import ErrorHandler
 from app.core.retry import retry_async
 from app.core.state import AgentState
-from app.services.gemini_client import GeminiClient, GeminiError
-from app.services.mcp_client import (
+from app.services.credit_client import (
+    CreditClient,
+    CreditError,
     InsufficientCreditsError,
-    MCPClient,
-    MCPError,
+    get_credit_client,
 )
+from app.services.gemini_client import GeminiClient, GeminiError
+from app.services.gcs_client import GCSClient, GCSError, get_gcs_client
+from app.services.temp_storage import store_temp_creative, store_temp_batch
 
 logger = structlog.get_logger(__name__)
 
@@ -265,124 +279,72 @@ Provide a comprehensive analysis including:
         )
 
 
-async def upload_to_s3(
-    mcp_client: MCPClient,
+async def upload_to_gcs(
+    gcs_client: GCSClient,
     image_bytes: bytes,
     filename: str,
     user_id: str,
+    session_id: str,
+    style: str | None = None,
+    score: int | None = None,
 ) -> dict[str, Any]:
-    """Upload image to S3 via MCP.
+    """Upload image to Google Cloud Storage.
 
     Args:
-        mcp_client: MCP client instance
+        gcs_client: GCS client instance
         image_bytes: Image data
         filename: Filename for the upload
         user_id: User ID
-
-    Returns:
-        Dict with s3_url and cdn_url
-
-    Raises:
-        MCPError: If upload fails
-    """
-    # Get presigned upload URL
-    upload_info = await mcp_client.call_tool(
-        "get_upload_url",
-        {
-            "filename": filename,
-            "content_type": "image/png",
-            "expires_in": 3600,
-        },
-    )
-
-    upload_url = upload_info.get("upload_url")
-    upload_fields = upload_info.get("upload_fields", {})
-    s3_url = upload_info.get("s3_url")
-    cdn_url = upload_info.get("cdn_url")
-
-    # Upload to S3 using presigned POST
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        # Prepare multipart form data
-        files = {"file": (filename, image_bytes, "image/png")}
-        data = upload_fields
-
-        response = await client.post(upload_url, data=data, files=files)
-
-        if response.status_code not in (200, 201, 204):
-            raise MCPError(
-                f"S3 upload failed: HTTP {response.status_code}",
-                code="S3_UPLOAD_FAILED",
-            )
-
-    return {
-        "s3_url": s3_url,
-        "cdn_url": cdn_url,
-        "file_size": len(image_bytes),
-    }
-
-
-async def create_creative_record(
-    mcp_client: MCPClient,
-    s3_url: str,
-    cdn_url: str,
-    file_size: int,
-    name: str,
-    style: str | None,
-    score: int,
-    product_url: str | None,
-    tags: list[str],
-) -> dict[str, Any]:
-    """Create creative record in database via MCP.
-
-    Args:
-        mcp_client: MCP client instance
-        s3_url: S3 URL of the uploaded file
-        cdn_url: CDN URL of the file
-        file_size: File size in bytes
-        name: Creative name
+        session_id: Session ID
         style: Creative style
         score: Quality score
-        product_url: Product URL
-        tags: Tags for the creative
 
     Returns:
-        Created creative record
+        Dict with gcs_url and public_url
+
+    Raises:
+        GCSError: If upload fails
     """
-    return await mcp_client.call_tool(
-        "create_creative",
-        {
-            "file_url": s3_url,
-            "cdn_url": cdn_url,
-            "file_type": "image",
-            "file_size": file_size,
-            "name": name,
-            "style": style,
-            "score": score,
-            "product_url": product_url,
-            "tags": tags,
-        },
+    result = await gcs_client.upload_for_chat_display(
+        image_bytes=image_bytes,
+        filename=filename,
+        user_id=user_id,
+        session_id=session_id,
+        style=style,
+        score=score,
     )
+
+    return {
+        "gcs_url": result["gcs_url"],
+        "public_url": result["public_url"],
+        "object_name": result["object_name"],
+        "file_size": result["size"],
+    }
 
 
 
 async def creative_node(state: AgentState) -> dict[str, Any]:
     """Ad Creative node with real Gemini Imagen 3 integration.
 
-    This node:
+    This node generates images and stores them temporarily for preview.
+    MCP save to asset library is deferred until user explicitly requests it.
+
+    Flow:
     1. Estimates credit cost
     2. Checks credit via MCP
     3. Generates images using Gemini Imagen 3
     4. Analyzes images using Gemini 2.5 Flash
-    5. Uploads images to S3 via MCP
-    6. Creates creative records via MCP
+    5. Uploads to GCS for chat display
+    6. Stores temp references in Redis (30 min TTL)
     7. Deducts credit via MCP
-    8. Refunds credit on failure
+    8. Returns preview URLs and temp_ids to user
+    9. User can later save via "save_creative" intent
 
     Args:
         state: Current agent state
 
     Returns:
-        State updates with completed results
+        State updates with completed results including temp_ids for later save
 
     Requirements: 需求 6.1-6.5
     """
@@ -425,200 +387,235 @@ async def creative_node(state: AgentState) -> dict[str, Any]:
     actual_cost = 0.0
 
     try:
-        async with MCPClient() as mcp:
-            # Step 2: Check credit with retry
+        # Get credit client (system-level, not MCP)
+        credit_client = get_credit_client()
+
+        # Step 2: Check credit with retry (direct API, not MCP)
+        try:
+            await retry_async(
+                lambda: credit_client.check_credit(
+                    user_id=state.get("user_id", ""),
+                    estimated_credits=estimated_cost,
+                    operation_type="generate_creative",
+                ),
+                max_retries=3,
+                context="creative_credit_check",
+            )
+            log.info("creative_node_credit_check_passed")
+
+        except InsufficientCreditsError as e:
+            log.warning(
+                "creative_node_insufficient_credits",
+                required=e.required,
+                available=e.available,
+            )
+            error_state = ErrorHandler.create_node_error_state(
+                error=e,
+                node_name="creative",
+                user_id=state.get("user_id"),
+                session_id=state.get("session_id"),
+            )
+            error_state["completed_results"] = [
+                {
+                    "action_type": "generate_creative",
+                    "module": "creative",
+                    "status": "error",
+                    "data": {},
+                    "error": error_state.get("error"),
+                    "cost": 0,
+                    "mock": False,
+                }
+            ]
+            return error_state
+
+        except CreditError as e:
+            log.error("creative_node_credit_check_failed", error=str(e))
+            error_state = ErrorHandler.create_node_error_state(
+                error=e,
+                node_name="creative",
+                user_id=state.get("user_id"),
+                session_id=state.get("session_id"),
+            )
+            error_state["completed_results"] = [
+                {
+                    "action_type": "generate_creative",
+                    "module": "creative",
+                    "status": "error",
+                    "data": {},
+                    "error": error_state.get("error"),
+                    "cost": 0,
+                    "mock": False,
+                }
+            ]
+            return error_state
+
+        # Step 3: Generate images using Imagen 3
+        imagen_client = ImagenClient()
+        gemini_client = GeminiClient()
+        gcs_client = get_gcs_client()
+
+        # Build prompt
+        prompt = build_image_prompt(
+            product_url=product_url,
+            product_description=product_description,
+            style=style,
+            target_audience=target_audience,
+        )
+
+        log.info("creative_node_generating", count=count, prompt=prompt[:100])
+
+        # Track temp IDs for batch reference
+        temp_ids: list[str] = []
+        user_id = state.get("user_id", "")
+        session_id = state.get("session_id", "")
+
+        # Generate images one by one (Imagen 3 generates 1 at a time)
+        for i in range(count):
+            try:
+                # Vary the style slightly for each image
+                current_style = style or CREATIVE_STYLES[i % len(CREATIVE_STYLES)]
+                current_prompt = build_image_prompt(
+                    product_url=product_url,
+                    product_description=product_description,
+                    style=current_style,
+                    target_audience=target_audience,
+                )
+
+                # Generate image with retry
+                image_bytes = await retry_async(
+                    lambda p=current_prompt: imagen_client.generate_image(p),
+                    max_retries=3,
+                    context=f"imagen_generate_{i}",
+                )
+
+                log.info("creative_node_image_generated", index=i, size=len(image_bytes))
+
+                # Step 4: Analyze image
+                analysis = await analyze_creative(image_bytes, gemini_client)
+
+                # Step 5: Upload to GCS for chat display
+                filename = f"{current_style}-{i + 1:02d}.png"
+                upload_result = await upload_to_gcs(
+                    gcs_client=gcs_client,
+                    image_bytes=image_bytes,
+                    filename=filename,
+                    user_id=user_id,
+                    session_id=session_id,
+                    style=current_style,
+                    score=analysis.score,
+                )
+
+                log.info(
+                    "creative_node_image_uploaded",
+                    index=i,
+                    public_url=upload_result["public_url"],
+                )
+
+                # Step 6: Store temp metadata in Redis (NOT saving to MCP yet)
+                # NOTE: Only metadata is stored in Redis. Image is permanently in GCS.
+                temp_id = await store_temp_creative(
+                    user_id=user_id,
+                    session_id=session_id,
+                    gcs_url=upload_result["gcs_url"],
+                    public_url=upload_result["public_url"],
+                    filename=filename,
+                    style=current_style,
+                    score=analysis.score,
+                    analysis={
+                        "composition": analysis.composition,
+                        "color_harmony": analysis.color_harmony,
+                        "brand_fit": analysis.brand_fit,
+                        "ad_effectiveness": analysis.ad_effectiveness,
+                        "suggestions": analysis.suggestions,
+                        "object_name": upload_result["object_name"],
+                        "file_size": upload_result["file_size"],  # Store file size for later save
+                    },
+                )
+                temp_ids.append(temp_id)
+
+                generated_creatives.append(
+                    {
+                        "temp_id": temp_id,  # Use temp_id instead of permanent id
+                        "name": filename,
+                        "url": upload_result["public_url"],  # GCS public URL
+                        "gcs_url": upload_result["gcs_url"],
+                        "score": analysis.score,
+                        "style": current_style,
+                        "status": "preview",  # Status is preview, not ready
+                        "analysis": {
+                            "composition": analysis.composition,
+                            "color_harmony": analysis.color_harmony,
+                            "brand_fit": analysis.brand_fit,
+                            "ad_effectiveness": analysis.ad_effectiveness,
+                            "suggestions": analysis.suggestions,
+                        },
+                    }
+                )
+
+                actual_cost += CREDIT_PER_CREATIVE
+
+            except GeminiError as e:
+                log.warning(
+                    "creative_node_image_failed",
+                    index=i,
+                    error=str(e),
+                )
+                # Continue with remaining images
+                continue
+
+            except GCSError as e:
+                log.warning(
+                    "creative_node_gcs_upload_failed",
+                    index=i,
+                    error=str(e),
+                )
+                # Continue with remaining images
+                continue
+
+            except Exception as e:
+                log.warning(
+                    "creative_node_temp_store_failed",
+                    index=i,
+                    error=str(e),
+                )
+                # Continue with remaining images
+                continue
+
+        # Store batch reference if multiple images generated
+        batch_id = None
+        if len(temp_ids) > 1:
+            batch_id = await store_temp_batch(user_id, session_id, temp_ids)
+
+        # Step 7: Deduct credit for successfully generated images (direct API, not MCP)
+        if actual_cost > 0:
             try:
                 await retry_async(
-                    lambda: mcp.check_credit(
+                    lambda: credit_client.deduct_credit(
                         user_id=state.get("user_id", ""),
-                        estimated_credits=estimated_cost,
+                        credits=actual_cost,
                         operation_type="generate_creative",
+                        operation_id=operation_id,
+                        details={
+                            "count": len(generated_creatives),
+                            "requested_count": count,
+                        },
                     ),
                     max_retries=3,
-                    context="creative_credit_check",
+                    context="creative_credit_deduct",
                 )
-                log.info("creative_node_credit_check_passed")
-
-            except InsufficientCreditsError as e:
-                log.warning(
-                    "creative_node_insufficient_credits",
-                    required=e.required,
-                    available=e.available,
+                credit_deducted = True
+                log.info(
+                    "creative_node_credit_deducted",
+                    credits=actual_cost,
+                    operation_id=operation_id,
                 )
-                error_state = ErrorHandler.create_node_error_state(
-                    error=e,
-                    node_name="creative",
-                    user_id=state.get("user_id"),
-                    session_id=state.get("session_id"),
+
+            except CreditError as e:
+                log.error(
+                    "creative_node_credit_deduct_failed",
+                    error=str(e),
+                    operation_id=operation_id,
                 )
-                error_state["completed_results"] = [
-                    {
-                        "action_type": "generate_creative",
-                        "module": "creative",
-                        "status": "error",
-                        "data": {},
-                        "error": error_state.get("error"),
-                        "cost": 0,
-                        "mock": False,
-                    }
-                ]
-                return error_state
-
-            except MCPError as e:
-                log.error("creative_node_credit_check_failed", error=str(e))
-                error_state = ErrorHandler.create_node_error_state(
-                    error=e,
-                    node_name="creative",
-                    user_id=state.get("user_id"),
-                    session_id=state.get("session_id"),
-                )
-                error_state["completed_results"] = [
-                    {
-                        "action_type": "generate_creative",
-                        "module": "creative",
-                        "status": "error",
-                        "data": {},
-                        "error": error_state.get("error"),
-                        "cost": 0,
-                        "mock": False,
-                    }
-                ]
-                return error_state
-
-            # Step 3: Generate images using Imagen 3
-            imagen_client = ImagenClient()
-            gemini_client = GeminiClient()
-
-            # Build prompt
-            prompt = build_image_prompt(
-                product_url=product_url,
-                product_description=product_description,
-                style=style,
-                target_audience=target_audience,
-            )
-
-            log.info("creative_node_generating", count=count, prompt=prompt[:100])
-
-            # Generate images one by one (Imagen 3 generates 1 at a time)
-            for i in range(count):
-                try:
-                    # Vary the style slightly for each image
-                    current_style = style or CREATIVE_STYLES[i % len(CREATIVE_STYLES)]
-                    current_prompt = build_image_prompt(
-                        product_url=product_url,
-                        product_description=product_description,
-                        style=current_style,
-                        target_audience=target_audience,
-                    )
-
-                    # Generate image with retry
-                    image_bytes = await retry_async(
-                        lambda p=current_prompt: imagen_client.generate_image(p),
-                        max_retries=3,
-                        context=f"imagen_generate_{i}",
-                    )
-
-                    log.info(f"creative_node_image_generated", index=i, size=len(image_bytes))
-
-                    # Step 4: Analyze image
-                    analysis = await analyze_creative(image_bytes, gemini_client)
-
-                    # Step 5: Upload to S3
-                    filename = f"{current_style}-{i + 1:02d}.png"
-                    upload_result = await upload_to_s3(
-                        mcp_client=mcp,
-                        image_bytes=image_bytes,
-                        filename=filename,
-                        user_id=state.get("user_id", ""),
-                    )
-
-                    log.info(
-                        "creative_node_image_uploaded",
-                        index=i,
-                        cdn_url=upload_result["cdn_url"],
-                    )
-
-                    # Step 6: Create creative record
-                    creative_record = await create_creative_record(
-                        mcp_client=mcp,
-                        s3_url=upload_result["s3_url"],
-                        cdn_url=upload_result["cdn_url"],
-                        file_size=upload_result["file_size"],
-                        name=filename,
-                        style=current_style,
-                        score=analysis.score,
-                        product_url=product_url,
-                        tags=["ai-generated", current_style],
-                    )
-
-                    generated_creatives.append(
-                        {
-                            "id": creative_record.get("id"),
-                            "name": filename,
-                            "url": upload_result["cdn_url"],
-                            "score": analysis.score,
-                            "style": current_style,
-                            "status": "ready",
-                            "analysis": {
-                                "composition": analysis.composition,
-                                "color_harmony": analysis.color_harmony,
-                                "brand_fit": analysis.brand_fit,
-                                "ad_effectiveness": analysis.ad_effectiveness,
-                                "suggestions": analysis.suggestions,
-                            },
-                        }
-                    )
-
-                    actual_cost += CREDIT_PER_CREATIVE
-
-                except GeminiError as e:
-                    log.warning(
-                        "creative_node_image_failed",
-                        index=i,
-                        error=str(e),
-                    )
-                    # Continue with remaining images
-                    continue
-
-                except MCPError as e:
-                    log.warning(
-                        "creative_node_upload_failed",
-                        index=i,
-                        error=str(e),
-                    )
-                    # Continue with remaining images
-                    continue
-
-            # Step 7: Deduct credit for successfully generated images
-            if actual_cost > 0:
-                try:
-                    await retry_async(
-                        lambda: mcp.deduct_credit(
-                            user_id=state.get("user_id", ""),
-                            credits=actual_cost,
-                            operation_type="generate_creative",
-                            operation_id=operation_id,
-                            details={
-                                "count": len(generated_creatives),
-                                "requested_count": count,
-                            },
-                        ),
-                        max_retries=3,
-                        context="creative_credit_deduct",
-                    )
-                    credit_deducted = True
-                    log.info(
-                        "creative_node_credit_deducted",
-                        credits=actual_cost,
-                        operation_id=operation_id,
-                    )
-
-                except MCPError as e:
-                    log.error(
-                        "creative_node_credit_deduct_failed",
-                        error=str(e),
-                        operation_id=operation_id,
-                    )
 
     except Exception as e:
         # Step 8: Refund credit on unexpected failure
@@ -628,23 +625,22 @@ async def creative_node(state: AgentState) -> dict[str, Any]:
             exc_info=True,
         )
 
-        # Attempt refund if credit was deducted
+        # Attempt refund if credit was deducted (direct API, not MCP)
         if credit_deducted and actual_cost > 0:
             try:
-                async with MCPClient() as mcp:
-                    await mcp.refund_credit(
-                        user_id=state.get("user_id", ""),
-                        credits=actual_cost,
-                        operation_type="generate_creative",
-                        operation_id=operation_id,
-                        reason=f"Generation failed: {str(e)}",
-                    )
-                    log.info(
-                        "creative_node_credit_refunded",
-                        credits=actual_cost,
-                        operation_id=operation_id,
-                    )
-            except MCPError as refund_error:
+                await credit_client.refund_credit(
+                    user_id=state.get("user_id", ""),
+                    credits=actual_cost,
+                    operation_type="generate_creative",
+                    operation_id=operation_id,
+                    reason=f"Generation failed: {str(e)}",
+                )
+                log.info(
+                    "creative_node_credit_refunded",
+                    credits=actual_cost,
+                    operation_id=operation_id,
+                )
+            except CreditError as refund_error:
                 log.error(
                     "creative_node_refund_failed",
                     error=str(refund_error),
@@ -693,17 +689,19 @@ async def creative_node(state: AgentState) -> dict[str, Any]:
             "credit_sufficient": True,
         }
 
-    # Build success result
+    # Build success result with temp IDs (not permanent IDs)
     result = {
         "action_type": "generate_creative",
         "module": "creative",
         "status": "success",
         "data": {
             "creatives": generated_creatives,
-            "creative_ids": [c["id"] for c in generated_creatives],
+            "temp_ids": temp_ids,  # Temp IDs for later save
+            "batch_id": batch_id,  # Batch ID if multiple images
             "count": len(generated_creatives),
             "requested_count": count,
-            "message": f"✅ 已生成 {len(generated_creatives)} 张素材",
+            "message": f"已生成 {len(generated_creatives)} 张素材",
+            "save_hint": "如果满意，请说「保存素材」将图片保存到素材库。",
         },
         "error": None,
         "cost": actual_cost,
@@ -713,6 +711,8 @@ async def creative_node(state: AgentState) -> dict[str, Any]:
     log.info(
         "creative_node_complete",
         count=len(generated_creatives),
+        temp_ids=temp_ids,
+        batch_id=batch_id,
         cost=actual_cost,
     )
 
@@ -720,4 +720,9 @@ async def creative_node(state: AgentState) -> dict[str, Any]:
         "completed_results": [result],
         "credit_checked": True,
         "credit_sufficient": True,
+        # Store temp info for save_creative intent
+        "temp_creatives": {
+            "temp_ids": temp_ids,
+            "batch_id": batch_id,
+        },
     }

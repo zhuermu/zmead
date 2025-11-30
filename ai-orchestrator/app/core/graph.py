@@ -32,6 +32,7 @@ from app.nodes.reporting_node import reporting_node
 from app.nodes.reporting_stub import reporting_stub_node
 from app.nodes.respond import respond_node
 from app.nodes.router import router_node
+from app.nodes.save_creative_node import save_creative_node
 
 logger = structlog.get_logger(__name__)
 
@@ -115,6 +116,9 @@ def build_agent_graph() -> CompiledStateGraph:
     else:
         workflow.add_node("market_insights", market_insights_node)
 
+    # Save Creative module - save generated creatives to asset library
+    workflow.add_node("save_creative", save_creative_node)
+
     # Confirmation node
     workflow.add_node("human_confirmation", human_confirmation_node)
 
@@ -141,6 +145,7 @@ def build_agent_graph() -> CompiledStateGraph:
         {
             "creative": "creative",  # Real implementation
             "creative_stub": "creative",  # Alias for backward compatibility
+            "save_creative": "save_creative",  # Save creatives to asset library
             "reporting": "reporting",  # Real implementation
             "reporting_stub": "reporting",  # Alias for backward compatibility
             "ad_engine": "ad_engine",  # Real implementation
@@ -161,6 +166,7 @@ def build_agent_graph() -> CompiledStateGraph:
     # Each module checks if confirmation is needed
     for module_node in [
         "creative",  # Real creative implementation
+        "save_creative",  # Save creatives to asset library
         "reporting",  # Real reporting implementation
         "ad_engine",  # Real campaign automation implementation
         "landing_page",  # Real landing page implementation

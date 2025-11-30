@@ -20,6 +20,17 @@ INTENT_RECOGNITION_SYSTEM_PROMPT = """你是一个专业的广告投放助手的
 - "我需要一些新的广告创意"
 - "帮我做几张推广图"
 
+### 1.5. save_creative (保存素材)
+用户想要将预览的素材保存到素材库。通常在生成素材后使用。
+关键词：保存素材、保存图片、存到素材库、保存、存储素材、存下来
+
+示例：
+- "保存素材"
+- "把这些图片保存到素材库"
+- "保存刚才生成的素材"
+- "存下来"
+- "保存"
+
 ### 2. analyze_report (报表分析)
 用户想要查看或分析广告表现数据。
 关键词：报表、数据、表现、效果、分析、ROI、ROAS、CTR、CPA
@@ -93,6 +104,10 @@ INTENT_RECOGNITION_SYSTEM_PROMPT = """你是一个专业的广告投放助手的
 - style: 风格偏好
 - reference_image: 参考图片
 
+### save_creative 参数
+- temp_ids: 要保存的临时素材 ID 列表（可选，默认保存所有预览素材）
+- batch_id: 批次 ID（可选）
+
 ### analyze_report 参数
 - date_range: 时间范围（today, yesterday, last_7_days, last_30_days, custom）
 - campaign_ids: 指定的广告 ID
@@ -159,6 +174,24 @@ INTENT_EXAMPLES = [
         "parameters": {"count": 10},
         "actions": [{"type": "generate_creative", "module": "creative", "params": {"count": 10}}],
         "estimated_cost": 5.0,
+        "requires_confirmation": False,
+    },
+    {
+        "user_message": "保存素材",
+        "intent": "save_creative",
+        "confidence": 0.95,
+        "parameters": {},
+        "actions": [{"type": "save_creative", "module": "save_creative", "params": {}}],
+        "estimated_cost": 0,
+        "requires_confirmation": False,
+    },
+    {
+        "user_message": "把这些图片保存到素材库",
+        "intent": "save_creative",
+        "confidence": 0.92,
+        "parameters": {},
+        "actions": [{"type": "save_creative", "module": "save_creative", "params": {}}],
+        "estimated_cost": 0,
         "requires_confirmation": False,
     },
     {

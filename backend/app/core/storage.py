@@ -1,30 +1,85 @@
-"""AWS S3 storage utilities."""
+"""Google Cloud Storage utilities."""
 
+import logging
+from datetime import timedelta
+from functools import lru_cache
 from typing import Any
-
-import boto3
-from botocore.config import Config
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
-def get_s3_client() -> Any:
-    """Get S3 client instance."""
-    return boto3.client(
-        "s3",
-        aws_access_key_id=settings.aws_access_key_id,
-        aws_secret_access_key=settings.aws_secret_access_key,
-        region_name=settings.aws_region,
-        config=Config(signature_version="s3v4"),
-    )
+# Global flag to track if GCS is available
+_gcs_available: bool | None = None
 
 
-class S3Storage:
-    """S3 storage utility class."""
+@lru_cache(maxsize=1)
+def get_gcs_client():
+    """Get Google Cloud Storage client instance (lazy initialization).
 
-    def __init__(self, bucket: str) -> None:
-        self.bucket = bucket
-        self.client = get_s3_client()
+    Returns None if credentials are not available.
+    """
+    global _gcs_available
+
+    try:
+        from google.cloud import storage
+        from google.oauth2 import service_account
+
+        if settings.gcs_credentials_path:
+            credentials = service_account.Credentials.from_service_account_file(
+                settings.gcs_credentials_path
+            )
+            client = storage.Client(
+                project=settings.gcs_project_id,
+                credentials=credentials,
+            )
+        else:
+            # Use default credentials (ADC - Application Default Credentials)
+            client = storage.Client(project=settings.gcs_project_id)
+
+        _gcs_available = True
+        return client
+    except Exception as e:
+        logger.warning(f"GCS client initialization failed: {e}. Storage features will be disabled.")
+        _gcs_available = False
+        return None
+
+
+def is_gcs_available() -> bool:
+    """Check if GCS is available."""
+    if _gcs_available is None:
+        get_gcs_client()  # Trigger lazy initialization
+    return _gcs_available or False
+
+
+class GCSStorage:
+    """Google Cloud Storage utility class with lazy initialization."""
+
+    def __init__(self, bucket_name: str) -> None:
+        self.bucket_name = bucket_name
+        self._client = None
+        self._bucket = None
+
+    @property
+    def client(self):
+        """Lazy initialization of GCS client."""
+        if self._client is None:
+            self._client = get_gcs_client()
+        return self._client
+
+    @property
+    def bucket(self):
+        """Lazy initialization of bucket."""
+        if self._bucket is None and self.client is not None:
+            self._bucket = self.client.bucket(self.bucket_name)
+        return self._bucket
+
+    def _check_available(self) -> bool:
+        """Check if GCS is available and raise appropriate error if not."""
+        if not is_gcs_available():
+            logger.warning(f"GCS operation skipped: storage not available")
+            return False
+        return True
 
     def generate_presigned_upload_url(
         self,
@@ -32,30 +87,37 @@ class S3Storage:
         content_type: str,
         expires_in: int = 3600,
     ) -> dict[str, Any]:
-        """Generate presigned URL for file upload."""
-        return self.client.generate_presigned_post(
-            Bucket=self.bucket,
-            Key=key,
-            Fields={"Content-Type": content_type},
-            Conditions=[
-                {"Content-Type": content_type},
-                ["content-length-range", 1, 100 * 1024 * 1024],  # Max 100MB
-            ],
-            ExpiresIn=expires_in,
+        """Generate signed URL for file upload."""
+        if not self._check_available():
+            return {"url": "", "fields": {"Content-Type": content_type}}
+        blob = self.bucket.blob(key)
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(seconds=expires_in),
+            method="PUT",
+            content_type=content_type,
         )
+        return {
+            "url": url,
+            "fields": {
+                "Content-Type": content_type,
+            },
+        }
 
     def generate_presigned_download_url(
         self,
         key: str,
         expires_in: int = 3600,
     ) -> str:
-        """Generate presigned URL for file download."""
-        return self.client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
-            ExpiresIn=expires_in,
+        """Generate signed URL for file download."""
+        if not self._check_available():
+            return ""
+        blob = self.bucket.blob(key)
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(seconds=expires_in),
+            method="GET",
         )
-
 
     def upload_file(
         self,
@@ -63,50 +125,65 @@ class S3Storage:
         data: bytes,
         content_type: str,
     ) -> str:
-        """Upload file to S3."""
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=key,
-            Body=data,
-            ContentType=content_type,
-        )
-        return f"s3://{self.bucket}/{key}"
+        """Upload file to GCS."""
+        if not self._check_available():
+            return f"gs://{self.bucket_name}/{key}"  # Return expected format but don't upload
+        blob = self.bucket.blob(key)
+        blob.upload_from_string(data, content_type=content_type)
+        return f"gs://{self.bucket_name}/{key}"
 
     def delete_file(self, key: str) -> None:
-        """Delete file from S3."""
-        self.client.delete_object(Bucket=self.bucket, Key=key)
+        """Delete file from GCS."""
+        if not self._check_available():
+            return
+        blob = self.bucket.blob(key)
+        blob.delete()
 
     def get_cdn_url(self, key: str) -> str:
-        """Get CloudFront CDN URL for a file."""
-        if settings.cloudfront_domain:
-            return f"https://{settings.cloudfront_domain}/{key}"
-        return f"https://{self.bucket}.s3.{settings.aws_region}.amazonaws.com/{key}"
+        """Get CDN URL for a file."""
+        if settings.gcs_cdn_domain:
+            return f"https://{settings.gcs_cdn_domain}/{key}"
+        # Default to storage.googleapis.com URL
+        return f"https://storage.googleapis.com/{self.bucket_name}/{key}"
+
+    def get_public_url(self, key: str) -> str:
+        """Get public URL for a file (requires bucket to be public or object to be public)."""
+        return f"https://storage.googleapis.com/{self.bucket_name}/{key}"
 
     def file_exists(self, key: str) -> bool:
-        """Check if file exists in S3."""
-        try:
-            self.client.head_object(Bucket=self.bucket, Key=key)
-            return True
-        except self.client.exceptions.ClientError:
+        """Check if file exists in GCS."""
+        if not self._check_available():
             return False
+        blob = self.bucket.blob(key)
+        return blob.exists()
+
+    def make_public(self, key: str) -> str:
+        """Make a file publicly accessible and return its public URL."""
+        if not self._check_available():
+            return self.get_public_url(key)
+        blob = self.bucket.blob(key)
+        blob.make_public()
+        return blob.public_url
 
 
 # Pre-configured storage instances
-creatives_storage = S3Storage(settings.s3_bucket_creatives)
-landing_pages_storage = S3Storage(settings.s3_bucket_landing_pages)
-exports_storage = S3Storage(settings.s3_bucket_exports)
+creatives_storage = GCSStorage(settings.gcs_bucket_creatives)
+landing_pages_storage = GCSStorage(settings.gcs_bucket_landing_pages)
+exports_storage = GCSStorage(settings.gcs_bucket_exports)
 
 
 def get_presigned_upload_url(key: str, expires_in: int = 3600) -> str:
     """
-    Generate presigned URL for file upload.
-    
+    Generate signed URL for file upload.
+
     This is a convenience function for simple uploads.
-    For more complex uploads, use S3Storage.generate_presigned_upload_url().
+    For more complex uploads, use GCSStorage.generate_presigned_upload_url().
     """
-    s3_client = get_s3_client()
-    return s3_client.generate_presigned_url(
-        'put_object',
-        Params={'Bucket': settings.s3_bucket_creatives, 'Key': key},
-        ExpiresIn=expires_in
+    if not is_gcs_available():
+        return ""
+    blob = creatives_storage.bucket.blob(key)
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=timedelta(seconds=expires_in),
+        method="PUT",
     )

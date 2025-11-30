@@ -84,7 +84,9 @@ class MCPServer:
             user: User | None = None
             if tool_def.requires_auth:
                 try:
-                    user = await authenticate_mcp_request(token, self.db)
+                    # Extract user_id from request params for service token auth
+                    user_id_param = request.params.get("user_id") if request.params else None
+                    user = await authenticate_mcp_request(token, self.db, user_id=user_id_param)
                 except MCPAuthError as e:
                     return MCPResponse.from_error(
                         code=MCPErrorCode.UNAUTHORIZED,

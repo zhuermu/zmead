@@ -66,9 +66,52 @@ backend/
 │   ├── models/           # SQLAlchemy models
 │   ├── schemas/          # Pydantic schemas
 │   ├── services/         # Business logic
+│   ├── mcp/              # MCP server and tools
 │   └── tasks/            # Celery tasks
 ├── tests/                # Test files
 ├── .env.example          # Environment template
 ├── alembic.ini           # Alembic configuration
 └── pyproject.toml        # Project dependencies
 ```
+
+## Service-to-Service Authentication
+
+### AI Orchestrator Service Token
+
+The Web Platform communicates with the AI Orchestrator using a service token for authentication.
+
+#### Generating a Service Token
+
+Generate a secure random token for service-to-service authentication:
+
+```bash
+# Using Python
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# Or using OpenSSL
+openssl rand -base64 32
+```
+
+#### Configuration
+
+1. Add the generated token to `backend/.env`:
+```bash
+AI_ORCHESTRATOR_SERVICE_TOKEN=your-generated-token-here
+```
+
+2. Add the same token to `ai-orchestrator/.env`:
+```bash
+WEB_PLATFORM_SERVICE_TOKEN=your-generated-token-here
+```
+
+The Web Platform will include this token in the `Authorization` header when calling the AI Orchestrator:
+```
+Authorization: Bearer <service_token>
+```
+
+#### Security Notes
+
+- Use a unique token for each environment (development, staging, production)
+- Rotate tokens periodically in production
+- Never commit tokens to version control
+- Store production tokens in a secrets manager (e.g., AWS Secrets Manager)

@@ -13,6 +13,7 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.models.ad_account import AdAccount
     from app.models.campaign import Campaign
+    from app.models.conversation import Conversation
     from app.models.creative import Creative
     from app.models.landing_page import LandingPage
 
@@ -68,6 +69,9 @@ class User(Base):
     )
     landing_pages: Mapped[list["LandingPage"]] = relationship(
         "LandingPage", back_populates="user", cascade="all, delete-orphan"
+    )
+    conversations: Mapped[list["Conversation"]] = relationship(
+        "Conversation", back_populates="user", cascade="all, delete-orphan"
     )
 
     @property

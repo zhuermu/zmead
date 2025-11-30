@@ -1,120 +1,87 @@
-# Technology Stack
+---
+inclusion: always
+---
 
-## Frontend
+# Technology Stack & Conventions
 
-- **Framework**: Next.js 14 (App Router)
-- **Language**: TypeScript 5
-- **Styling**: Tailwind CSS 3.4
-- **UI Components**: Shadcn/ui + Radix UI
-- **State Management**: Zustand
-- **Data Fetching**: TanStack Query (React Query)
-- **AI Chat**: Vercel AI SDK (`ai` package)
-- **Charts**: Recharts
-- **HTTP Client**: Axios
+## Stack Overview
 
-## Backend
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 14 (App Router), TypeScript 5, Tailwind CSS 3.4, Shadcn/ui |
+| Backend | FastAPI, Python 3.12+, SQLAlchemy 2.0, Pydantic 2.9 |
+| AI Orchestrator | LangGraph, Google Gemini 2.5, MCP Protocol |
+| Database | MySQL 8.4, Redis 7.x |
+| Infrastructure | Docker, AWS (S3, RDS, ECS) |
 
-- **Framework**: FastAPI (Python 3.12+)
-- **ORM**: SQLAlchemy 2.0
-- **Database Driver**: aiomysql
-- **Migrations**: Alembic
-- **Task Queue**: Celery 5.4
-- **Authentication**: python-jose (JWT)
-- **Password Hashing**: bcrypt
-- **Validation**: Pydantic 2.9
-- **HTTP Client**: httpx
-- **Payment**: Stripe SDK
+## Code Style Rules
 
-## AI & MCP
+### Python (Backend & AI Orchestrator)
+- Line length: 100 characters (Ruff enforced)
+- Use `async/await` for all I/O operations
+- Type hints required on all function signatures
+- Imports: stdlib → third-party → local (Ruff auto-sorts)
+- Use Pydantic models for request/response validation
+- SQLAlchemy models use `Mapped[]` type annotations
 
-- **AI Models**: Google Gemini 2.5 (Flash/Pro), Imagen 3, Veo 3.1
-- **Orchestration**: LangChain / LlamaIndex
-- **Protocol**: Model Context Protocol (MCP)
-- **Ad Platform APIs**: Meta Marketing API, TikTok Ads API
+### TypeScript (Frontend)
+- Strict mode enabled
+- Use `interface` for object shapes, `type` for unions/intersections
+- Prefer named exports over default exports
+- Components: `'use client'` only when interactivity required
+- Use Tailwind classes; avoid inline styles
 
-## Data Layer
+## API Conventions
 
-- **Primary Database**: MySQL 8.4 (via AWS RDS)
-- **Time-Series**: TimescaleDB extension (planned)
-- **Cache/Sessions**: Redis 7.x
-- **File Storage**: AWS S3
-- **CDN**: CloudFront
+### REST Endpoints
+- Prefix: `/api/v1/{resource}`
+- Auth: `Authorization: Bearer <jwt>` header
+- Errors: `{"detail": "message"}` format
+- Pagination: `?skip=0&limit=20`
 
-## Infrastructure
+### WebSocket
+- Chat endpoint: `/ws/chat`
+- Message format: JSON with `type`, `content`, `metadata` fields
 
-- **Containerization**: Docker
-- **Orchestration**: docker-compose (dev), AWS ECS (prod)
-- **Region**: AWS Singapore
-- **Web Server**: Uvicorn (ASGI)
+## Database Patterns
 
-## Development Tools
+### Migrations
+```bash
+alembic revision --autogenerate -m "description"
+alembic upgrade head
+```
 
-- **Linting**: Ruff (Python), ESLint (TypeScript)
-- **Type Checking**: mypy (Python), TypeScript
-- **Testing**: pytest + pytest-asyncio (backend)
-- **Code Quality**: Ruff line-length=100, Python 3.12 target
+### Model Conventions
+- Table names: plural (`users`, `campaigns`)
+- Primary key: `id` (UUID)
+- Timestamps: `created_at`, `updated_at` on all tables
+- Soft delete: `deleted_at` where applicable
+
+## Testing Requirements
+
+### Backend
+- Framework: pytest + pytest-asyncio
+- Use `@pytest.mark.asyncio` for async tests
+- Fixtures in `conftest.py`
+- Property-based tests with Hypothesis where applicable
+
+### Frontend
+- No tests required unless explicitly requested
 
 ## Common Commands
 
-### Backend
+| Task | Command |
+|------|---------|
+| Backend dev server | `uvicorn app.main:app --reload --port 8000` |
+| Frontend dev server | `npm run dev` (port 3000) |
+| Run migrations | `alembic upgrade head` |
+| Backend tests | `pytest` |
+| Lint Python | `ruff check .` |
+| Lint TypeScript | `npm run lint` |
+| Docker up | `docker-compose up -d` |
 
-```bash
-# Setup
-python -m venv venv
-source venv/bin/activate  # macOS/Linux
-pip install -e ".[dev]"
+## Environment Files
 
-# Database
-alembic upgrade head           # Run migrations
-alembic revision --autogenerate -m "message"  # Create migration
-
-# Development
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Background Tasks
-celery -A app.core.celery worker --loglevel=info
-celery -A app.core.celery beat --loglevel=info
-
-# Testing
-pytest
-pytest --cov=app tests/
-```
-
-### Frontend
-
-```bash
-# Setup
-npm install
-
-# Development
-npm run dev      # Start dev server (http://localhost:3000)
-
-# Production
-npm run build    # Build for production
-npm start        # Start production server
-
-# Code Quality
-npm run lint     # Run ESLint
-```
-
-### Docker
-
-```bash
-# Start services
-docker-compose up -d
-
-# Stop services
-docker-compose down
-
-# View logs
-docker-compose logs -f [service_name]
-
-# Rebuild
-docker-compose up -d --build
-```
-
-## Environment Variables
-
-- Backend: `backend/.env` (see `.env.example`)
-- Frontend: `frontend/.env.local` (see `.env.example`)
-- Required: Database credentials, Redis URL, AWS credentials, API keys
+- Backend: `backend/.env` (copy from `.env.example`)
+- Frontend: `frontend/.env.local` (copy from `.env.example`)
+- AI Orchestrator: `ai-orchestrator/.env` (copy from `.env.example`)

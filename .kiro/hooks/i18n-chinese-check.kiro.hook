@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "name": "Hardcoded Chinese Detection",
+  "description": "Detects hardcoded Chinese text in source code files and suggests refactoring to use English variable names with i18n support for both Chinese and English languages in the UI layer.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*.py",
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Scan the edited file for hardcoded Chinese characters (Unicode range \\u4e00-\\u9fff). If found:\n1. Identify all hardcoded Chinese strings in the code\n2. Replace Chinese variable/function names with English equivalents\n3. For UI display text, extract Chinese strings to i18n translation files\n4. Ensure the code supports both English and Chinese languages through proper internationalization\n5. Use English as the default language with Chinese as a supported locale\n6. Suggest creating or updating translation files (e.g., locales/en.json, locales/zh.json) if they don't exist\n\nReport findings and provide refactored code that follows i18n best practices."
+  }
+}

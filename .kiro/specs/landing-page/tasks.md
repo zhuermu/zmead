@@ -1,0 +1,264 @@
+# Implementation Plan - Landing Page（落地页生成）
+
+- [x] 1. Set up project structure and core interfaces
+  - [x] 1.1 Create landing_page module directory structure
+    - Create `ai-orchestrator/app/modules/landing_page/` with all subdirectories
+    - Create `__init__.py` files for all packages
+    - _Requirements: 1.1, 2.1_
+  - [x] 1.2 Define data models in models.py
+    - Implement ProductInfo, LandingPageContent, HeroSection, Feature, CTASection
+    - Implement OptimizationResult, TranslationResult, ABTest, ABTestAnalysis
+    - Implement PublishResult, ExportResult with Pydantic validation
+    - _Requirements: 1.4, 2.1_
+  - [x] 1.3 Create capability.py with execute() interface
+    - Implement LandingPage class with execute() method
+    - Add action routing for all 9 supported actions
+    - _Requirements: All_
+  - [ ]* 1.4 Write property test for data model validation
+    - **Property 1: 产品信息提取完整性**
+    - **Validates: Requirements 1.1, 1.4**
+
+- [x] 2. Implement product information extraction
+  - [x] 2.1 Create base extractor interface
+    - Implement BaseExtractor abstract class with extract() and supports() methods
+    - _Requirements: 1.1_
+  - [x] 2.2 Implement Shopify extractor
+    - Parse Shopify product URLs
+    - Extract product info using Shopify API
+    - _Requirements: 1.2_
+  - [x] 2.3 Implement Amazon extractor
+    - Parse Amazon product URLs
+    - Extract product info using web scraping with BeautifulSoup
+    - _Requirements: 1.3_
+  - [x] 2.4 Implement extractor router
+    - Auto-select correct extractor based on URL pattern
+    - Handle unsupported URLs with appropriate error
+    - _Requirements: 1.2, 1.3, 1.5_
+  - [ ]* 2.5 Write property test for platform-specific extraction routing
+    - **Property 2: 平台特定提取路由**
+    - **Validates: Requirements 1.2, 1.3**
+  - [ ]* 2.6 Write property test for extraction error handling
+    - **Property 3: 提取错误处理**
+    - **Validates: Requirements 1.5**
+
+- [ ] 3. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+
+- [x] 4. Implement landing page generation
+  - [x] 4.1 Create page generator
+    - Implement PageGenerator class with generate() method
+    - Support template selection (modern, minimal, vibrant)
+    - _Requirements: 2.1_
+  - [x] 4.2 Implement hero section generation with AI optimization
+    - Use Gemini 2.5 Pro to generate optimized headlines
+    - Generate subheadline and CTA text
+    - _Requirements: 2.2_
+  - [x] 4.3 Implement feature extraction
+    - Extract 3 core selling points from product info
+    - Use AI to generate features if not available
+    - _Requirements: 2.3_
+  - [x] 4.4 Implement reviews section
+    - Display user reviews from product info
+    - Limit to top 3 reviews
+    - _Requirements: 2.4_
+  - [x] 4.5 Implement Facebook Pixel injection
+    - Create PixelInjector class
+    - Inject pixel code into generated HTML
+    - _Requirements: 2.5_
+  - [ ]* 4.6 Write property test for landing page generation completeness
+    - **Property 4: 落地页生成完整性**
+    - **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
+
+- [x] 5. Implement landing page update functionality
+  - [x] 5.1 Create update handler
+    - Parse field paths (e.g., "hero.headline")
+    - Apply updates to landing page structure
+    - _Requirements: 3.1, 3.2_
+  - [x] 5.2 Implement input validators
+    - Validate image URL format and accessibility
+    - Validate HEX color format
+    - _Requirements: 3.3, 3.4_
+  - [x] 5.3 Implement update response
+    - Return list of updated fields
+    - Return new URL after update
+    - _Requirements: 3.5_
+  - [ ]* 5.4 Write property test for update operation correctness
+    - **Property 5: 更新操作正确性**
+    - **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5**
+
+- [ ] 6. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 7. Implement copy optimization
+  - [x] 7.1 Create copy optimizer
+    - Implement CopyOptimizer class with optimize() method
+    - Use Gemini 2.5 Pro for text optimization
+    - _Requirements: 4.1_
+  - [x] 7.2 Implement optimization response format
+    - Return optimized_text and improvements list
+    - Include confidence_score
+    - _Requirements: 4.4_
+  - [x] 7.3 Implement fallback behavior
+    - Return original text on optimization failure
+    - _Requirements: 4.5_
+  - [ ]* 7.4 Write property test for copy optimization response format
+    - **Property 6: 文案优化响应格式**
+    - **Validates: Requirements 4.1, 4.4**
+  - [ ]* 7.5 Write property test for copy optimization fallback
+    - **Property 7: 文案优化回退**
+    - **Validates: Requirements 4.5**
+
+
+- [ ] 8. Implement multi-language translation
+  - [x] 8.1 Create translator
+    - Implement Translator class with translate() method
+    - Use Gemini 2.5 Flash for translation
+    - _Requirements: 5.1_
+  - [x] 8.2 Implement structure preservation
+    - Maintain original format during translation
+    - Generate new language version URL
+    - _Requirements: 5.2, 5.3_
+  - [x] 8.3 Implement supported languages
+    - Support English, Spanish, French, Chinese
+    - Validate target language before translation
+    - _Requirements: 5.4_
+  - [x] 8.4 Implement translation error handling
+    - Return error for unsupported languages
+    - Handle AI translation failures gracefully
+    - _Requirements: 5.5_
+  - [ ]* 8.5 Write property test for translation completeness
+    - **Property 8: 翻译完整性**
+    - **Validates: Requirements 5.1, 5.2, 5.3, 5.4**
+  - [ ]* 8.6 Write property test for translation error handling
+    - **Property 9: 翻译错误处理**
+    - **Validates: Requirements 5.5**
+
+- [ ] 9. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 10. Implement A/B testing
+  - [x] 10.1 Create A/B test manager
+    - Implement ABTestManager class
+    - Support creating multiple variants
+    - _Requirements: 6.1_
+  - [x] 10.2 Implement traffic distribution
+    - Random traffic allocation based on configured split
+    - Use cookie for session consistency
+    - _Requirements: 6.2_
+  - [x] 10.3 Implement chi-square statistical analysis
+    - Use scipy.stats for chi-square test
+    - Calculate p-value for significance
+    - _Requirements: 6.3_
+  - [x] 10.4 Implement winner identification
+    - Identify winner when p-value < 0.05 and conversions >= 100
+    - Return "data insufficient" message when sample too small
+    - _Requirements: 6.4, 6.5_
+  - [x] 10.5 Implement recommendation generation
+    - Generate usage recommendations based on test results
+    - _Requirements: 6.6_
+  - [ ]* 10.6 Write property test for A/B test creation
+    - **Property 10: A/B 测试创建**
+    - **Validates: Requirements 6.1, 6.2**
+  - [ ]* 10.7 Write property test for A/B test statistical analysis
+    - **Property 11: A/B 测试统计分析**
+    - **Validates: Requirements 6.3, 6.4, 6.5, 6.6**
+
+- [ ] 11. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+
+- [x] 12. Implement landing page hosting
+  - [x] 12.1 Create hosting manager
+    - Implement HostingManager class with publish() method
+    - Configure S3 client for file upload
+    - _Requirements: 7.1_
+  - [x] 12.2 Implement S3 upload
+    - Upload HTML content to S3 bucket
+    - Set appropriate content type and cache headers
+    - _Requirements: 7.1_
+  - [x] 12.3 Implement CloudFront distribution
+    - Configure CloudFront for CDN delivery
+    - Generate CDN URL
+    - _Requirements: 7.2_
+  - [x] 12.4 Implement default domain generation
+    - Generate default domain URL (user.aae-pages.com/lp_id)
+    - _Requirements: 7.3_
+  - [x] 12.5 Implement custom domain support
+    - Configure CNAME records for custom domains
+    - _Requirements: 7.4_
+  - [x] 12.6 Implement HTTPS enablement
+    - Request SSL certificate via AWS Certificate Manager
+    - Ensure ssl_status is "active" on completion
+    - _Requirements: 7.5_
+  - [ ]* 12.7 Write property test for publishing flow completeness
+    - **Property 12: 发布流程完整性**
+    - **Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5**
+
+- [x] 13. Implement landing page export
+  - [x] 13.1 Create export manager
+    - Implement ExportManager class with export() method
+    - _Requirements: 8.1_
+  - [x] 13.2 Implement HTML generation with inline assets
+    - Generate complete HTML with inline CSS and JavaScript
+    - _Requirements: 8.1, 8.2_
+  - [x] 13.3 Implement Facebook Pixel inclusion in export
+    - Ensure pixel code is included in exported HTML
+    - _Requirements: 8.3_
+  - [x] 13.4 Implement ZIP packaging
+    - Package HTML and assets into ZIP file
+    - _Requirements: 8.4_
+  - [x] 13.5 Implement download URL generation
+    - Generate presigned S3 URL with 24-hour expiration
+    - _Requirements: 8.5_
+  - [ ]* 13.6 Write property test for export completeness
+    - **Property 13: 导出完整性**
+    - **Validates: Requirements 8.1, 8.2, 8.3, 8.4, 8.5**
+
+- [ ] 14. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+
+- [x] 15. Implement conversion tracking
+  - [x] 15.1 Enhance pixel injector for multiple events
+    - Support PageView, AddToCart, Purchase events
+    - Generate event-specific tracking code
+    - _Requirements: 9.1, 9.2, 9.3_
+  - [x] 15.2 Create internal event tracker
+    - Implement EventTracker class
+    - Generate tracking script for Web Platform events
+    - _Requirements: 9.1, 9.2, 9.3_
+  - [x] 15.3 Implement dual tracking (Facebook + Web Platform)
+    - Inject both Facebook Pixel and internal tracking scripts
+    - Ensure events are sent to both destinations
+    - _Requirements: 9.1, 9.2, 9.3_
+  - [ ]* 15.4 Write property test for event tracking completeness
+    - **Property 14: 事件追踪完整性**
+    - **Validates: Requirements 9.1, 9.2, 9.3**
+
+- [x] 16. Implement error handling and retry logic
+  - [x] 16.1 Create unified error handler
+    - Implement ErrorHandler class
+    - Map errors to appropriate error codes
+    - _Requirements: 1.5, 4.5, 5.5_
+  - [x] 16.2 Implement retry strategy
+    - Exponential backoff with max 3 retries
+    - Handle retryable vs non-retryable errors
+    - _Requirements: 1.5_
+  - [x] 16.3 Implement fallback behaviors
+    - Return original text on optimization failure
+    - Return error with suggestions on extraction failure
+    - _Requirements: 4.5, 1.5_
+
+- [x] 17. Integrate with AI Orchestrator
+  - [x] 17.1 Register landing_page module with AI Orchestrator
+    - Add module to capability registry
+    - Configure routing for landing page intents
+    - _Requirements: All_
+  - [x] 17.2 Implement MCP client integration
+    - Configure MCP client for Web Platform communication
+    - Implement create_landing_page, get_landing_pages tool calls
+    - _Requirements: All_
+
+- [ ] 18. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

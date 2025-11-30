@@ -44,6 +44,11 @@ celery_app.conf.update(
             "task": "app.tasks.anomaly_detection.detect_anomalies",
             "schedule": crontab(minute=0),
         },
+        # Campaign rule checking - Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+        "check-campaign-rules": {
+            "task": "app.tasks.rule_check.check_campaign_rules",
+            "schedule": crontab(minute=0, hour="*/6"),
+        },
     },
 )
 

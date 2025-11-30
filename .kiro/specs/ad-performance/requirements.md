@@ -490,46 +490,6 @@ result = await mcp_client.call_tool(
 
 ---
 
-### 需求 1.1：手动刷新数据
-
-**用户故事**：作为用户，我想要手动刷新广告数据，以便查看最新的表现。
-
-#### 数据同步状态显示
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    数据同步状态显示                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  报表页面顶部显示：                                          │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  📊 数据最后更新：2024-11-26 10:30:00                │   │
-│  │  [🔄 刷新数据] 按钮                                   │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  刷新状态：                                                  │
-│  - 空闲：显示"刷新数据"按钮                                  │
-│  - 刷新中：显示"正在刷新..."和进度动画                       │
-│  - 刷新完成：显示"数据已更新"提示（3秒后消失）              │
-│  - 刷新失败：显示"刷新失败，请稍后重试"错误提示              │
-│                                                             │
-│  刷新限制：                                                  │
-│  - 两次刷新间隔至少 5 分钟                                   │
-│  - 达到限制时按钮禁用并显示倒计时                            │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-#### 验收标准
-
-1. WHEN 用户访问报表页面 THEN Web Platform SHALL 显示数据最后更新时间
-2. WHEN 用户点击"刷新数据"按钮 THEN Web Platform SHALL 通过 AI Agent 调用 Ad Performance 抓取最新数据
-3. WHEN 数据刷新中 THEN Web Platform SHALL 显示刷新进度和状态
-4. WHEN 数据刷新完成 THEN Web Platform SHALL 更新页面数据并显示"数据已更新"提示
-5. WHEN 两次刷新间隔小于 5 分钟 THEN Web Platform SHALL 禁用刷新按钮并显示剩余等待时间
-
----
-
 ### 需求 2：每日报告生成
 
 **用户故事**：作为 AI Orchestrator，我需要生成每日报告，以便为用户提供 AI 分析和建议。
@@ -614,154 +574,114 @@ result = await mcp_client.call_tool(
 
 ---
 
-### 需求 8：定时任务调度
+### 需求 8：支持定时任务调用
 
-**用户故事**：作为系统，我需要定时抓取数据和生成报告，以便自动化运营。
-
-#### 架构说明（修正版）
-
-定时任务采用 **Web Platform 调度 + 直接调用功能模块** 的架构：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Web Platform                               │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │           Celery Beat (调度器)                       │   │
-│  │  - 每 6 小时触发数据抓取任务                         │   │
-│  │  - 每天 9:00 触发报告生成任务                        │   │
-│  │  - 每小时触发异常检测任务                            │   │
-│  │  - 每天 2:00 触发 Token 检查任务                    │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                          │                                   │
-│                          ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │           Celery Worker (执行器)                     │   │
-│  │                                                      │   │
-│  │  from modules.ad_performance import AdPerformance │
-│  │                                                      │   │
-│  │  @celery.task                                        │   │
-│  │  def fetch_ad_data_task(user_id):                   │   │
-│  │      capability = AdPerformance()             │   │
-│  │      result = capability.execute(                   │   │
-│  │          action="fetch_ad_data",                    │   │
-│  │          parameters={...},                          │   │
-│  │          context={"user_id": user_id}               │   │
-│  │      )                                               │   │
-│  │      # 发送通知                                      │   │
-│  │      send_notification(user_id, result)             │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          │ 直接调用（Python 模块导入）
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Ad Performance（Python 模块）             │
-│  - fetch_ad_data(): 从广告平台抓取数据                      │
-│  - generate_daily_report(): 生成每日报告                   │
-│  - detect_anomalies(): 检测异常                            │
-│  - 通过 MCP Client 调用 Web Platform 存储数据               │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          │ MCP Protocol
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Web Platform MCP Server                         │
-│  - save_metrics(): 保存指标数据                            │
-│  - get_metrics(): 获取历史数据                             │
-│  - create_notification(): 创建通知                         │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**架构说明**：
-
-**为什么不通过 AI Orchestrator？**
-- ❌ AI Orchestrator 是对话式的，专注于理解用户意图和协调对话流程
-- ❌ 定时任务是确定性的后台任务，不需要意图识别和对话管理
-- ✅ Celery Worker 直接导入功能模块 Python 代码更高效
-- ✅ 避免不必要的网络调用和序列化开销
-
-**两种调用路径对比**：
-
-| 场景 | 触发方式 | 执行路径 | 是否需要意图识别 |
-|------|---------|---------|----------------|
-| 用户对话 | 用户发起 | 前端 → WebSocket → AI Orchestrator → 功能模块 | ✅ 需要 |
-| 定时任务 | 系统定时 | Celery Beat → Celery Worker → 功能模块（直接调用） | ❌ 不需要 |
-| 手动刷新 | 用户点击按钮 | 前端 → WebSocket → AI Orchestrator → 功能模块 | ✅ 需要（理解"刷新"意图） |
-
-**定时任务具体内容**：
-
-1. **数据抓取任务**（每 6 小时）
-   - 调用 Meta/TikTok/Google Ads API
-   - 获取 Campaign/Adset/Ad 的花费、展示、点击、转化、收入数据
-   - 存储到 TimescaleDB 时序表
-
-2. **报告生成任务**（每天 9:00）
-   - 汇总昨日数据
-   - AI 分析关键变化和趋势
-   - 生成优化建议
-   - 发送邮件和站内通知
-
-3. **异常检测任务**（每小时）
-   - 检测 CPA/ROAS/CTR 异常波动
-   - 识别高严重性问题
-   - 发送紧急通知
-
-4. **Token 检查任务**（每天 2:00）
-   - 检查所有广告账户 Token 有效期
-   - 提前 24 小时尝试刷新
-   - 刷新失败时通知用户
+**用户故事**：作为 Web Platform 定时任务，我需要调用 Ad Performance 执行数据抓取和报告生成。
 
 #### 验收标准
 
-1. WHEN 系统启动 THEN Web Platform SHALL 启动 Celery Beat 调度器和 Celery Worker
-2. WHEN 到达调度时间 THEN Celery Worker SHALL 直接导入并调用 Ad Performance Python 模块
-3. WHEN Ad Performance 执行 THEN Ad Performance SHALL 通过 MCP Client 访问 Web Platform 数据
-4. WHEN 任务执行完成 THEN Celery Worker SHALL 调用 Web Platform API 发送通知给用户
-5. WHEN 任务执行失败 THEN Celery Worker SHALL 记录错误日志并重试最多 3 次
+1. WHEN Web Platform Celery Worker 调用 fetch_ad_data THEN Ad Performance SHALL 执行数据抓取
+2. WHEN Web Platform Celery Worker 调用 generate_daily_report THEN Ad Performance SHALL 生成每日报告
+3. WHEN Web Platform Celery Worker 调用 detect_anomalies THEN Ad Performance SHALL 执行异常检测
+4. WHEN 任务执行完成 THEN Ad Performance SHALL 返回结构化结果供 Worker 处理
+5. WHEN 任务执行失败 THEN Ad Performance SHALL 返回错误信息和重试建议
+
+**注意**：定时任务调度逻辑（Celery Beat 配置、调度时间、Worker 管理）由 Web Platform 负责，详见 [Web Platform 需求 12.2](../web-platform/requirements.md#需求-122定时任务调度)
 
 ---
 
-### 需求 9：通知推送
+### 需求 9：返回通知数据
 
-**用户故事**：作为系统，我需要将定时任务结果推送给用户，以便用户及时了解广告状态。
+**用户故事**：作为系统，我需要 Ad Performance 返回需要通知用户的数据，以便 Web Platform 创建通知。
 
-#### 通知推送流程
+#### 通知数据格式
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│              定时任务通知推送流程                            │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Celery Worker 执行完成                                      │
-│         │                                                    │
-│         ▼                                                    │
-│  调用 Web Platform API                                        │
-│  POST /api/internal/notifications                           │
-│  {                                                           │
-│    "user_id": "user_123",                                   │
-│    "type": "daily_report",                                  │
-│    "data": {...}                                            │
-│  }                                                           │
-│         │                                                    │
-│         ▼                                                    │
-│  Web Platform 处理通知                                        │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  1. 创建站内通知记录                                 │   │
-│  │  2. 根据用户偏好决定是否发送邮件                     │   │
-│  │  3. 如果是紧急通知，强制发送邮件                     │   │
-│  │  4. 更新未读通知计数                                 │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+```json
+{
+  "notifications": [
+    {
+      "type": "daily_report",
+      "priority": "normal",
+      "title": "每日报告已生成",
+      "message": "您的 2024-11-25 广告报告已生成，ROAS 2.7",
+      "data": {
+        "report_date": "2024-11-25",
+        "summary": {
+          "total_spend": 500.00,
+          "total_revenue": 1350.00,
+          "overall_roas": 2.7
+        }
+      }
+    },
+    {
+      "type": "anomaly_alert",
+      "priority": "urgent",
+      "title": "检测到异常",
+      "message": "Adset 'US 36-50' CPA 异常上涨 112%",
+      "data": {
+        "metric": "cpa",
+        "entity_type": "adset",
+        "entity_id": "adset_789",
+        "current_value": 25.50,
+        "expected_value": 12.00,
+        "deviation": "+112.5%"
+      }
+    }
+  ]
+}
 ```
 
 #### 验收标准
 
-1. WHEN 每日报告生成完成 THEN Celery Worker SHALL 调用 Web Platform API 创建通知
-2. WHEN 检测到严重异常 THEN Celery Worker SHALL 创建紧急通知并强制发送邮件
-3. WHEN 用户启用 Webhook THEN Web Platform SHALL 推送通知到用户指定 URL
-4. WHEN 用户下次登录 THEN Web Platform SHALL 在通知中心显示未读通知
-5. WHEN 用户配置通知偏好 THEN Web Platform SHALL 按用户偏好选择推送渠道
+1. WHEN 每日报告生成完成 THEN Ad Performance SHALL 返回 daily_report 类型通知数据
+2. WHEN 检测到严重异常 THEN Ad Performance SHALL 返回 anomaly_alert 类型通知数据（priority: urgent）
+3. WHEN 检测到一般异常 THEN Ad Performance SHALL 返回 anomaly_alert 类型通知数据（priority: normal）
+4. WHEN 返回通知数据 THEN Ad Performance SHALL 包含完整的上下文信息供 Web Platform 使用
+5. WHEN 返回通知数据 THEN Ad Performance SHALL 包含 title、message、data 字段
+
+**注意**：通知创建由 Web Platform 负责，Ad Performance 只返回通知数据
+
+---
+
+### 需求 10：与 Campaign Automation 协作
+
+**用户故事**：作为 AI Orchestrator，我需要将 Ad Performance 的优化建议传递给 Campaign Automation 执行。
+
+#### 协作流程
+
+```
+用户: "帮我优化广告"
+    │
+    ▼
+AI Orchestrator
+    │
+    ├─► Ad Performance.generate_recommendations()
+    │   返回: [
+    │     {
+    │       "action": "pause_adset",
+    │       "target": {"type": "adset", "id": "adset_789"},
+    │       "reason": "ROAS 1.2 低于目标",
+    │       "confidence": 0.92
+    │     }
+    │   ]
+    │
+    ├─► 显示建议给用户，等待确认
+    │
+    └─► Campaign Automation.execute_action(
+          action="pause_adset",
+          target_id="adset_789"
+        )
+```
+
+#### 验收标准
+
+1. WHEN Ad Performance 生成优化建议 THEN Ad Performance SHALL 返回可执行的 action 和 target
+2. WHEN 建议包含 pause_adset THEN Ad Performance SHALL 返回 adset_id 和 name 供 Campaign Automation 使用
+3. WHEN 建议包含 increase_budget THEN Ad Performance SHALL 返回 adset_id 和建议增加金额
+4. WHEN 建议包含 refresh_creative THEN Ad Performance SHALL 返回 ad_id 供 Ad Creative 使用
+5. WHEN 返回建议 THEN Ad Performance SHALL 包含 confidence 分数供 AI Orchestrator 决策
+
+**注意**：Ad Performance 只负责生成建议，实际执行由 AI Orchestrator 协调 Campaign Automation 完成
 
 ---
 
@@ -784,9 +704,9 @@ result = await mcp_client.call_tool(
 ### 可靠性需求
 
 1. Ad Performance SHALL 在 API 调用失败时自动重试
-2. Ad Performance SHALL 在数据抓取失败时通知用户
-3. Ad Performance SHALL 保证每日报告 100% 生成
-4. Ad Performance SHALL 在系统重启后自动恢复定时任务
+2. Ad Performance SHALL 在数据抓取失败时返回错误信息
+3. Ad Performance SHALL 保证每日报告生成的稳定性
+4. Ad Performance SHALL 在 MCP 调用失败时重试最多 3 次
 
 ### 成本控制需求
 

@@ -401,14 +401,19 @@ async def handle_user_message(
                 "session_id": session_id,
             }
 
+            # Build headers with service token
+            headers = {
+                "Content-Type": "application/json",
+            }
+            if settings.ai_orchestrator_service_token:
+                headers["Authorization"] = f"Bearer {settings.ai_orchestrator_service_token}"
+
             # Send request to AI Orchestrator
             async with client.stream(
                 "POST",
                 f"{settings.ai_orchestrator_url}/chat",
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                },
+                headers=headers,
             ) as response:
                 if response.status_code != 200:
                     error_text = await response.aread()

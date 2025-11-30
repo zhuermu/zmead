@@ -462,3 +462,104 @@ async def get_upload_url(
     )
 
     return result
+
+
+@tool(
+    name="save_competitor_analysis",
+    description="Save competitor ad creative analysis results. Stores analysis of composition, color scheme, selling points, and copy structure.",
+    parameters=[
+        MCPToolParameter(
+            name="ad_url",
+            type="string",
+            description="URL of the competitor ad that was analyzed",
+            required=True,
+        ),
+        MCPToolParameter(
+            name="composition",
+            type="string",
+            description="Analysis of the ad's composition and layout",
+            required=True,
+        ),
+        MCPToolParameter(
+            name="color_scheme",
+            type="string",
+            description="Analysis of the ad's color scheme",
+            required=True,
+        ),
+        MCPToolParameter(
+            name="selling_points",
+            type="array",
+            description="List of selling points identified in the ad",
+            required=True,
+        ),
+        MCPToolParameter(
+            name="copy_structure",
+            type="string",
+            description="Analysis of the ad's copy/text structure",
+            required=True,
+        ),
+        MCPToolParameter(
+            name="recommendations",
+            type="array",
+            description="List of recommendations based on the analysis",
+            required=False,
+        ),
+    ],
+    category="creative",
+)
+async def save_competitor_analysis(
+    user_id: int,
+    db: AsyncSession,
+    ad_url: str,
+    composition: str,
+    color_scheme: str,
+    selling_points: list[str],
+    copy_structure: str,
+    recommendations: list[str] | None = None,
+) -> dict[str, Any]:
+    """Save competitor analysis results.
+    
+    For MVP, we store the analysis as a JSON blob in the creative metadata.
+    In a future version, this could be stored in a dedicated table.
+    
+    Requirements: 3.5
+    """
+    from datetime import datetime
+    import json
+    
+    # Create analysis data
+    analysis_data = {
+        "ad_url": ad_url,
+        "composition": composition,
+        "color_scheme": color_scheme,
+        "selling_points": selling_points,
+        "copy_structure": copy_structure,
+        "recommendations": recommendations or [],
+        "analyzed_at": datetime.utcnow().isoformat(),
+    }
+    
+    # For MVP, we store this as a creative with type "analysis"
+    # This allows us to track competitor analyses in the creative library
+    service = CreativeService(db)
+    
+    # Create a creative entry for the analysis
+    # Using a placeholder file URL since this is analysis data, not an actual file
+    data = CreativeCreate(
+        file_url=f"analysis://{ad_url}",  # Pseudo URL to identify analysis entries
+        cdn_url=ad_url,  # Store original ad URL in cdn_url for reference
+        file_type=FileType.image,  # Default to image type
+        file_size=len(json.dumps(analysis_data)),
+        name=f"Competitor Analysis: {ad_url[:50]}...",
+        product_url=ad_url,
+        style="competitor_analysis",  # Special style to identify analysis entries
+        tags=["competitor", "analysis"],
+    )
+    
+    creative = await service.create(user_id, data)
+    
+    return {
+        "analysis_id": creative.id,
+        "ad_url": ad_url,
+        "saved_at": creative.created_at.isoformat() if creative.created_at else datetime.utcnow().isoformat(),
+        "analysis": analysis_data,
+    }

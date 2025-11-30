@@ -2,7 +2,32 @@ export const runtime = 'edge';
 
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
+    const body = await req.json();
+    
+    // AI SDK v5 sends messages in different formats
+    // Handle both old format (messages array) and new format (parts)
+    let messages = body.messages;
+    
+    // If no messages array, try to extract from AI SDK v5 format
+    if (!messages && body.parts) {
+      // Convert parts format to messages format
+      const textPart = body.parts.find((p: any) => p.type === 'text');
+      if (textPart) {
+        messages = [{ role: 'user', content: textPart.text }];
+      }
+    }
+    
+    // If still no messages, try prompt field
+    if (!messages && body.prompt) {
+      messages = [{ role: 'user', content: body.prompt }];
+    }
+
+    if (!messages || messages.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'No messages provided' }),
+        { status: 422, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Get authorization token from request headers
     const authHeader = req.headers.get('authorization');
@@ -15,9 +40,7 @@ export async function POST(req: Request) {
         'Content-Type': 'application/json',
         ...(authHeader && { 'Authorization': authHeader }),
       },
-      body: JSON.stringify({
-        messages,
-      }),
+      body: JSON.stringify({ messages }),
     });
 
     if (!response.ok) {

@@ -1,39 +1,44 @@
 'use client';
 
 import { useChat as useVercelChat } from '@ai-sdk/react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChatStore } from '@/lib/store';
-import { toast } from '@/lib/toast';
 
 const MESSAGE_TIMEOUT = 60000; // 60 seconds
 
 export function useChat() {
-  const { addMessage, clearMessages } = useChatStore();
+  const { clearMessages } = useChatStore();
   const [isTimeout, setIsTimeout] = useState(false);
+  const [localInput, setLocalInput] = useState('');
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Use any type to bypass strict typing issues with the AI SDK
-  const chatHelpers: any = useVercelChat({
+  const chatHelpers = useVercelChat({
+    id: 'main-chat',
     api: '/api/chat',
-    initialInput: '',
-  });
+  } as any);
 
   const {
-    messages = [],
-    input = '',
-    handleInputChange,
-    handleSubmit: originalHandleSubmit,
-    isLoading = false,
+    messages,
+    status,
     error,
-    reload,
+    regenerate,
     stop,
-    append,
+    sendMessage,
     setMessages,
   } = chatHelpers;
 
+  const isLoading = status === 'streaming' || status === 'submitted';
+
+  // Custom input handling
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setLocalInput(e.target.value);
+  }, []);
+
   // Enhanced submit with timeout handling
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    
+    if (!localInput.trim()) return;
     
     // Clear any existing timeout
     if (timeoutRef.current) {
@@ -49,14 +54,19 @@ export function useChat() {
       stop();
     }, MESSAGE_TIMEOUT);
     
-    // Call original submit
-    originalHandleSubmit(e);
-  };
+    const messageContent = localInput;
+    setLocalInput('');
+    
+    // Send message - AI SDK v5 expects an object with parts
+    await (sendMessage as any)({
+      parts: [{ type: 'text', text: messageContent }],
+    });
+  }, [localInput, sendMessage, stop]);
 
   // Retry last message
-  const retry = () => {
+  const retry = useCallback(() => {
     setIsTimeout(false);
-    reload();
+    regenerate();
     
     // Set new timeout
     timeoutRef.current = setTimeout(() => {
@@ -64,22 +74,30 @@ export function useChat() {
       setIsTimeout(true);
       stop();
     }, MESSAGE_TIMEOUT);
-  };
+  }, [regenerate, stop]);
 
   // Load chat history from store on mount
   useEffect(() => {
     const storedMessages = useChatStore.getState().messages;
     if (storedMessages.length > 0 && messages.length === 0) {
-      setMessages(storedMessages);
+      setMessages(storedMessages as any);
     }
-  }, []);
+  }, [setMessages, messages.length]);
 
   // Sync messages to store
   useEffect(() => {
     if (messages.length > 0) {
-      useChatStore.setState({ messages });
+      useChatStore.setState({ messages: messages as any });
     }
   }, [messages]);
+
+  // Clear timeout when loading completes
+  useEffect(() => {
+    if (!isLoading && timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, [isLoading]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -92,14 +110,14 @@ export function useChat() {
 
   return {
     messages,
-    input,
+    input: localInput,
     handleInputChange,
     handleSubmit,
     isLoading,
     error,
-    reload,
+    reload: retry,
     stop,
-    append,
+    append: sendMessage,
     setMessages,
     isTimeout,
     retry,

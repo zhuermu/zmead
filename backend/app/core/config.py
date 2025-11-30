@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     # AI Orchestrator URL
     ai_orchestrator_url: str = "http://localhost:8001"
     ai_orchestrator_timeout: int = 60  # seconds
+    ai_orchestrator_service_token: str = Field(default="")
 
     # Development - Disable authentication for local development
     disable_auth: bool = False

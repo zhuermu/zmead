@@ -115,3 +115,65 @@ class CreditConfigUpdateRequest(BaseModel):
     optimization_suggestion_rate: Decimal | None = Field(None, ge=0)
     registration_bonus: Decimal | None = Field(None, ge=0)
     packages: dict | None = None
+
+
+# ============================================================================
+# System-level Credit API schemas (for AI Orchestrator)
+# These are used by internal service-to-service communication
+# ============================================================================
+
+
+class CreditCheckRequest(BaseModel):
+    """Request to check if user has sufficient credits (system-level)."""
+
+    user_id: str = Field(..., description="User ID")
+    amount: Decimal = Field(..., gt=0, description="Amount of credits required")
+    operation_type: str | None = Field(None, description="Type of operation")
+
+
+class CreditCheckResponse(BaseModel):
+    """Response for credit check (system-level)."""
+
+    sufficient: bool = Field(..., description="Whether user has sufficient credits")
+    required: Decimal = Field(..., description="Credits required")
+    available: Decimal = Field(..., description="Credits available")
+
+
+class SystemCreditDeductRequest(BaseModel):
+    """Request to deduct credits (system-level)."""
+
+    user_id: str = Field(..., description="User ID")
+    amount: Decimal = Field(..., gt=0, description="Amount of credits to deduct")
+    operation_type: str = Field(..., description="Type of operation")
+    operation_id: str | None = Field(None, description="Unique operation ID")
+    details: dict = Field(default_factory=dict, description="Additional details")
+
+
+class SystemCreditDeductResponse(BaseModel):
+    """Response for credit deduction (system-level)."""
+
+    success: bool
+    transaction_id: int | None = None
+    deducted: Decimal
+    from_gifted: Decimal
+    from_purchased: Decimal
+    balance_after: Decimal
+
+
+class SystemCreditRefundRequest(BaseModel):
+    """Request to refund credits (system-level)."""
+
+    user_id: str = Field(..., description="User ID")
+    amount: Decimal = Field(..., gt=0, description="Amount of credits to refund")
+    operation_type: str = Field(..., description="Type of operation")
+    operation_id: str | None = Field(None, description="Original operation ID")
+    reason: str | None = Field(None, description="Reason for refund")
+
+
+class SystemCreditRefundResponse(BaseModel):
+    """Response for credit refund (system-level)."""
+
+    success: bool
+    transaction_id: int | None = None
+    refunded: Decimal
+    balance_after: Decimal

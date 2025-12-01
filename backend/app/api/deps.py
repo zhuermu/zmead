@@ -133,3 +133,38 @@ async def get_optional_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 OptionalUser = Annotated[User | None, Depends(get_optional_user)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+async def verify_service_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> bool:
+    """Verify that the request has a valid service token.
+
+    This is used for system-level API endpoints that are called by
+    internal services (e.g., AI Orchestrator) not end users.
+
+    Raises:
+        HTTPException: If token is missing or invalid
+    """
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Service token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = credentials.credentials
+    service_token = settings.ai_orchestrator_service_token
+
+    if not service_token or token != service_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid service token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return True
+
+
+# Type alias for service token verification
+ServiceTokenVerified = Annotated[bool, Depends(verify_service_token)]

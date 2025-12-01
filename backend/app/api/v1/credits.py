@@ -5,13 +5,19 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, ServiceTokenVerified
 from app.schemas.credit import (
     CreditBalanceResponse,
+    CreditCheckRequest,
+    CreditCheckResponse,
     CreditHistoryResponse,
     CreditTransactionResponse,
+    SystemCreditDeductRequest,
+    SystemCreditDeductResponse,
+    SystemCreditRefundRequest,
+    SystemCreditRefundResponse,
 )
-from app.services.credit import CreditService
+from app.services.credit import CreditService, InsufficientCreditsError
 
 router = APIRouter(prefix="/credits", tags=["credits"])
 
@@ -193,3 +199,124 @@ async def get_config_change_history(
 
     credit_service = CreditService(db)
     return await credit_service.get_config_change_history(limit=limit, offset=offset)
+
+
+# ============================================================================
+# System-level Credit API endpoints (for AI Orchestrator)
+# These endpoints use service token authentication, not user JWT
+# ============================================================================
+
+
+@router.post("/check", response_model=CreditCheckResponse)
+async def check_credits(
+    request: CreditCheckRequest,
+    _: ServiceTokenVerified,
+    db: DbSession,
+) -> CreditCheckResponse:
+    """Check if user has sufficient credits (system-level).
+
+    This endpoint is called by the AI Orchestrator before consuming operations.
+    Authenticated by service token, not user JWT.
+    """
+    credit_service = CreditService(db)
+    balance = await credit_service.get_balance(int(request.user_id))
+
+    available = balance["total_credits"]
+    sufficient = available >= request.amount
+
+    return CreditCheckResponse(
+        sufficient=sufficient,
+        required=request.amount,
+        available=available,
+    )
+
+
+@router.post("/deduct", response_model=SystemCreditDeductResponse)
+async def deduct_credits(
+    request: SystemCreditDeductRequest,
+    _: ServiceTokenVerified,
+    db: DbSession,
+) -> SystemCreditDeductResponse:
+    """Deduct credits from user's balance (system-level).
+
+    This endpoint is called by the AI Orchestrator after operations complete.
+    Authenticated by service token, not user JWT.
+    """
+    credit_service = CreditService(db)
+
+    try:
+        transaction = await credit_service.deduct_credits(
+            user_id=int(request.user_id),
+            amount=request.amount,
+            operation_type=request.operation_type,
+            operation_id=request.operation_id,
+            details=request.details,
+        )
+        await db.commit()
+
+        return SystemCreditDeductResponse(
+            success=True,
+            transaction_id=transaction.id,
+            deducted=transaction.amount,
+            from_gifted=transaction.from_gifted,
+            from_purchased=transaction.from_purchased,
+            balance_after=transaction.balance_after,
+        )
+
+    except InsufficientCreditsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "code": "INSUFFICIENT_CREDITS",
+                    "message": "Credit 余额不足",
+                    "details": {
+                        "required": float(e.required),
+                        "available": float(e.available),
+                    },
+                }
+            },
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "INVALID_REQUEST", "message": str(e)}},
+        )
+
+
+@router.post("/refund", response_model=SystemCreditRefundResponse)
+async def refund_credits(
+    request: SystemCreditRefundRequest,
+    _: ServiceTokenVerified,
+    db: DbSession,
+) -> SystemCreditRefundResponse:
+    """Refund credits to user's balance (system-level).
+
+    This endpoint is called by the AI Orchestrator when operations fail.
+    Authenticated by service token, not user JWT.
+    """
+    credit_service = CreditService(db)
+
+    try:
+        transaction = await credit_service.refund_credits(
+            user_id=int(request.user_id),
+            amount=request.amount,
+            operation_type=request.operation_type,
+            operation_id=request.operation_id,
+            reason=request.reason,
+        )
+        await db.commit()
+
+        return SystemCreditRefundResponse(
+            success=True,
+            transaction_id=transaction.id,
+            refunded=transaction.amount,
+            balance_after=transaction.balance_after,
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "INVALID_REQUEST", "message": str(e)}},
+        )

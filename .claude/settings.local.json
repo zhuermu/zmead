@@ -31,7 +31,8 @@
       "WebFetch(domain:ai.google.dev)",
       "Bash(/Users/lixiaowei/ws/zmead/venv/bin/pip show:*)",
       "Bash(xargs kill:*)",
-      "mcp__playwright__browser_press_key"
+      "mcp__playwright__browser_press_key",
+      "Bash(/Users/lixiaowei/ws/zmead/venv/bin/python3:*)"
     ],
     "deny": [],
     "ask": []

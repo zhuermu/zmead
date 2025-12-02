@@ -64,9 +64,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Get auth token from request
+    // Get auth token from request (server-side, use BACKEND_URL)
     const authHeader = req.headers.get('authorization');
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
 
     const uploadedFiles: UploadedFile[] = [];
     const errors: Array<{ filename: string; error: string }> = [];

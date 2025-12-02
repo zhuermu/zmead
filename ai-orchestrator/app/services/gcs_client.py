@@ -12,6 +12,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import structlog
@@ -104,9 +105,11 @@ class GCSClient:
         object_name = self._generate_object_name(user_id, filename, prefix)
 
         # Use the simple upload endpoint
+        # URL-encode the object name to handle non-ASCII characters (e.g., Chinese)
+        encoded_object_name = quote(object_name, safe='')
         upload_url = (
             f"{self.base_url}/upload/storage/v1/b/{self.bucket_name}/o"
-            f"?uploadType=media&name={object_name}&key={self.api_key}"
+            f"?uploadType=media&name={encoded_object_name}&key={self.api_key}"
         )
 
         headers = {
@@ -115,9 +118,12 @@ class GCSClient:
         }
 
         # Add custom metadata if provided
+        # URL-encode metadata values to handle non-ASCII characters (e.g., Chinese)
         if metadata:
             for key, value in metadata.items():
-                headers[f"x-goog-meta-{key}"] = value
+                # Encode non-ASCII characters in header values
+                encoded_value = quote(str(value), safe='')
+                headers[f"x-goog-meta-{key}"] = encoded_value
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:

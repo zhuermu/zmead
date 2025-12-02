@@ -4,9 +4,10 @@ import { useEffect, useRef } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { MessageBubble } from './MessageBubble';
 import { ToolInvocationCard } from './ToolInvocationCard';
+import { GeneratedImageGallery } from './GeneratedImageGallery';
 
 export function MessageList() {
-  const { messages, isLoading, isTimeout, retry } = useChat();
+  const { messages, isLoading, isTimeout, retry, generatedImages } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
@@ -56,6 +57,13 @@ export function MessageList() {
           ))}
         </div>
       ))}
+
+      {/* Display generated images from v3 API */}
+      {generatedImages.length > 0 && (
+        <div className="mb-3 ml-0 mr-auto max-w-[85%]">
+          <GeneratedImageGallery images={generatedImages} />
+        </div>
+      )}
 
       {/* Loading indicator */}
       {isLoading && !isTimeout && (

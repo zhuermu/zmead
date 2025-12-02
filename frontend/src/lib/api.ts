@@ -1,19 +1,20 @@
 /**
  * API client configuration for the AAE Web Platform.
+ * All API requests are proxied through Next.js rewrites to avoid CORS issues.
  */
 
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import { handleApiError } from './api-error-handler';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Use relative path - requests are proxied through Next.js rewrites
+const API_BASE = '/api/v1';
 
 // Create axios instance
 export const api: AxiosInstance = axios.create({
-  baseURL: `${API_URL}/api/v1`,
+  baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
-  withCredentials: true,
 });
 
 // Request interceptor to add auth token
@@ -43,7 +44,7 @@ api.interceptors.response.use(
       try {
         const refreshToken = localStorage.getItem('refresh_token');
         if (refreshToken) {
-          const response = await axios.post(`${API_URL}/api/v1/auth/refresh`, {
+          const response = await axios.post(`${API_BASE}/auth/refresh`, {
             refresh_token: refreshToken,
           });
           

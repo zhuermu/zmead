@@ -349,3 +349,48 @@ async def list_user_temp_creatives(user_id: str) -> list[dict[str, Any]]:
                 continue
 
     return results
+
+
+async def get_temp_creatives(user_id: str, session_id: str) -> dict[str, dict[str, Any]]:
+    """Get all temp creative metadata for a user session.
+
+    NOTE: Returns metadata only. Images are permanently stored in GCS
+    and accessible via the public_url field.
+
+    Args:
+        user_id: User ID
+        session_id: Session ID
+
+    Returns:
+        Dict mapping temp_id to creative metadata
+    """
+    redis = await get_redis()
+
+    pattern = f"{PREFIX_TEMP_METADATA}:{user_id}:*"
+    keys = []
+
+    async for key in redis.scan_iter(match=pattern):
+        keys.append(key)
+
+    results = {}
+    for key in keys:
+        data_str = await redis.get(key)
+        if data_str:
+            try:
+                data = json.loads(data_str)
+                # Filter by session_id if provided
+                if data.get("session_id") == session_id:
+                    results[data["temp_id"]] = {
+                        "temp_id": data["temp_id"],
+                        "filename": data["filename"],
+                        "style": data["style"],
+                        "score": data["score"],
+                        "created_at": data["created_at"],
+                        "gcs_url": data.get("gcs_url"),
+                        "public_url": data.get("public_url"),
+                        "analysis": data.get("analysis", {}),
+                    }
+            except json.JSONDecodeError:
+                continue
+
+    return results

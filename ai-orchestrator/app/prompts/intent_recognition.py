@@ -139,10 +139,23 @@ INTENT_RECOGNITION_SYSTEM_PROMPT = """你是一个专业的广告投放助手的
 ## 输出要求
 
 返回结构化的 JSON，包含：
-- intent: 主要意图
+- intent: 主要意图 (generate_creative, save_creative, analyze_report, market_analysis, create_landing_page, create_campaign, multi_step, general_query, clarification_needed)
 - confidence: 置信度 (0.0-1.0)
-- parameters: 提取的参数
-- actions: 需要执行的操作列表
+- product_description: 产品描述 (如果是generate_creative意图)
+- count: 数量 (如果是generate_creative意图)
+- style: 风格 (如果是generate_creative意图)
+- platform: 广告平台 (如果是analyze_report意图)
+- date_range: 日期范围 (如果是analyze_report意图)
+- actions: 需要执行的操作列表，每个操作包含:
+  - type: 操作类型 (generate_creative, save_creative, get_report, etc.)
+  - module: 目标模块 (creative, reporting, market_intel, landing_page, ad_engine, save_creative)
+  - product_description: 产品描述 (如果适用)
+  - count: 数量 (如果适用)
+  - style: 风格 (如果适用)
+  - platform: 平台 (如果适用)
+  - date_range: 日期范围 (如果适用)
+  - depends_on: 依赖的操作索引列表
+  - estimated_cost: 预估credit消耗
 - estimated_cost: 预估 credit 消耗
 - requires_confirmation: 是否需要确认
 - clarification_question: 如果需要澄清，提出的问题
@@ -165,32 +178,33 @@ INTENT_RECOGNITION_USER_PROMPT = """请分析以下用户消息，识别意图�
 请返回结构化的意图识别结果。"""
 
 
-# Examples for few-shot learning
+# Examples for few-shot learning (with flattened action structure)
 INTENT_EXAMPLES = [
     {
         "user_message": "帮我生成 10 张广告图片",
         "intent": "generate_creative",
         "confidence": 0.95,
-        "parameters": {"count": 10},
-        "actions": [{"type": "generate_creative", "module": "creative", "params": {"count": 10}}],
+        "count": 10,
+        "actions": [{"type": "generate_creative", "module": "creative", "count": 10, "estimated_cost": 5.0}],
         "estimated_cost": 5.0,
+        "requires_confirmation": False,
+    },
+    {
+        "user_message": "生成4张猫粮广告图，产品是高端猫粮",
+        "intent": "generate_creative",
+        "confidence": 0.95,
+        "product_description": "高端猫粮",
+        "count": 4,
+        "style": "奢华风格",
+        "actions": [{"type": "generate_creative", "module": "creative", "product_description": "高端猫粮", "count": 4, "style": "奢华风格", "estimated_cost": 2.0}],
+        "estimated_cost": 2.0,
         "requires_confirmation": False,
     },
     {
         "user_message": "保存素材",
         "intent": "save_creative",
         "confidence": 0.95,
-        "parameters": {},
-        "actions": [{"type": "save_creative", "module": "save_creative", "params": {}}],
-        "estimated_cost": 0,
-        "requires_confirmation": False,
-    },
-    {
-        "user_message": "把这些图片保存到素材库",
-        "intent": "save_creative",
-        "confidence": 0.92,
-        "parameters": {},
-        "actions": [{"type": "save_creative", "module": "save_creative", "params": {}}],
+        "actions": [{"type": "save_creative", "module": "save_creative", "estimated_cost": 0}],
         "estimated_cost": 0,
         "requires_confirmation": False,
     },
@@ -198,10 +212,8 @@ INTENT_EXAMPLES = [
         "user_message": "查看今天的广告数据",
         "intent": "analyze_report",
         "confidence": 0.92,
-        "parameters": {"date_range": "today"},
-        "actions": [
-            {"type": "get_report", "module": "reporting", "params": {"date_range": "today"}}
-        ],
+        "date_range": "today",
+        "actions": [{"type": "get_report", "module": "reporting", "date_range": "today", "estimated_cost": 1.0}],
         "estimated_cost": 1.0,
         "requires_confirmation": False,
     },
@@ -209,8 +221,7 @@ INTENT_EXAMPLES = [
         "user_message": "分析一下竞品的广告策略",
         "intent": "market_analysis",
         "confidence": 0.88,
-        "parameters": {"analysis_type": "competitor"},
-        "actions": [{"type": "analyze_competitor", "module": "market_intel", "params": {}}],
+        "actions": [{"type": "analyze_competitor", "module": "market_intel", "estimated_cost": 2.0}],
         "estimated_cost": 2.0,
         "requires_confirmation": False,
     },
@@ -218,46 +229,22 @@ INTENT_EXAMPLES = [
         "user_message": "帮我创建一个落地页",
         "intent": "create_landing_page",
         "confidence": 0.90,
-        "parameters": {},
-        "actions": [{"type": "create_landing_page", "module": "landing_page", "params": {}}],
+        "actions": [{"type": "create_landing_page", "module": "landing_page", "estimated_cost": 3.0}],
         "estimated_cost": 3.0,
-        "requires_confirmation": False,
-    },
-    {
-        "user_message": "把预算调到 $200",
-        "intent": "create_campaign",
-        "confidence": 0.85,
-        "parameters": {"budget": 200, "action": "update_budget"},
-        "actions": [{"type": "update_budget", "module": "ad_engine", "params": {"budget": 200}}],
-        "estimated_cost": 0.5,
         "requires_confirmation": False,
     },
     {
         "user_message": "暂停所有广告",
         "intent": "create_campaign",
         "confidence": 0.95,
-        "parameters": {"action": "pause_all"},
-        "actions": [{"type": "pause_all", "module": "ad_engine", "params": {}}],
+        "actions": [{"type": "pause_all", "module": "ad_engine", "estimated_cost": 0.5}],
         "estimated_cost": 0.5,
         "requires_confirmation": True,  # High-risk operation
-    },
-    {
-        "user_message": "生成素材并创建广告",
-        "intent": "multi_step",
-        "confidence": 0.90,
-        "parameters": {},
-        "actions": [
-            {"type": "generate_creative", "module": "creative", "params": {}, "depends_on": []},
-            {"type": "create_campaign", "module": "ad_engine", "params": {}, "depends_on": [0]},
-        ],
-        "estimated_cost": 8.0,
-        "requires_confirmation": False,
     },
     {
         "user_message": "帮我看看",
         "intent": "clarification_needed",
         "confidence": 0.3,
-        "parameters": {},
         "actions": [],
         "estimated_cost": 0,
         "requires_confirmation": False,

@@ -1,8 +1,9 @@
 'use client';
 
 import { useChat as useVercelChat } from '@ai-sdk/react';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChatStore } from '@/lib/store';
+import { useAuth } from '@/components/auth/AuthProvider';
 
 const MESSAGE_TIMEOUT = 60000; // 60 seconds
 
@@ -14,16 +15,49 @@ export interface AgentStatus {
   tool?: string;
 }
 
-export function useChat() {
+// Type for generated images from v3 API
+export interface GeneratedImage {
+  imageData: string; // base64 or URL
+  mimeType: string;
+}
+
+interface UseChatOptions {
+  /** Use v3 API (Gemini 3 with sub-agents) */
+  useV3?: boolean;
+}
+
+export function useChat(options: UseChatOptions = {}) {
+  const { useV3 = true } = options; // Default to v3
   const { clearMessages } = useChatStore();
+  const { user } = useAuth();
   const [isTimeout, setIsTimeout] = useState(false);
   const [localInput, setLocalInput] = useState('');
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Select API endpoint based on version
+  const apiEndpoint = useV3 ? '/api/chat/v3' : '/api/chat';
+
+  // Generate stable session ID
+  const sessionId = useMemo(() => {
+    const stored = typeof window !== 'undefined' ? sessionStorage.getItem('chat_session_id') : null;
+    if (stored) return stored;
+    const newId = `session-${user?.id || 'anon'}-${Date.now().toString(36)}`;
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('chat_session_id', newId);
+    }
+    return newId;
+  }, [user?.id]);
 
   const chatHelpers = useVercelChat({
     id: 'main-chat',
-    api: '/api/chat',
+    api: apiEndpoint,
+    // Pass user_id and session_id in request body
+    body: {
+      user_id: user?.id?.toString() || 'anonymous',
+      session_id: sessionId,
+    },
     // Handle custom data parts from streaming
     // onData is called for data-* type events
     onData: (dataPart: any) => {
@@ -37,6 +71,13 @@ export function useChat() {
           node: statusData.node,
           tool: statusData.tool,
         });
+      }
+      // Handle generated images from v3 API
+      if (dataPart && dataPart.type === 'data-image' && dataPart.data) {
+        setGeneratedImages(prev => [...prev, {
+          imageData: dataPart.data.imageData,
+          mimeType: dataPart.data.mimeType || 'image/png',
+        }]);
       }
     },
     onFinish: () => {
@@ -136,11 +177,17 @@ export function useChat() {
     };
   }, []);
 
+  // Clear generated images when starting a new message
+  const handleSubmitWithClear = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
+    setGeneratedImages([]); // Clear previous images
+    return handleSubmit(e);
+  }, [handleSubmit]);
+
   return {
     messages,
     input: localInput,
     handleInputChange,
-    handleSubmit,
+    handleSubmit: handleSubmitWithClear,
     isLoading,
     error,
     reload: retry,
@@ -150,9 +197,13 @@ export function useChat() {
     isTimeout,
     retry,
     agentStatus,
+    generatedImages,
     clearHistory: () => {
       clearMessages();
       setMessages([]);
+      setGeneratedImages([]);
     },
+    /** Whether using v3 API */
+    isV3: useV3,
   };
 }

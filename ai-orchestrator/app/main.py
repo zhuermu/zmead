@@ -15,9 +15,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.graph import build_agent_graph, reset_agent_graph
+from app.core.graph_v3 import build_agent_graph_v3, reset_agent_graph_v3
 from app.core.logging import configure_logging, set_request_id
 from app.core.redis_client import close_redis_pool, init_redis_pool
 from app.services.mcp_client import MCPClient
+from app.tools.setup import register_all_tools
+from app.agents.setup import register_all_agents
 
 logger = structlog.get_logger(__name__)
 
@@ -73,12 +76,36 @@ async def lifespan(app: FastAPI):
         # Don't fail startup - MCP might become available later
         logger.warning("mcp_client_will_retry_on_first_request")
 
-    # Compile LangGraph
+    # Register all tools (legacy)
+    try:
+        register_all_tools()
+        logger.info("tools_registered")
+    except Exception as e:
+        logger.error("tool_registration_failed", error=str(e))
+        raise
+
+    # Register all sub-agents (v3 architecture)
+    try:
+        register_all_agents()
+        logger.info("agents_registered")
+    except Exception as e:
+        logger.error("agent_registration_failed", error=str(e))
+        raise
+
+    # Compile LangGraph (legacy v2)
     try:
         graph = build_agent_graph()
-        logger.info("langgraph_compiled")
+        logger.info("langgraph_v2_compiled")
     except Exception as e:
-        logger.error("langgraph_compilation_failed", error=str(e))
+        logger.error("langgraph_v2_compilation_failed", error=str(e))
+        raise
+
+    # Compile LangGraph v3 (simplified architecture)
+    try:
+        graph_v3 = build_agent_graph_v3()
+        logger.info("langgraph_v3_compiled")
+    except Exception as e:
+        logger.error("langgraph_v3_compilation_failed", error=str(e))
         raise
 
     logger.info("application_startup_complete")
@@ -98,8 +125,9 @@ async def lifespan(app: FastAPI):
     await close_redis_pool()
     logger.info("redis_pool_closed")
 
-    # Reset graph
+    # Reset graphs
     reset_agent_graph()
+    reset_agent_graph_v3()
 
     logger.info("application_shutdown_complete")
 
@@ -197,11 +225,13 @@ def create_app() -> FastAPI:
 
     # Include routers
     from app.api.chat import router as chat_router
+    from app.api.chat_v3 import router as chat_v3_router
     from app.api.health import router as health_router
     from app.api.campaign_automation import router as campaign_automation_router
 
     app.include_router(health_router, tags=["Health"])
     app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
+    app.include_router(chat_v3_router, prefix="/api/v1", tags=["Chat V3"])
     app.include_router(campaign_automation_router, prefix="/api", tags=["Campaign Automation"])
 
     return app

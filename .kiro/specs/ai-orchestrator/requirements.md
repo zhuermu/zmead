@@ -652,7 +652,7 @@ AI Orchestrator 的所有接口协议详见：**[INTERFACES.md](../INTERFACES.md
   - Gemini Imagen 3（广告图片生成）
   - Gemini Veo 3.1（广告视频生成）
 - **MCP 通信**：MCP SDK (Python)
-- **后端框架**：FastAPI (Python 3.11+)
+- **后端框架**：FastAPI (Python 3.12+)
 - **WebSocket**：FastAPI WebSocket + LangGraph streaming
 - **数据库**：Redis（对话历史和会话状态）
 - **部署**：独立服务，AWS ECS

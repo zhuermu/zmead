@@ -21,8 +21,15 @@ interface UseWebSocketOptions {
   maxQueueSize?: number;
 }
 
+// Build WebSocket URL using current host (proxied through Next.js)
+const getDefaultWsUrl = () => {
+  if (typeof window === 'undefined') return '/ws/chat';
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws/chat`;
+};
+
 const DEFAULT_OPTIONS: Required<UseWebSocketOptions> = {
-  url: process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/chat',
+  url: getDefaultWsUrl(),
   autoConnect: true,
   heartbeatInterval: 30000, // 30 seconds
   heartbeatTimeout: 60000, // 60 seconds

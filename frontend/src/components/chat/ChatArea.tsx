@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useChat, type AgentStatus } from '@/hooks/useChat';
 import { MessageBubble } from './MessageBubble';
+import { GeneratedImageGallery } from './GeneratedImageGallery';
 import { useAuth } from '@/components/auth';
 import type { UIMessage } from 'ai';
 
@@ -55,6 +56,7 @@ export function ChatArea({ sessionId, onFirstMessage }: ChatAreaProps) {
     stop,
     isTimeout,
     agentStatus,
+    generatedImages,
   } = useChat();
 
   const [isComposing, setIsComposing] = useState(false);
@@ -201,6 +203,13 @@ export function ChatArea({ sessionId, onFirstMessage }: ChatAreaProps) {
           {messages.map((message: UIMessage) => (
             <MessageBubble key={message.id} message={message} />
           ))}
+
+          {/* Display generated images from v3 API */}
+          {generatedImages.length > 0 && (
+            <div className="mb-4">
+              <GeneratedImageGallery images={generatedImages} />
+            </div>
+          )}
 
           {/* Loading indicator with agent status */}
           {isLoading && (

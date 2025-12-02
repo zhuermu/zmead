@@ -31,24 +31,41 @@ class Settings(BaseSettings):
     )
 
     # Gemini API configuration
+    # Reference: https://ai.google.dev/gemini-api/docs/gemini-3
     gemini_api_key: str = Field(..., description="Google Gemini API key (required)")
+
+    # Main chat model - Gemini 3 Pro for complex reasoning and function calling
     gemini_model_chat: str = Field(
-        default="gemini-3-pro-preview", description="Gemini 3 Pro model for chat/complex reasoning"
+        default="gemini-3-pro-preview",
+        description="Gemini 3 Pro for chat, reasoning, and function calling",
     )
+
+    # Fast model for quick responses
     gemini_model_fast: str = Field(
-        default="gemini-2.5-flash", description="Gemini model for fast responses/intent recognition"
+        default="gemini-2.5-flash",
+        description="Gemini 2.5 Flash for fast responses",
     )
+
+    # Image generation models
+    # Reference: https://ai.google.dev/gemini-api/docs/image-generation
     gemini_model_imagen: str = Field(
-        default="gemini-3-pro-image-preview", description="Gemini 3 Pro Image model for image generation"
+        default="gemini-2.5-flash-image",
+        description="Gemini 2.5 Flash Image for fast image generation",
     )
     gemini_model_imagen_pro: str = Field(
-        default="gemini-3-pro-image-preview", description="Gemini 3 Pro Image model for high-quality image generation"
+        default="gemini-3-pro-image-preview",
+        description="Gemini 3 Pro Image for high-quality image generation (up to 4K)",
     )
+
+    # Video generation models (Veo 3.1)
+    # Reference: https://ai.google.dev/gemini-api/docs/video
     gemini_model_veo: str = Field(
-        default="veo-3.1-generate-preview", description="Veo 3.1 model for video generation"
+        default="veo-3.1-generate-preview",
+        description="Veo 3.1 for high-quality video generation",
     )
     gemini_model_veo_fast: str = Field(
-        default="veo-3.1-generate-preview", description="Veo 3.1 model for video generation"
+        default="veo-3.1-fast-generate-preview",
+        description="Veo 3.1 Fast for quick video generation",
     )
 
     # Web Platform integration

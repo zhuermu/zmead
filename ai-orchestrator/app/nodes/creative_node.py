@@ -74,14 +74,18 @@ class CreativeAnalysis(BaseModel):
 
 
 class ImagenClient:
-    """Client for Gemini Imagen 3 image generation."""
+    """Client for Gemini native image generation.
+
+    Uses the Gemini API with responseModalities=["IMAGE"] to generate images.
+    Supported models: gemini-2.5-flash-image, gemini-3-pro-image-preview
+    """
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         """Initialize Imagen client.
 
         Args:
             api_key: Gemini API key
-            model: Imagen model name
+            model: Image generation model name (e.g., gemini-2.5-flash-image)
         """
         settings = get_settings()
         self.api_key = api_key or settings.gemini_api_key
@@ -94,12 +98,15 @@ class ImagenClient:
         aspect_ratio: str = "1:1",
         negative_prompt: str | None = None,
     ) -> bytes:
-        """Generate an image using Imagen 3.
+        """Generate an image using Gemini native image generation.
+
+        Uses the generateContent endpoint with responseModalities=["IMAGE"]
+        as per official documentation: https://ai.google.dev/gemini-api/docs/image-generation
 
         Args:
             prompt: Text prompt for image generation
             aspect_ratio: Image aspect ratio (1:1, 16:9, 9:16, 4:3, 3:4)
-            negative_prompt: Things to avoid in the image
+            negative_prompt: Things to avoid in the image (appended to prompt)
 
         Returns:
             Image bytes (PNG format)
@@ -107,19 +114,25 @@ class ImagenClient:
         Raises:
             GeminiError: If generation fails
         """
-        url = f"{self.base_url}/models/{self.model}:generateImages"
+        url = f"{self.base_url}/models/{self.model}:generateContent"
 
+        # Build the prompt with negative prompt if provided
+        full_prompt = prompt
+        if negative_prompt:
+            full_prompt = f"{prompt}. Avoid: {negative_prompt}"
+
+        # Use generateContent with responseModalities as per official docs
         payload = {
-            "prompt": prompt,
-            "config": {
-                "numberOfImages": 1,
-                "aspectRatio": aspect_ratio,
-                "outputMimeType": "image/png",
+            "contents": [
+                {
+                    "parts": [{"text": full_prompt}]
+                }
+            ],
+            "generationConfig": {
+                "responseModalities": ["IMAGE"],
+                "responseMimeType": "image/png",
             },
         }
-
-        if negative_prompt:
-            payload["config"]["negativePrompt"] = negative_prompt
 
         headers = {
             "Content-Type": "application/json",
@@ -128,6 +141,11 @@ class ImagenClient:
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
+                logger.info(
+                    "imagen_api_request",
+                    model=self.model,
+                    prompt_length=len(full_prompt),
+                )
                 response = await client.post(url, json=payload, headers=headers)
 
                 if response.status_code == 429:
@@ -142,24 +160,34 @@ class ImagenClient:
 
                 if response.status_code != 200:
                     error_data = response.json() if response.content else {}
-                    error_msg = error_data.get("error", {}).get("message", response.text)
+                    error_msg = error_data.get("error", {}).get("message", response.text[:500])
+                    logger.error(
+                        "imagen_api_error",
+                        status_code=response.status_code,
+                        error=error_msg,
+                    )
                     raise GeminiError(f"Image generation failed: {error_msg}", code="API_ERROR")
 
                 data = response.json()
 
-                # Extract image from response
-                images = data.get("generatedImages", [])
-                if not images:
-                    raise GeminiError("No images generated", code="NO_OUTPUT")
+                # Extract image from generateContent response
+                # Response format: { "candidates": [{ "content": { "parts": [{ "inlineData": { "mimeType": "image/png", "data": "..." } }] } }] }
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    raise GeminiError("No candidates in response", code="NO_OUTPUT")
 
-                # Decode base64 image
-                image_data = images[0].get("image", {})
-                image_bytes = image_data.get("imageBytes")
+                content = candidates[0].get("content", {})
+                parts = content.get("parts", [])
 
-                if not image_bytes:
-                    raise GeminiError("No image data in response", code="NO_OUTPUT")
+                for part in parts:
+                    inline_data = part.get("inlineData", {})
+                    if inline_data:
+                        image_data = inline_data.get("data")
+                        if image_data:
+                            logger.info("imagen_api_success", image_size_approx=len(image_data))
+                            return base64.b64decode(image_data)
 
-                return base64.b64decode(image_bytes)
+                raise GeminiError("No image data in response", code="NO_OUTPUT")
 
             except httpx.TimeoutException:
                 raise GeminiError("Image generation timed out", code="TIMEOUT", retryable=True)

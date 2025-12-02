@@ -72,8 +72,7 @@ AAE（Automated Ad Engine）是一个基于**统一对话式 AI Agent** 的自�
 │  ┌─────────────────────────────────────────────────────────┐    │
 │  │                   数据存储层                             │    │
 │  │                                                          │    │
-│  │  - PostgreSQL 14 (业务数据)                             │    │
-│  │  - TimescaleDB (时序数据)                               │    │
+│  │  - MySQL 8.4 (业务数据)                                  │    │
 │  │  - Redis (缓存 + 会话)                                  │    │
 │  │  - AWS S3 (文件存储)                                    │    │
 │  └─────────────────────────────────────────────────────────┘    │
@@ -303,8 +302,8 @@ AI Agent:
 **技术栈**：
 - 前端：Next.js 14 + TypeScript + Tailwind CSS + Shadcn/ui
 - 对话界面：**Vercel AI SDK**（`ai` 包）+ React
-- 后端：FastAPI (Python 3.11+)
-- 数据库：PostgreSQL 14 + TimescaleDB
+- 后端：FastAPI (Python 3.12+)
+- 数据库：MySQL 8.4
 - 缓存：Redis
 - 存储：AWS S3
 - 通信：HTTP Streaming（前端 ↔ AI Agent）+ MCP（AI Agent ↔ Portal）
@@ -509,13 +508,12 @@ AI Orchestrator 与 Web Platform 之间使用 MCP 协议通信：
 - React Query（数据获取）
 
 ### 后端
-- FastAPI (Python 3.11+)
-- LangChain / LlamaIndex（对话管理）
+- FastAPI (Python 3.12+)
+- LangGraph（状态机框架，对话管理）
 - MCP SDK（协议实现）
 
 ### 数据库
-- PostgreSQL 14（业务数据）
-- TimescaleDB（时序数据）
+- MySQL 8.4（业务数据）
 - Redis（缓存 + 会话）
 
 ### 存储

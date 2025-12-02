@@ -39,17 +39,47 @@ IntentType = Literal[
 
 
 class ActionSchema(BaseModel):
-    """Schema for a single action to execute."""
+    """Schema for a single action to execute.
 
-    type: str = Field(description="Action type (e.g., generate_creative, get_report)")
+    Note: All fields must be explicitly defined (not nested dicts) to ensure
+    LangChain's structured output parser populates them correctly with Gemini.
+    """
+
+    type: str = Field(default="generate_creative", description="Action type (e.g., generate_creative, get_report)")
     module: str = Field(
-        description="Target module (creative, reporting, market_intel, landing_page, ad_engine)"
+        default="creative", description="Target module (creative, reporting, market_intel, landing_page, ad_engine)"
     )
-    params: dict[str, Any] = Field(default_factory=dict, description="Action parameters")
+    # Flatten params into explicit fields for better LLM extraction
+    product_description: str | None = Field(default=None, description="产品描述，用于generate_creative")
+    count: int | None = Field(default=None, description="生成数量，用于generate_creative")
+    style: str | None = Field(default=None, description="风格，用于generate_creative")
+    platform: str | None = Field(default=None, description="广告平台，如meta, tiktok, google")
+    date_range: str | None = Field(default=None, description="日期范围，如last_7_days, last_30_days")
+    campaign_id: str | None = Field(default=None, description="广告活动ID")
+    temp_ids: list[str] = Field(default_factory=list, description="临时素材ID列表，用于save_creative")
     depends_on: list[int] = Field(
         default_factory=list, description="Indices of actions this depends on"
     )
-    estimated_cost: float = Field(default=0.0, description="Estimated credit cost for this action")
+    estimated_cost: float = Field(default=0.5, description="Estimated credit cost for this action")
+
+    def to_params(self) -> dict[str, Any]:
+        """Convert flattened fields back to params dict."""
+        params: dict[str, Any] = {}
+        if self.product_description:
+            params["product_description"] = self.product_description
+        if self.count:
+            params["count"] = self.count
+        if self.style:
+            params["style"] = self.style
+        if self.platform:
+            params["platform"] = self.platform
+        if self.date_range:
+            params["date_range"] = self.date_range
+        if self.campaign_id:
+            params["campaign_id"] = self.campaign_id
+        if self.temp_ids:
+            params["temp_ids"] = self.temp_ids
+        return params
 
 
 class IntentSchema(BaseModel):
@@ -57,23 +87,28 @@ class IntentSchema(BaseModel):
 
     This schema is used with Gemini's structured output feature
     to ensure reliable parsing of intent recognition results.
+
+    Note: All fields have defaults to ensure LLM can populate them correctly.
     """
 
-    intent: IntentType = Field(description="Primary intent identified from user message")
+    intent: str = Field(default="general_query", description="Primary intent: generate_creative, save_creative, analyze_report, market_analysis, create_landing_page, create_campaign, multi_step, general_query, clarification_needed")
 
     confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence score for the intent (0.0-1.0)"
+        default=0.8, ge=0.0, le=1.0, description="Confidence score for the intent (0.0-1.0)"
     )
 
-    parameters: dict[str, Any] = Field(
-        default_factory=dict, description="Parameters extracted from user message"
-    )
+    # Flatten parameters into explicit fields
+    product_description: str | None = Field(default=None, description="产品描述")
+    count: int | None = Field(default=None, description="数量")
+    style: str | None = Field(default=None, description="风格")
+    platform: str | None = Field(default=None, description="广告平台")
+    date_range: str | None = Field(default=None, description="日期范围")
 
     actions: list[ActionSchema] = Field(
         default_factory=list, description="List of actions to execute"
     )
 
-    estimated_cost: float = Field(default=0.0, description="Total estimated credit cost")
+    estimated_cost: float = Field(default=0.5, description="Total estimated credit cost")
 
     requires_confirmation: bool = Field(
         default=False, description="Whether operation requires user confirmation"
@@ -82,6 +117,21 @@ class IntentSchema(BaseModel):
     clarification_question: str | None = Field(
         default=None, description="Question to ask if clarification is needed"
     )
+
+    def to_parameters(self) -> dict[str, Any]:
+        """Convert flattened fields to parameters dict."""
+        params: dict[str, Any] = {}
+        if self.product_description:
+            params["product_description"] = self.product_description
+        if self.count:
+            params["count"] = self.count
+        if self.style:
+            params["style"] = self.style
+        if self.platform:
+            params["platform"] = self.platform
+        if self.date_range:
+            params["date_range"] = self.date_range
+        return params
 
 
 # Credit cost estimates per action type
@@ -144,9 +194,10 @@ def is_high_risk_operation(actions: list[ActionSchema]) -> bool:
         if action.type in high_risk_types:
             return True
 
-        # Check for large budget changes
+        # Check for large budget changes - use to_params() for flattened schema
         if action.type == "update_budget":
-            budget_change = action.params.get("budget_change_percent", 0)
+            params = action.to_params() if hasattr(action, "to_params") else {}
+            budget_change = params.get("budget_change_percent", 0)
             if abs(budget_change) > 50:
                 return True
 
@@ -221,6 +272,18 @@ async def router_node(state: AgentState) -> dict[str, Any]:
             temperature=0.1,  # Low temperature for consistent results
         )
 
+        # Handle None result - LLM failed to parse into schema
+        if result is None:
+            log.warning("router_node_structured_output_none")
+            return {
+                "current_intent": "clarification_needed",
+                "extracted_params": {},
+                "pending_actions": [],
+                "estimated_cost": 0,
+                "requires_confirmation": False,
+                "messages": [AIMessage(content="抱歉，我没有完全理解您的请求。请您更详细地描述一下？")],
+            }
+
         log.info(
             "router_node_intent_recognized",
             intent=result.intent,
@@ -238,34 +301,44 @@ async def router_node(state: AgentState) -> dict[str, Any]:
 
             return {
                 "current_intent": "clarification_needed",
-                "extracted_params": result.parameters,
+                "extracted_params": result.to_parameters(),
                 "pending_actions": [],
                 "estimated_cost": 0,
                 "requires_confirmation": False,
                 "messages": [AIMessage(content=f"🤔 {clarification}")],
             }
 
-        # Convert actions to dict format
-        actions = [
-            {
-                "type": action.type,
-                "module": action.module,
-                "params": action.params,
-                "depends_on": action.depends_on,
-                "estimated_cost": action.estimated_cost
-                or estimate_action_cost(action.type, action.params),
-            }
-            for action in result.actions
-        ]
+        # Convert actions to dict format - handle both dict (from LLM) and ActionSchema objects
+        actions = []
+        for action in result.actions:
+            if isinstance(action, dict):
+                # LLM returned raw dict - convert to ActionSchema first
+                action_obj = ActionSchema(**action)
+            else:
+                action_obj = action
+
+            params = action_obj.to_params()
+            actions.append({
+                "type": action_obj.type,
+                "module": action_obj.module,
+                "params": params,
+                "depends_on": action_obj.depends_on,
+                "estimated_cost": action_obj.estimated_cost
+                or estimate_action_cost(action_obj.type, params),
+            })
 
         # Calculate total estimated cost
         total_cost = sum(a.get("estimated_cost", 0) for a in actions)
         if result.estimated_cost > 0:
             total_cost = result.estimated_cost
 
-        # Check for high-risk operations
+        # Check for high-risk operations - convert dicts back to ActionSchema for check
+        action_schemas = [
+            ActionSchema(**a) if isinstance(a, dict) else a
+            for a in result.actions
+        ]
         requires_confirmation = result.requires_confirmation or is_high_risk_operation(
-            result.actions
+            action_schemas
         )
 
         log.info(
@@ -278,7 +351,7 @@ async def router_node(state: AgentState) -> dict[str, Any]:
 
         return {
             "current_intent": result.intent,
-            "extracted_params": result.parameters,
+            "extracted_params": result.to_parameters(),
             "pending_actions": actions,
             "estimated_cost": total_cost,
             "requires_confirmation": requires_confirmation,

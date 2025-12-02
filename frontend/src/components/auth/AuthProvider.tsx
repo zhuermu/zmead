@@ -9,6 +9,7 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isDevMode: boolean;
   login: (tokens: TokenResponse, user: User) => void;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -22,14 +23,17 @@ interface AuthProviderProps {
 
 /**
  * Authentication provider component that manages auth state.
+ * When DISABLE_AUTH=true on backend, authentication is bypassed entirely.
  */
 export function AuthProvider({ children }: AuthProviderProps) {
   const [isLoading, setIsLoading] = useState(true);
+  const [isDevMode, setIsDevMode] = useState(false);
   const { user, isAuthenticated, setUser, logout: clearStore } = useAuthStore();
 
   const refreshUser = useCallback(async () => {
     try {
-      // Try to get current user (works in dev mode without token)
+      // Try to get current user - backend handles dev mode internally
+      // If DISABLE_AUTH=true, backend returns a mock user without requiring token
       const userData = await getCurrentUser();
       setUser({
         id: userData.id,
@@ -91,6 +95,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } : null,
     isAuthenticated,
     isLoading,
+    isDevMode,
     login,
     logout,
     refreshUser,

@@ -11,3 +11,4 @@ export { EmbeddedCard } from './EmbeddedCard';
 export { ChatSidebar } from './ChatSidebar';
 export { ChatArea } from './ChatArea';
 export { ChatDrawer } from './ChatDrawer';
+export { GeneratedImageGallery } from './GeneratedImageGallery';

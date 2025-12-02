@@ -50,18 +50,37 @@ export async function POST(req: Request) {
       );
     }
 
-    // Get authorization token from request headers
-    const authHeader = req.headers.get('authorization');
+    // Get user info from request headers or body
+    const userId = body.user_id || req.headers.get('x-user-id') || 'anonymous';
+    const sessionId = body.session_id || req.headers.get('x-session-id') || `session-${Date.now()}`;
 
-    // Forward to backend AI Orchestrator
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const response = await fetch(`${backendUrl}/api/v1/chat`, {
+    // Use service token for AI Orchestrator authentication
+    const serviceToken = process.env.AI_ORCHESTRATOR_SERVICE_TOKEN || '';
+
+    // Get the last user message content for v3 API
+    const lastUserMessage = messages.filter(m => m.role === 'user').pop();
+    const content = lastUserMessage?.content || '';
+
+    // Build conversation history (exclude the last message)
+    const history = messages.slice(0, -1).map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content,
+    }));
+
+    // Forward to AI Orchestrator v3 streaming endpoint
+    const aiOrchestratorUrl = process.env.AI_ORCHESTRATOR_URL || 'http://localhost:8001';
+    const response = await fetch(`${aiOrchestratorUrl}/api/v1/chat/v3/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(authHeader && { 'Authorization': authHeader }),
+        'Authorization': `Bearer ${serviceToken}`,
       },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({
+        content,
+        user_id: userId,
+        session_id: sessionId,
+        history,
+      }),
     });
 
     if (!response.ok) {
@@ -99,16 +118,56 @@ export async function POST(req: Request) {
             try {
               const data = JSON.parse(line.slice(6));
 
-              if (data.type === 'token' && data.content) {
-                // Convert to AI SDK v5 text-delta format with required id and delta fields
+              // Handle v3 API response types
+              if ((data.type === 'text' || data.type === 'token') && data.content) {
+                // Convert to AI SDK v5 text-delta format
                 const deltaEvent = `data: ${JSON.stringify({
                   type: 'text-delta',
                   id: messageId,
                   delta: data.content
                 })}\n\n`;
                 controller.enqueue(encoder.encode(deltaEvent));
+              } else if (data.type === 'tool_call') {
+                // Tool being called - show as status
+                const statusEvent = `data: ${JSON.stringify({
+                  type: 'data-agent-status',
+                  data: {
+                    statusType: 'tool_start',
+                    tool: data.tool,
+                    message: `调用 ${data.tool}...`,
+                  }
+                })}\n\n`;
+                controller.enqueue(encoder.encode(statusEvent));
+              } else if (data.type === 'tool_result') {
+                // Tool result - may contain final response
+                if (data.response) {
+                  const deltaEvent = `data: ${JSON.stringify({
+                    type: 'text-delta',
+                    id: messageId,
+                    delta: data.response
+                  })}\n\n`;
+                  controller.enqueue(encoder.encode(deltaEvent));
+                }
+                const statusEvent = `data: ${JSON.stringify({
+                  type: 'data-agent-status',
+                  data: {
+                    statusType: 'tool_complete',
+                    message: '处理完成',
+                  }
+                })}\n\n`;
+                controller.enqueue(encoder.encode(statusEvent));
+              } else if (data.type === 'image') {
+                // Image generated - send as data
+                const imageEvent = `data: ${JSON.stringify({
+                  type: 'data-image',
+                  data: {
+                    imageData: data.data,
+                    mimeType: 'image/png',
+                  }
+                })}\n\n`;
+                controller.enqueue(encoder.encode(imageEvent));
               } else if (data.type === 'thinking' || data.type === 'status' || data.type === 'tool_start' || data.type === 'tool_complete') {
-                // Forward agent status events as custom data using AI SDK v5 data-* format
+                // Forward agent status events as custom data
                 const statusEvent = `data: ${JSON.stringify({
                   type: 'data-agent-status',
                   data: {
@@ -120,7 +179,7 @@ export async function POST(req: Request) {
                 })}\n\n`;
                 controller.enqueue(encoder.encode(statusEvent));
               } else if (data.type === 'done') {
-                // Send text-end and finish events with message ID
+                // Send text-end and finish events
                 const textEndEvent = `data: ${JSON.stringify({ type: 'text-end', id: messageId })}\n\n`;
                 const finishEvent = `data: ${JSON.stringify({
                   type: 'finish',
@@ -131,7 +190,7 @@ export async function POST(req: Request) {
               } else if (data.type === 'error') {
                 const errorEvent = `data: ${JSON.stringify({
                   type: 'error',
-                  error: data.error?.message || 'Unknown error'
+                  error: data.error || 'Unknown error'
                 })}\n\n`;
                 controller.enqueue(encoder.encode(errorEvent));
               }
@@ -147,7 +206,7 @@ export async function POST(req: Request) {
         if (buffer.startsWith('data: ')) {
           try {
             const data = JSON.parse(buffer.slice(6));
-            if (data.type === 'token' && data.content) {
+            if ((data.type === 'text' || data.type === 'token') && data.content) {
               const deltaEvent = `data: ${JSON.stringify({
                 type: 'text-delta',
                 id: messageId,
@@ -170,8 +229,10 @@ export async function POST(req: Request) {
     return new Response(readable, {
       headers: {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no', // Disable nginx buffering
+        'X-Content-Type-Options': 'nosniff',
         'x-vercel-ai-ui-message-stream': 'v1',
       },
     });

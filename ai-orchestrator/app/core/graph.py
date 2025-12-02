@@ -3,7 +3,15 @@
 This module builds and compiles the AI Orchestrator LangGraph,
 connecting all nodes with appropriate routing logic.
 
-Requirements: 需求 4 (Orchestrator)
+Architecture: Planning + Multi-step Execution
+- router: Intent recognition
+- planner: Task decomposition and planning
+- executor: Unified tool execution (loop)
+- analyzer: Result analysis and decision making
+- respond: Response generation
+- persist: Conversation persistence
+
+Requirements: Architecture v2.0
 """
 
 import structlog
@@ -11,28 +19,20 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from app.core.config import get_settings
 from app.core.routing import (
     after_respond,
-    route_by_intent,
-    should_confirm,
+    route_after_analyzer,
+    route_after_executor,
+    route_after_planner,
+    route_after_router_v2,
 )
 from app.core.state import AgentState
-from app.nodes.ad_engine_stub import ad_engine_stub_node
-from app.nodes.campaign_automation_node import campaign_automation_node
-from app.nodes.confirmation import human_confirmation_node
-from app.nodes.creative_node import creative_node
-from app.nodes.creative_stub import creative_stub_node
-from app.nodes.landing_page_node import landing_page_node
-from app.nodes.landing_page_stub import landing_page_stub_node
-from app.nodes.market_insights_node import market_insights_node
-from app.nodes.market_intel_stub import market_intel_stub_node
+from app.nodes.analyzer import analyzer_node
+from app.nodes.executor import executor_node
 from app.nodes.persist import persist_conversation_node
-from app.nodes.reporting_node import reporting_node
-from app.nodes.reporting_stub import reporting_stub_node
+from app.nodes.planner import planner_node
 from app.nodes.respond import respond_node
 from app.nodes.router import router_node
-from app.nodes.save_creative_node import save_creative_node
 
 logger = structlog.get_logger(__name__)
 
@@ -42,23 +42,38 @@ def build_agent_graph() -> CompiledStateGraph:
 
     Graph Structure:
     ```
-    [START] → router → (route_by_intent) → [module_stub]
-                                              ↓
-                                         (should_confirm)
-                                              ↓
-                                    ┌─────────┴─────────┐
-                                    ↓                   ↓
-                              confirmation           respond
-                                    ↓                   ↓
-                                  [END]             persist
-                                                       ↓
-                                                     [END]
+    [START] → router → (route_after_router)
+                              ↓
+                 ┌────────────┴────────────┐
+                 ↓                         ↓
+              planner                   respond
+                 ↓                         ↓
+         (route_after_planner)          persist
+                 ↓                         ↓
+        ┌────────┴────────┐              [END]
+        ↓                 ↓
+     executor          __end__ (wait for confirmation)
+        ↓
+    (route_after_executor)
+        ↓
+     analyzer
+        ↓
+    (route_after_analyzer)
+        ↓
+    ┌───┴───┬───────┐
+    ↓       ↓       ↓
+ executor planner respond
     ```
+
+    The executor-analyzer loop enables multi-step execution:
+    1. Planner creates an execution plan with steps
+    2. Executor runs one step at a time
+    3. Analyzer decides: continue (more steps), respond (done), or replan
 
     Returns:
         Compiled LangGraph with MemorySaver checkpointer
 
-    Requirements: 需求 4
+    Requirements: Architecture v2.0
     """
     logger.info("build_agent_graph_start")
 
@@ -72,55 +87,14 @@ def build_agent_graph() -> CompiledStateGraph:
     # Router node - intent recognition
     workflow.add_node("router", router_node)
 
-    # Functional modules
-    # Use real creative_node in production, stub in development/testing
-    settings = get_settings()
-    if settings.is_production:
-        workflow.add_node("creative", creative_node)
-    else:
-        # In development, use real implementation by default
-        # Set USE_CREATIVE_STUB=true to use stub
-        import os
-        use_stub = os.environ.get("USE_CREATIVE_STUB", "false").lower() == "true"
-        if use_stub:
-            workflow.add_node("creative", creative_stub_node)
-        else:
-            workflow.add_node("creative", creative_node)
+    # Planner node - task decomposition
+    workflow.add_node("planner", planner_node)
 
-    # Reporting module - use real implementation by default
-    import os
-    use_reporting_stub = os.environ.get("USE_REPORTING_STUB", "false").lower() == "true"
-    if use_reporting_stub:
-        workflow.add_node("reporting", reporting_stub_node)
-    else:
-        workflow.add_node("reporting", reporting_node)
+    # Executor node - tool execution
+    workflow.add_node("executor", executor_node)
 
-    # Campaign Automation module - use real implementation by default
-    use_campaign_automation_stub = os.environ.get("USE_CAMPAIGN_AUTOMATION_STUB", "false").lower() == "true"
-    if use_campaign_automation_stub:
-        workflow.add_node("ad_engine", ad_engine_stub_node)
-    else:
-        workflow.add_node("ad_engine", campaign_automation_node)
-
-    # Landing Page module - use real implementation by default
-    use_landing_page_stub = os.environ.get("USE_LANDING_PAGE_STUB", "false").lower() == "true"
-    if use_landing_page_stub:
-        workflow.add_node("landing_page", landing_page_stub_node)
-    else:
-        workflow.add_node("landing_page", landing_page_node)
-
-    # Market Insights module - use real implementation by default
-    use_market_insights_stub = os.environ.get("USE_MARKET_INSIGHTS_STUB", "false").lower() == "true"
-    if use_market_insights_stub:
-        workflow.add_node("market_insights", market_intel_stub_node)
-    else:
-        workflow.add_node("market_insights", market_insights_node)
-
-    # Save Creative module - save generated creatives to asset library
-    workflow.add_node("save_creative", save_creative_node)
-
-    # Confirmation node
-    workflow.add_node("human_confirmation", human_confirmation_node)
+    # Analyzer node - result analysis and decision
+    workflow.add_node("analyzer", analyzer_node)
 
     # Response generator
     workflow.add_node("respond", respond_node)
@@ -135,65 +109,63 @@ def build_agent_graph() -> CompiledStateGraph:
     workflow.set_entry_point("router")
 
     # =========================================================================
-    # Add Edges - Router to Modules
+    # Add Edges - Router to Planner/Respond
     # =========================================================================
 
-    # Router routes to appropriate module based on intent
     workflow.add_conditional_edges(
         "router",
-        route_by_intent,
+        route_after_router_v2,
         {
-            "creative": "creative",  # Real implementation
-            "creative_stub": "creative",  # Alias for backward compatibility
-            "save_creative": "save_creative",  # Save creatives to asset library
-            "reporting": "reporting",  # Real implementation
-            "reporting_stub": "reporting",  # Alias for backward compatibility
-            "ad_engine": "ad_engine",  # Real implementation
-            "ad_engine_stub": "ad_engine",  # Alias for backward compatibility
-            "landing_page": "landing_page",  # Real implementation
-            "landing_page_stub": "landing_page",  # Alias for backward compatibility
-            "market_insights": "market_insights",  # Real implementation
-            "market_intel_stub": "market_insights",  # Alias for backward compatibility
+            "planner": "planner",
             "respond": "respond",
-            "error_handler": "respond",  # Errors go to respond
         },
     )
 
     # =========================================================================
-    # Add Edges - Modules to Confirmation Check
+    # Add Edges - Planner to Executor/Wait
     # =========================================================================
 
-    # Each module checks if confirmation is needed
-    for module_node in [
-        "creative",  # Real creative implementation
-        "save_creative",  # Save creatives to asset library
-        "reporting",  # Real reporting implementation
-        "ad_engine",  # Real campaign automation implementation
-        "landing_page",  # Real landing page implementation
-        "market_insights",  # Real market insights implementation
-    ]:
-        workflow.add_conditional_edges(
-            module_node,
-            should_confirm,
-            {
-                "confirm": "human_confirmation",
-                "respond": "respond",
-            },
-        )
+    workflow.add_conditional_edges(
+        "planner",
+        route_after_planner,
+        {
+            "executor": "executor",
+            "respond": "respond",
+            "__end__": END,  # Wait for plan confirmation
+        },
+    )
 
     # =========================================================================
-    # Add Edges - Confirmation Flow
+    # Add Edges - Executor to Analyzer
     # =========================================================================
 
-    # Confirmation node ends (waits for user input)
-    # When user confirms/cancels, graph is resumed with updated state
-    workflow.add_edge("human_confirmation", END)
+    workflow.add_conditional_edges(
+        "executor",
+        route_after_executor,
+        {
+            "analyzer": "analyzer",
+            "respond": "respond",
+        },
+    )
+
+    # =========================================================================
+    # Add Edges - Analyzer Loop
+    # =========================================================================
+
+    workflow.add_conditional_edges(
+        "analyzer",
+        route_after_analyzer,
+        {
+            "executor": "executor",  # Continue execution
+            "planner": "planner",    # Replan
+            "respond": "respond",    # Done or error
+        },
+    )
 
     # =========================================================================
     # Add Edges - Response to Persistence
     # =========================================================================
 
-    # After response, persist conversation
     workflow.add_conditional_edges(
         "respond",
         after_respond,
@@ -203,7 +175,6 @@ def build_agent_graph() -> CompiledStateGraph:
         },
     )
 
-    # Persistence ends the graph
     workflow.add_edge("persist", END)
 
     # =========================================================================
@@ -272,6 +243,10 @@ async def run_agent(
         Final state after execution
     """
     from app.core.state import create_initial_state
+    from app.tools.setup import register_all_tools
+
+    # Ensure tools are registered
+    register_all_tools()
 
     graph = get_agent_graph()
 
@@ -319,6 +294,10 @@ async def stream_agent(
         LangGraph events
     """
     from app.core.state import create_initial_state
+    from app.tools.setup import register_all_tools
+
+    # Ensure tools are registered
+    register_all_tools()
 
     graph = get_agent_graph()
 

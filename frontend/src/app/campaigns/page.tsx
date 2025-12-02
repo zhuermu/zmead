@@ -64,7 +64,7 @@ export default function CampaignsPage() {
       if (platformFilter) params.append("platform", platformFilter);
       if (statusFilter) params.append("status", statusFilter);
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/campaigns?${params}`, {
+      const response = await fetch(`/api/v1/campaigns?${params}`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("access_token")}`,
         },

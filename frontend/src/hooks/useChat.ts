@@ -1,13 +1,20 @@
 'use client';
 
-import { useChat as useVercelChat } from '@ai-sdk/react';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChatStore } from '@/lib/store';
 import { useAuth } from '@/components/auth/AuthProvider';
 
 const MESSAGE_TIMEOUT = 60000; // 60 seconds
 
-// Type for agent status from streaming data
+// Message type matching AI SDK format
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  createdAt?: Date;
+}
+
+// Agent status from streaming data
 export interface AgentStatus {
   type: 'thinking' | 'status' | 'tool_start' | 'tool_complete';
   message?: string;
@@ -15,29 +22,34 @@ export interface AgentStatus {
   tool?: string;
 }
 
-// Type for generated images from v3 API
-export interface GeneratedImage {
-  imageData: string; // base64 or URL
-  mimeType: string;
+// User input request from Human-in-the-Loop
+export interface UserInputRequest {
+  type: 'confirmation' | 'selection' | 'input';
+  message: string;
+  options?: string[];
 }
 
-interface UseChatOptions {
-  /** Use v3 API (Gemini 3 with sub-agents) */
-  useV3?: boolean;
+interface UseChatSSEOptions {
+  apiUrl?: string;
 }
 
-export function useChat(options: UseChatOptions = {}) {
-  const { useV3 = true } = options; // Default to v3
+export function useChat(options: UseChatSSEOptions = {}) {
+  const { apiUrl = '/api/v1/chat' } = options;
   const { clearMessages } = useChatStore();
   const { user } = useAuth();
+  
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
   const [isTimeout, setIsTimeout] = useState(false);
-  const [localInput, setLocalInput] = useState('');
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  const [userInputRequest, setUserInputRequest] = useState<UserInputRequest | null>(null);
+  
+  const eventSourceRef = useRef<EventSource | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Select API endpoint based on version
-  const apiEndpoint = useV3 ? '/api/chat/v3' : '/api/chat';
+  const currentAssistantMessageRef = useRef<string>('');
+  const currentMessageIdRef = useRef<string>('');
 
   // Generate stable session ID
   const sessionId = useMemo(() => {
@@ -50,108 +62,13 @@ export function useChat(options: UseChatOptions = {}) {
     return newId;
   }, [user?.id]);
 
-  const chatHelpers = useVercelChat({
-    id: 'main-chat',
-    api: apiEndpoint,
-    // Pass user_id and session_id in request body
-    body: {
-      user_id: user?.id?.toString() || 'anonymous',
-      session_id: sessionId,
-    },
-    // Handle custom data parts from streaming
-    // onData is called for data-* type events
-    onData: (dataPart: any) => {
-      console.log('useChat onData received:', dataPart);
-      // dataPart contains type and data fields
-      if (dataPart && dataPart.type === 'data-agent-status' && dataPart.data) {
-        const statusData = dataPart.data;
-        setAgentStatus({
-          type: statusData.statusType as AgentStatus['type'],
-          message: statusData.message,
-          node: statusData.node,
-          tool: statusData.tool,
-        });
-      }
-      // Handle generated images from v3 API
-      if (dataPart && dataPart.type === 'data-image' && dataPart.data) {
-        setGeneratedImages(prev => [...prev, {
-          imageData: dataPart.data.imageData,
-          mimeType: dataPart.data.mimeType || 'image/png',
-        }]);
-      }
-    },
-    onFinish: () => {
-      // Clear agent status when streaming finishes
-      setAgentStatus(null);
-    },
-  } as any);
-
-  const {
-    messages,
-    status,
-    error,
-    regenerate,
-    stop,
-    sendMessage,
-    setMessages,
-  } = chatHelpers;
-
-  const isLoading = status === 'streaming' || status === 'submitted';
-
-  // Custom input handling
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setLocalInput(e.target.value);
-  }, []);
-
-  // Enhanced submit with timeout handling
-  const handleSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    
-    if (!localInput.trim()) return;
-    
-    // Clear any existing timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    
-    setIsTimeout(false);
-    
-    // Set timeout for response
-    timeoutRef.current = setTimeout(() => {
-      console.warn('Message timeout - no response received within 60 seconds');
-      setIsTimeout(true);
-      stop();
-    }, MESSAGE_TIMEOUT);
-    
-    const messageContent = localInput;
-    setLocalInput('');
-    
-    // Send message - AI SDK v5 expects an object with parts
-    await (sendMessage as any)({
-      parts: [{ type: 'text', text: messageContent }],
-    });
-  }, [localInput, sendMessage, stop]);
-
-  // Retry last message
-  const retry = useCallback(() => {
-    setIsTimeout(false);
-    regenerate();
-    
-    // Set new timeout
-    timeoutRef.current = setTimeout(() => {
-      console.warn('Retry timeout - no response received within 60 seconds');
-      setIsTimeout(true);
-      stop();
-    }, MESSAGE_TIMEOUT);
-  }, [regenerate, stop]);
-
   // Load chat history from store on mount
   useEffect(() => {
     const storedMessages = useChatStore.getState().messages;
     if (storedMessages.length > 0 && messages.length === 0) {
-      setMessages(storedMessages as any);
+      setMessages(storedMessages as Message[]);
     }
-  }, [setMessages, messages.length]);
+  }, [messages.length]);
 
   // Sync messages to store
   useEffect(() => {
@@ -160,34 +77,263 @@ export function useChat(options: UseChatOptions = {}) {
     }
   }, [messages]);
 
-  // Clear timeout when loading completes
-  useEffect(() => {
-    if (!isLoading && timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  }, [isLoading]);
-
-  // Cleanup timeout on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
     };
   }, []);
 
-  // Clear generated images when starting a new message
-  const handleSubmitWithClear = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
-    setGeneratedImages([]); // Clear previous images
-    return handleSubmit(e);
-  }, [handleSubmit]);
+  // Close existing EventSource
+  const closeEventSource = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
+  // Handle input change
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+  }, []);
+
+  // Send message using fetch + EventSource
+  const sendMessage = useCallback(async (content: string) => {
+    if (!content.trim() || isLoading) return;
+
+    // Close any existing connection
+    closeEventSource();
+
+    // Clear previous state
+    setError(null);
+    setIsTimeout(false);
+    setAgentStatus(null);
+    setUserInputRequest(null);
+    currentAssistantMessageRef.current = '';
+    
+    // Add user message
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: content.trim(),
+      createdAt: new Date(),
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
+
+    // Create assistant message placeholder
+    const assistantMessageId = `assistant-${Date.now()}`;
+    currentMessageIdRef.current = assistantMessageId;
+    
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date(),
+    };
+    
+    setMessages(prev => [...prev, assistantMessage]);
+
+    // Set timeout
+    timeoutRef.current = setTimeout(() => {
+      console.warn('Message timeout - no response received within 60 seconds');
+      setIsTimeout(true);
+      setIsLoading(false);
+      closeEventSource();
+    }, MESSAGE_TIMEOUT);
+
+    try {
+      // Get auth token
+      const token = localStorage.getItem('access_token');
+      
+      // Build messages array (conversation history + current message)
+      const allMessages = [
+        ...messages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        })),
+        {
+          role: 'user',
+          content: content.trim(),
+        }
+      ];
+
+      // Send POST request to initiate SSE stream
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          messages: allMessages,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Read SSE stream
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            
+            if (data === '[DONE]') {
+              continue;
+            }
+
+            try {
+              const event = JSON.parse(data);
+              
+              // Handle different event types
+              if (event.type === 'text' || event.type === 'token') {
+                // Append text to current assistant message
+                if (event.content) {
+                  currentAssistantMessageRef.current += event.content;
+                  setMessages(prev => 
+                    prev.map(msg => 
+                      msg.id === currentMessageIdRef.current
+                        ? { ...msg, content: currentAssistantMessageRef.current }
+                        : msg
+                    )
+                  );
+                }
+              } else if (event.type === 'thinking' || event.type === 'status' || event.type === 'tool_start' || event.type === 'tool_complete') {
+                // Update agent status
+                setAgentStatus({
+                  type: event.type,
+                  message: event.message,
+                  node: event.node,
+                  tool: event.tool,
+                });
+              } else if (event.type === 'user_input_request') {
+                // Human-in-the-Loop request
+                setUserInputRequest({
+                  type: event.input_type || 'confirmation',
+                  message: event.message || '',
+                  options: event.options,
+                });
+              } else if (event.type === 'done') {
+                // Stream complete
+                setAgentStatus(null);
+              } else if (event.type === 'error') {
+                throw new Error(event.error || 'Unknown error');
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE event:', e);
+            }
+          }
+        }
+      }
+
+      // Clear timeout on success
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+    } catch (err) {
+      console.error('Chat error:', err);
+      setError(err instanceof Error ? err : new Error('Unknown error'));
+      
+      // Remove empty assistant message on error
+      setMessages(prev => prev.filter(msg => msg.id !== currentMessageIdRef.current || msg.content));
+    } finally {
+      setIsLoading(false);
+      closeEventSource();
+    }
+  }, [isLoading, messages, user, sessionId, apiUrl, closeEventSource]);
+
+  // Handle form submit
+  const handleSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+    
+    const messageContent = input;
+    setInput('');
+    await sendMessage(messageContent);
+  }, [input, sendMessage]);
+
+  // Retry last message
+  const retry = useCallback(() => {
+    const lastUserMessage = [...messages].reverse().find(msg => msg.role === 'user');
+    if (lastUserMessage) {
+      // Remove last assistant message if exists
+      setMessages(prev => {
+        const lastAssistantIndex = prev.map(m => m.role).lastIndexOf('assistant');
+        if (lastAssistantIndex > -1) {
+          return prev.slice(0, lastAssistantIndex);
+        }
+        return prev;
+      });
+      
+      setIsTimeout(false);
+      sendMessage(lastUserMessage.content);
+    }
+  }, [messages, sendMessage]);
+
+  // Stop current generation
+  const stop = useCallback(() => {
+    closeEventSource();
+    setIsLoading(false);
+    setAgentStatus(null);
+  }, [closeEventSource]);
+
+  // Clear history
+  const clearHistory = useCallback(() => {
+    clearMessages();
+    setMessages([]);
+    setInput('');
+    setError(null);
+    setIsTimeout(false);
+    setAgentStatus(null);
+    setUserInputRequest(null);
+  }, [clearMessages]);
+
+  // Respond to user input request
+  const respondToUserInput = useCallback(async (response: string) => {
+    if (!userInputRequest) return;
+    
+    setUserInputRequest(null);
+    await sendMessage(response);
+  }, [userInputRequest, sendMessage]);
 
   return {
     messages,
-    input: localInput,
+    input,
     handleInputChange,
-    handleSubmit: handleSubmitWithClear,
+    handleSubmit,
     isLoading,
     error,
     reload: retry,
@@ -197,13 +343,8 @@ export function useChat(options: UseChatOptions = {}) {
     isTimeout,
     retry,
     agentStatus,
-    generatedImages,
-    clearHistory: () => {
-      clearMessages();
-      setMessages([]);
-      setGeneratedImages([]);
-    },
-    /** Whether using v3 API */
-    isV3: useV3,
+    userInputRequest,
+    respondToUserInput,
+    clearHistory,
   };
 }

@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useChat as useVercelChat } from '@ai-sdk/react';
+import { useChat } from '@/hooks/useChat';
 import { useChatStore } from '@/lib/store';
 import { MessageBubble } from './MessageBubble';
-import type { UIMessage } from 'ai';
+import type { Message } from '@/hooks/useChat';
 
 // Type for agent status from streaming data
 interface AgentStatus {
@@ -175,41 +175,24 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   // State for agent status during streaming
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
 
-  // Use Vercel AI SDK chat with current session ID
-  const chatId = currentSessionId || 'default';
-  const chatHelpers = useVercelChat({
-    id: chatId,
-    api: '/api/chat',
-    // Handle custom data parts from streaming
-    // onData is called for data-* type events
-    onData: (dataPart: any) => {
-      console.log('ChatDrawer onData received:', dataPart);
-      // dataPart contains type and data fields
-      if (dataPart && dataPart.type === 'data-agent-status' && dataPart.data) {
-        const statusData = dataPart.data;
-        setAgentStatus({
-          type: statusData.statusType as AgentStatus['type'],
-          message: statusData.message,
-          node: statusData.node,
-          tool: statusData.tool,
-        });
-      }
-    },
-    onFinish: () => {
-      // Clear agent status when streaming finishes
-      setAgentStatus(null);
-    },
-  } as any);
-
+  // Use SSE-based chat hook
   const {
     messages,
-    status,
+    isLoading,
     stop,
-    sendMessage,
+    append: sendMessage,
     setMessages,
-  } = chatHelpers;
+    agentStatus: hookAgentStatus,
+  } = useChat();
 
-  const isLoading = status === 'streaming' || status === 'submitted';
+  // Update agent status from hook
+  useEffect(() => {
+    if (hookAgentStatus) {
+      setAgentStatus(hookAgentStatus);
+    } else {
+      setAgentStatus(null);
+    }
+  }, [hookAgentStatus]);
 
   // Load messages when session changes (only when session ID changes)
   useEffect(() => {
@@ -273,10 +256,8 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  const generateTitle = (message: UIMessage) => {
-    const content = typeof (message as any).content === 'string'
-      ? (message as any).content
-      : (message as any).parts?.find((p: any) => p.type === 'text')?.text || '';
+  const generateTitle = (message: Message) => {
+    const content = message.content || '';
     const maxLength = 20;
     const cleaned = content.replace(/\n/g, ' ').trim();
     return cleaned.length > maxLength ? cleaned.slice(0, maxLength) + '...' : cleaned || '新对话';
@@ -409,14 +390,8 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     e.preventDefault();
     if ((!localInput.trim() && attachments.length === 0) || isLoading || isComposing || isUploading) return;
 
-    const messageContent = localInput;
+    let messageContent = localInput;
     setLocalInput('');
-
-    const parts: any[] = [];
-
-    if (messageContent.trim()) {
-      parts.push({ type: 'text', text: messageContent });
-    }
 
     // Upload files if any
     if (attachments.length > 0) {
@@ -424,26 +399,20 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
       try {
         const uploadedFiles = await uploadFiles(attachments);
 
-        // Add uploaded file references to message parts
-        for (const uploaded of uploadedFiles) {
-          const att = attachments.find(a => a.file.name === uploaded.filename);
-          parts.push({
-            type: 'file',
-            fileType: att?.type || 'file',
-            name: uploaded.filename,
-            size: uploaded.size,
-            mimeType: uploaded.contentType,
-            url: uploaded.cdnUrl,
-            s3Url: uploaded.s3Url,
-          });
-        }
+        // Add file references to message content
+        const fileRefs = uploadedFiles.map(f => 
+          `[文件: ${f.filename} (${formatFileSize(f.size)})]`
+        ).join('\n');
+        
+        messageContent = messageContent.trim() 
+          ? `${messageContent}\n\n${fileRefs}`
+          : fileRefs;
       } catch (error) {
         console.error('File upload failed:', error);
-        // Show error to user but continue with text message
-        parts.push({
-          type: 'text',
-          text: `[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`,
-        });
+        // Show error to user
+        messageContent = messageContent.trim()
+          ? `${messageContent}\n\n[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`
+          : `[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`;
       } finally {
         setIsUploading(false);
       }
@@ -458,8 +427,8 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
       textareaRef.current.style.height = 'auto';
     }
 
-    if (parts.length > 0) {
-      await (sendMessage as any)({ parts });
+    if (messageContent.trim()) {
+      await sendMessage(messageContent);
     }
   };
 
@@ -658,7 +627,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
               </div>
             ) : (
               <div className="space-y-4">
-                {messages.map((message: UIMessage) => (
+                {messages.map((message: Message) => (
                   <MessageBubble key={message.id} message={message} compact />
                 ))}
 

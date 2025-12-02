@@ -38,7 +38,7 @@ def test_user():
 @pytest.fixture
 def deletion_service(mock_db):
     """Create account deletion service with mocked dependencies."""
-    with patch('app.services.account_deletion.S3Storage') as mock_storage, \
+    with patch('app.services.account_deletion.GCSStorage') as mock_storage, \
          patch('app.services.account_deletion.EmailService') as mock_email:
         
         service = AccountDeletionService(mock_db)

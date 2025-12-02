@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.storage import S3Storage
+from app.core.storage import GCSStorage
 from app.models.ad_account import AdAccount
 from app.models.campaign import Campaign
 from app.models.creative import Creative
@@ -34,9 +34,9 @@ class AccountDeletionService:
         """Initialize account deletion service."""
         self.db = db
         self.email_service = EmailService()
-        self.creatives_storage = S3Storage(settings.s3_bucket_creatives)
-        self.landing_pages_storage = S3Storage(settings.s3_bucket_landing_pages)
-        self.exports_storage = S3Storage(settings.s3_bucket_exports)
+        self.creatives_storage = GCSStorage(settings.gcs_bucket_creatives)
+        self.landing_pages_storage = GCSStorage(settings.gcs_bucket_landing_pages)
+        self.exports_storage = GCSStorage(settings.gcs_bucket_exports)
 
     async def delete_user_account(self, user: User) -> dict[str, Any]:
         """
@@ -233,7 +233,7 @@ class AccountDeletionService:
             except Exception as e:
                 logger.warning(f"Failed to delete export files with prefix {prefix}: {e}")
 
-    def _delete_files_by_prefix(self, storage: S3Storage, prefix: str) -> int:
+    def _delete_files_by_prefix(self, storage: GCSStorage, prefix: str) -> int:
         """
         Delete all files in a bucket with a given prefix.
         

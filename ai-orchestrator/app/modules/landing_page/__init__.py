@@ -11,10 +11,12 @@ This module provides landing page generation and management capabilities includi
 - Landing page export
 - Conversion tracking
 
+This module provides implementation functions that are called directly
+by Agent Custom Tools.
+
 Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.1, 9.1
 """
 
-from .capability import LandingPage
 from .models import (
     ProductInfo,
     Review,
@@ -31,7 +33,6 @@ from .models import (
 )
 
 __all__ = [
-    "LandingPage",
     "ProductInfo",
     "Review",
     "LandingPageContent",

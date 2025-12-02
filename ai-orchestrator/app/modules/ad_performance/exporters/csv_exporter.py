@@ -2,6 +2,7 @@
 CSV exporter for ad performance reports.
 """
 
+import csv
 import pandas as pd
 from datetime import date
 from typing import Any
@@ -135,8 +136,8 @@ class CSVExporter:
 
             df = df[final_columns]
 
-            # Export to CSV
-            df.to_csv(file_path, index=False, encoding="utf-8")
+            # Export to CSV with proper quoting to preserve string values like "00"
+            df.to_csv(file_path, index=False, encoding="utf-8", quoting=csv.QUOTE_NONNUMERIC)
 
             log.info(
                 "csv_export_complete",

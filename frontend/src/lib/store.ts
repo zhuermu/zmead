@@ -39,9 +39,7 @@ export const useAuthStore = create<AuthState>()(
   )
 );
 
-import type { UIMessage } from 'ai';
-
-type Message = UIMessage;
+import type { Message } from '@/hooks/useChat';
 
 // Chat session interface
 export interface ChatSession {

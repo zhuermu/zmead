@@ -1,7 +1,8 @@
 """
 Ad Performance module - Advertising data fetching, analysis, and reporting.
+
+This module provides implementation functions that are called directly
+by Agent Custom Tools.
 """
 
-from .capability import AdPerformance
-
-__all__ = ["AdPerformance"]
+__all__ = []

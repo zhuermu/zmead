@@ -1,10 +1,10 @@
 'use client';
 
 import ReactMarkdown from 'react-markdown';
-import type { UIMessage } from 'ai';
+import type { Message } from '@/hooks/useChat';
 
 interface MessageBubbleProps {
-  message: UIMessage;
+  message: Message;
   compact?: boolean;
 }
 

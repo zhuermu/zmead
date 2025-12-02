@@ -1,45 +1,106 @@
 # AI Orchestrator
 
-AI Orchestrator is the core intelligent assistant for the AAE (Automated Ad Engine) platform. It provides a unified conversational interface where users interact with the system through natural language.
+AI Orchestrator is the core intelligent assistant for the AAE (Automated Ad Engine) platform. It provides a unified conversational interface where users interact with the system through natural language using a **ReAct (Reasoning + Acting) Agent** architecture.
 
 ## Overview
 
 The AI Orchestrator:
-- Understands user intent through Gemini 2.5 Pro
-- Coordinates 5 functional modules (Creative, Reporting, Market Intel, Landing Page, Campaign)
-- Manages conversation context and history
-- Communicates with Web Platform via MCP protocol
-- Supports streaming responses for real-time interaction
+- Uses **ReAct Agent** pattern for autonomous task planning and execution
+- Leverages **3 types of Tools** (LangChain built-in, Agent custom, MCP Server)
+- Implements **intelligent Human-in-the-Loop** for confirmations when needed
+- Manages conversation context and memory via Redis
+- Communicates with Backend via MCP protocol
+- Supports streaming responses via SSE (Server-Sent Events)
 
 ## Architecture
 
+The AI Orchestrator uses a **ReAct Agent + 3 Types of Tools** architecture:
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   AI Orchestrator                       │
-│                                                         │
-│  ┌───────────────────────────────────────────────┐    │
-│  │         FastAPI Application Layer             │    │
-│  │  - HTTP Streaming Handler (/chat)             │    │
-│  │  - Health Check Endpoints (/health, /ready)   │    │
-│  └───────────────────────────────────────────────┘    │
-│                        │                               │
-│  ┌───────────────────────────────────────────────┐    │
-│  │         LangGraph Agent Layer                 │    │
-│  │  - State Machine (StateGraph)                 │    │
-│  │  - Router Node (Intent Recognition)           │    │
-│  │  - Functional Module Nodes (5 modules)        │    │
-│  │  - Confirmation Node (Human-in-the-loop)      │    │
-│  │  - Response Generator Node                    │    │
-│  └───────────────────────────────────────────────┘    │
-│                        │                               │
-│  ┌───────────────────────────────────────────────┐    │
-│  │         Integration Layer                     │    │
-│  │  - MCP Client (Web Platform communication)    │    │
-│  │  - LLM Client (Gemini 2.5 Pro/Flash)          │    │
-│  │  - Redis Client (State Persistence)           │    │
-│  └───────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI Orchestrator (ReAct v2)                   │
+│                                                                  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                   FastAPI Application                      │  │
+│  │  - POST /api/v1/chat (streaming SSE)                      │  │
+│  │  - GET /health, /ready                                    │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│  ┌───────────────────────────▼───────────────────────────────┐  │
+│  │                   ReAct Agent                              │  │
+│  │                                                            │  │
+│  │  Step 1: Planner (制定计划)                                │  │
+│  │  ├─ 理解用户意图                                            │  │
+│  │  ├─ 分解任务步骤                                            │  │
+│  │  └─ 选择需要的 Tools                                        │  │
+│  │                                                            │  │
+│  │  Step 2: Evaluator (判断是否需要人工)                       │  │
+│  │  ├─ 检查操作风险（花费、删除等）                             │  │
+│  │  ├─ 检查参数模糊度                                          │  │
+│  │  └─ 决定是否需要 Human-in-the-Loop                         │  │
+│  │                                                            │  │
+│  │  Step 3: Human-in-the-Loop (可选)                          │  │
+│  │  ├─ 生成确认请求                                            │  │
+│  │  ├─ 生成选项（预设 + 其他 + 取消）                          │  │
+│  │  └─ 等待用户输入                                            │  │
+│  │                                                            │  │
+│  │  Step 4: Act (执行 Tools)                                  │  │
+│  │  ├─ 调用选定的 Tools                                        │  │
+│  │  └─ 处理执行结果                                            │  │
+│  │                                                            │  │
+│  │  Step 5: Memory (记录结果)                                 │  │
+│  │  ├─ 保存执行历史到 Redis                                    │  │
+│  │  └─ 更新对话上下文                                          │  │
+│  │                                                            │  │
+│  │  Step 6: Perceive (评估是否完成)                           │  │
+│  │  ├─ 检查任务是否完成                                        │  │
+│  │  └─ 决定是否继续循环                                        │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│  ┌───────────────────────────▼───────────────────────────────┐  │
+│  │                   3 类 Tools                               │  │
+│  │                                                            │  │
+│  │  1. LangChain 内置 Tools                                   │  │
+│  │     - google_search, calculator                           │  │
+│  │                                                            │  │
+│  │  2. Agent 自定义 Tools (可调用大模型)                       │  │
+│  │     - Creative Tools (generate_image_tool, etc.)          │  │
+│  │     - Performance Tools (analyze_performance_tool, etc.)  │  │
+│  │     - Campaign Tools (optimize_budget_tool, etc.)         │  │
+│  │     - Landing Page Tools (generate_page_content_tool)     │  │
+│  │     - Market Tools (analyze_competitor_tool, etc.)        │  │
+│  │                                                            │  │
+│  │  3. MCP Server Tools (Backend API)                        │  │
+│  │     - save_creative, fetch_ad_data, create_campaign       │  │
+│  │     - save_landing_page, fetch_competitor_data, etc.      │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│  ┌───────────────────────────▼───────────────────────────────┐  │
+│  │              业务逻辑实现层 (modules/)                      │  │
+│  │                                                            │  │
+│  │  - ad_creative/ (被 Creative Tools 调用)                   │  │
+│  │  - ad_performance/ (被 Performance Tools 调用)             │  │
+│  │  - campaign_automation/ (被 Campaign Tools 调用)           │  │
+│  │  - landing_page/ (被 Landing Page Tools 调用)              │  │
+│  │  - market_insights/ (被 Market Tools 调用)                 │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│  ┌───────────────────────────▼───────────────────────────────┐  │
+│  │                   Integration Layer                        │  │
+│  │  - MCP Client (Backend)                                   │  │
+│  │  - Gemini Client                                          │  │
+│  │  - Redis Client (Memory)                                  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+**Key Features:**
+- **ReAct Pattern**: Agent autonomously plans, acts, and evaluates in a loop
+- **3 Types of Tools**: Clear separation of responsibilities (general, AI capabilities, data interaction)
+- **Intelligent Human-in-the-Loop**: Only asks for confirmation when necessary (spending, important operations, ambiguous parameters)
+- **Memory Management**: Uses Redis to maintain conversation context and agent state
+- **Streaming Responses**: Real-time SSE streaming for better UX
+- **Extensible**: Easy to add new tools without modifying core agent logic
 
 ## Project Structure
 
@@ -47,40 +108,56 @@ The AI Orchestrator:
 ai-orchestrator/
 ├── app/
 │   ├── api/              # FastAPI endpoints
-│   │   ├── chat.py       # Chat streaming endpoint
-│   │   └── health.py     # Health check endpoints
+│   │   ├── chat.py       # Chat streaming endpoint (SSE)
+│   │   ├── health.py     # Health check endpoints
+│   │   └── campaign_automation.py # Campaign automation API
 │   ├── core/             # Core infrastructure
 │   │   ├── config.py     # Pydantic settings
 │   │   ├── logging.py    # Structured logging
-│   │   ├── redis_client.py
-│   │   ├── state.py      # LangGraph state definition
-│   │   ├── graph.py      # LangGraph builder
-│   │   ├── routing.py    # Conditional routing logic
+│   │   ├── redis_client.py # Redis client
+│   │   ├── react_agent.py # ReAct Agent main loop
+│   │   ├── planner.py    # Task planning component
+│   │   ├── evaluator.py  # Human-in-the-Loop evaluator
+│   │   ├── human_in_loop.py # Human interaction handler
+│   │   ├── memory.py     # Conversation memory
 │   │   ├── context.py    # Context resolution
 │   │   ├── errors.py     # Custom exceptions
 │   │   ├── retry.py      # Retry with backoff
 │   │   └── auth.py       # Service authentication
-│   ├── nodes/            # LangGraph nodes
-│   │   ├── router.py     # Intent recognition
-│   │   ├── creative_stub.py
-│   │   ├── reporting_stub.py
-│   │   ├── market_intel_stub.py
-│   │   ├── landing_page_stub.py
-│   │   ├── ad_engine_stub.py
-│   │   ├── respond.py    # Response generation
-│   │   ├── persist.py    # Conversation persistence
-│   │   └── confirmation.py
+│   ├── tools/            # 3 类 Tools
+│   │   ├── base.py       # Tool base class
+│   │   ├── registry.py   # Tool registry
+│   │   ├── langchain_tools.py # LangChain 内置 Tools
+│   │   ├── creative_tools.py # Creative Agent Custom Tools
+│   │   ├── performance_tools.py # Performance Agent Custom Tools
+│   │   ├── campaign_tools.py # Campaign Agent Custom Tools
+│   │   ├── landing_page_tools.py # Landing Page Agent Custom Tools
+│   │   ├── market_tools.py # Market Agent Custom Tools
+│   │   └── mcp_tools.py  # MCP Server Tools wrapper
+│   ├── modules/          # 业务逻辑实现层
+│   │   ├── ad_creative/  # Creative generation (被 Creative Tools 调用)
+│   │   ├── ad_performance/ # Performance analytics (被 Performance Tools 调用)
+│   │   ├── campaign_automation/ # Campaign automation (被 Campaign Tools 调用)
+│   │   ├── landing_page/ # Landing page generation (被 Landing Page Tools 调用)
+│   │   └── market_insights/ # Market intelligence (被 Market Tools 调用)
 │   ├── prompts/          # LLM prompt templates
 │   │   ├── intent_recognition.py
-│   │   └── response_generation.py
+│   │   ├── response_generation.py
+│   │   └── performance_analysis.py
 │   └── services/         # External service clients
-│       ├── mcp_client.py # Web Platform MCP client
-│       └── gemini_client.py
+│       ├── mcp_client.py # Backend MCP client
+│       └── gemini_client.py # Gemini API client
 ├── tests/                # Test suite
-│   ├── test_intent_recognition_property.py
-│   ├── test_execution_order_property.py
-│   ├── test_context_resolution_property.py
-│   └── test_retry_property.py
+│   ├── ad_creative/      # Creative module tests
+│   ├── ad_performance/   # Performance module tests
+│   ├── campaign_automation/ # Campaign module tests
+│   ├── landing_page/     # Landing page module tests
+│   ├── market_insights/  # Market insights module tests
+│   ├── test_react_agent_core.py # ReAct Agent core tests
+│   ├── test_human_in_loop.py # Human-in-the-Loop tests
+│   └── test_retry_property.py # Retry logic tests
+├── docs/                 # Documentation
+│   └── ARCHITECTURE.md   # Architecture documentation
 ├── Dockerfile            # Docker configuration
 ├── .dockerignore         # Docker build exclusions
 ├── pyproject.toml        # Project configuration
@@ -140,9 +217,9 @@ ai-orchestrator/
 
 ## API Endpoints
 
-### POST /chat
+### POST /api/v1/chat
 
-HTTP streaming endpoint for chat interactions. Compatible with Vercel AI SDK.
+HTTP streaming endpoint for chat interactions using Server-Sent Events (SSE).
 
 **Headers:**
 ```
@@ -167,14 +244,50 @@ data: {"type": "token", "content": "好的"}
 
 data: {"type": "token", "content": "，"}
 
-data: {"type": "tool_start", "tool": "check_credit"}
+data: {"type": "agent_start", "agent": "creative_agent", "action": "generate"}
 
-data: {"type": "tool_complete", "tool": "check_credit", "result": {"allowed": true}}
+data: {"type": "agent_complete", "agent": "creative_agent", "success": true}
 
-data: {"type": "token", "content": "正在生成素材..."}
+data: {"type": "token", "content": "已生成10张广告图片"}
 
 data: {"type": "done"}
+```
 
+### POST /api/v1/chat/sync
+
+Synchronous (non-streaming) chat endpoint for simple request-response interactions.
+
+**Headers:**
+```
+Authorization: Bearer <WEB_PLATFORM_SERVICE_TOKEN>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "messages": [
+    {"role": "user", "content": "查看我的广告表现"}
+  ],
+  "user_id": "user_123",
+  "session_id": "session_456"
+}
+```
+
+**Response:**
+```json
+{
+  "response": "您的广告表现如下...",
+  "success": true,
+  "session_id": "session_456",
+  "tool_results": [
+    {
+      "agent": "performance_agent",
+      "action": "analyze",
+      "data": {...}
+    }
+  ]
+}
 ```
 
 ### GET /health
@@ -434,43 +547,328 @@ docker-compose logs --tail=100 ai-orchestrator
 
 ---
 
+## ReAct Agent Workflow
+
+The ReAct Agent follows a **Reasoning + Acting** loop:
+
+```
+用户消息
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 1: Planner                     │
+│  - 使用 Gemini 理解用户意图          │
+│  - 分解任务为具体步骤                │
+│  - 选择需要的 Tools                  │
+└─────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 2: Evaluator                   │
+│  - 检查操作风险                      │
+│  - 检查参数模糊度                    │
+│  - 决定是否需要 Human-in-the-Loop   │
+└─────────────────────────────────────┘
+    │
+    ├─ 需要人工 ──────────┐
+    │                      │
+    ▼                      ▼
+┌──────────────┐  ┌──────────────┐
+│ Human-in-    │  │ 跳过，继续   │
+│ the-Loop     │  │ 执行         │
+└──────────────┘  └──────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 4: Act                         │
+│  - 调用选定的 Tools                  │
+│  - 处理执行结果                      │
+└─────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 5: Memory                      │
+│  - 保存执行历史到 Redis              │
+│  - 更新对话上下文                    │
+└─────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 6: Perceive                    │
+│  - 检查任务是否完成                  │
+│  - 决定是否继续循环                  │
+└─────────────────────────────────────┘
+    │
+    ├─ 未完成 ──► 返回 Step 1
+    │
+    ▼
+  返回用户
+```
+
+### Human-in-the-Loop Mechanism
+
+**Triggers:**
+1. **Spending operations**: Creating campaigns, increasing budgets
+2. **Important operations**: Deleting campaigns, pausing ads
+3. **Ambiguous parameters**: User didn't specify style, target audience, etc.
+
+**Interaction Types:**
+1. **Confirmation**: Show operation details, user confirms or cancels
+2. **Options**: Provide preset options + "Other" + "Cancel"
+3. **Input**: User provides free-form input
+
+**Example:**
+```python
+# User: "帮我生成素材"
+# Agent (Evaluator): Style parameter is ambiguous
+
+return UserInputRequest(
+    question="请选择素材风格：",
+    options=[
+        "1️⃣ 现代简约",
+        "2️⃣ 活力多彩",
+        "3️⃣ 高端奢华",
+        "➕ 其他",
+        "❌ 取消"
+    ]
+)
+```
+
 ## Architecture Details
 
-### LangGraph State Machine
+### 3 Types of Tools
 
-The AI Orchestrator uses LangGraph to manage conversation flow:
+**1. LangChain Built-in Tools**
+- General-purpose tools from LangChain ecosystem
+- Examples: `google_search`, `calculator`
+- Used for: Web search, calculations, date/time operations
 
+**2. Agent Custom Tools (可调用大模型)**
+- Custom tools that can call LLMs (Gemini)
+- Encapsulate AI capabilities
+- Examples:
+  - `generate_image_tool`: Generate images using Gemini Imagen
+  - `analyze_performance_tool`: Analyze ad performance using Gemini
+  - `optimize_budget_tool`: Generate budget optimization recommendations using Gemini
+
+**3. MCP Server Tools (Backend API)**
+- Data interaction tools provided by Backend via MCP protocol
+- No AI logic, only data CRUD operations
+- Examples:
+  - `save_creative`: Save creative to database
+  - `fetch_ad_data`: Fetch ad data from database
+  - `create_campaign`: Create campaign via Backend API
+
+### Tool Registry
+
+Tools are registered at startup:
+
+```python
+from app.tools.registry import get_tool_registry
+
+registry = get_tool_registry()
+
+# Register LangChain tools
+registry.register_langchain_tools()
+
+# Register Agent Custom Tools
+registry.register_agent_tools()
+
+# Register MCP Server Tools
+await registry.register_mcp_tools()
 ```
-[START] → [router] → [module_node] → [should_confirm?]
-                                          │
-                    ┌─────────────────────┴─────────────────────┐
-                    ▼                                           ▼
-            [human_confirmation]                           [respond]
-                    │                                           │
-                    └───────────────────────────────────────────┘
-                                          │
-                                          ▼
-                                      [persist]
-                                          │
-                                          ▼
-                                        [END]
+
+### modules/ as Implementation Layer
+
+The `modules/` directory contains business logic implementations that are called by Agent Custom Tools:
+
+```python
+# Agent Custom Tool
+@tool
+async def generate_image_tool(product_info: dict, style: str) -> str:
+    """Generate ad image using Gemini Imagen."""
+    service = get_ad_creative_service()
+    image_url = await service.generate_image(product_info, style)
+    return image_url
+
+# modules/ad_creative/service.py
+class AdCreativeService:
+    async def generate_image(self, product_info: dict, style: str) -> str:
+        # Business logic implementation
+        prompt = self._build_prompt(product_info, style)
+        image_url = await self.gemini_client.generate_image(prompt)
+        return image_url
 ```
 
-### Intent Recognition
+**Key Points:**
+- `modules/` are NOT independent agents
+- They are called by Agent Custom Tools
+- They contain reusable business logic
+- They can be called by both Agent Custom Tools and Celery tasks
 
-The router node uses Gemini 2.5 Pro with structured output to identify:
-- Primary intent (creative, reporting, market, landing_page, campaign)
-- Extracted parameters
-- Estimated credit cost
-- Whether confirmation is required
+### Memory Management
 
-### Credit Flow
+The ReAct Agent uses Redis to store:
+- **Conversation history**: User messages and agent responses
+- **Agent state**: Current plan, executed steps, tool results
+- **Session context**: User preferences, active campaigns, etc.
 
-1. Module estimates credit cost
-2. Check credit via MCP `check_credit` tool
-3. If sufficient, execute operation
-4. Deduct credit via MCP `deduct_credit` tool
-5. On failure, refund via MCP `refund_credit` tool
+```python
+# Save to memory
+await memory.save(
+    session_id=session_id,
+    state={
+        "current_plan": plan,
+        "steps_completed": steps,
+        "tool_results": results
+    }
+)
+
+# Load from memory
+state = await memory.load(session_id=session_id)
+```
+
+---
+
+## Development Guide
+
+### Adding a New Tool
+
+#### 1. Agent Custom Tool (可调用大模型)
+
+```python
+# app/tools/creative_tools.py
+
+from langchain.tools import tool
+from app.modules.ad_creative.service import get_ad_creative_service
+
+@tool
+async def generate_video_tool(
+    product_info: dict,
+    style: str,
+    duration: int = 15
+) -> str:
+    """Generate ad video using Gemini Veo.
+    
+    Args:
+        product_info: Product information
+        style: Video style (modern, vibrant, luxury)
+        duration: Video duration in seconds
+    
+    Returns:
+        Video URL
+    """
+    service = get_ad_creative_service()
+    video_url = await service.generate_video(product_info, style, duration)
+    return video_url
+```
+
+#### 2. Register the Tool
+
+```python
+# app/tools/registry.py
+
+def register_agent_tools(self):
+    """Register all Agent Custom Tools."""
+    from app.tools.creative_tools import (
+        generate_image_tool,
+        generate_video_tool,  # Add new tool
+        analyze_creative_tool
+    )
+    
+    self.tools.extend([
+        generate_image_tool,
+        generate_video_tool,  # Register new tool
+        analyze_creative_tool
+    ])
+```
+
+#### 3. Implement Business Logic
+
+```python
+# app/modules/ad_creative/service.py
+
+class AdCreativeService:
+    async def generate_video(
+        self,
+        product_info: dict,
+        style: str,
+        duration: int
+    ) -> str:
+        """Generate video using Gemini Veo."""
+        prompt = self._build_video_prompt(product_info, style, duration)
+        video_url = await self.gemini_client.generate_video(prompt)
+        
+        # Save to backend via MCP
+        await self.mcp_client.call_tool(
+            "save_creative",
+            {
+                "type": "video",
+                "url": video_url,
+                "metadata": {...}
+            }
+        )
+        
+        return video_url
+```
+
+### Adding a New Module
+
+1. Create module directory: `app/modules/new_module/`
+2. Implement service: `app/modules/new_module/service.py`
+3. Create Agent Custom Tools: `app/tools/new_module_tools.py`
+4. Register tools in `app/tools/registry.py`
+
+### Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run specific module tests
+pytest tests/ad_creative/ -v
+
+# Run ReAct Agent tests
+pytest tests/test_react_agent_core.py -v
+
+# Run Human-in-the-Loop tests
+pytest tests/test_human_in_loop.py -v
+
+# Run with coverage
+pytest --cov=app tests/
+```
+
+### Debugging
+
+```bash
+# Enable debug logging
+export LOG_LEVEL=DEBUG
+
+# Run with auto-reload
+uvicorn app.main:app --reload --port 8001
+
+# View Redis data
+redis-cli
+> SELECT 3
+> KEYS *
+> GET session:123
+```
+
+---
+
+## Future Optimizations
+
+### Skills Dynamic Loading
+
+When the number of tools exceeds 50, implement Skills dynamic loading:
+
+1. **Group tools into Skills** (Creative, Performance, Campaign, Landing Page, Market)
+2. **Identify required Skills** based on user message
+3. **Load only relevant tools** (15-20 instead of 50)
+4. **Reduce LLM context** by 60%+
+5. **Improve response speed** by 30%+
+
+See `.kiro/specs/react-agent-v2/design.md` for detailed design.
 
 ---
 

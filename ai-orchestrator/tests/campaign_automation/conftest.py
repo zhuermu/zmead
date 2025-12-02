@@ -5,7 +5,6 @@ Pytest fixtures for Campaign Automation tests.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.modules.campaign_automation import CampaignAutomation
 from app.services.mcp_client import MCPClient
 from app.services.gemini_client import GeminiClient
 
@@ -270,42 +269,8 @@ def mock_platform_adapter():
     return adapter
 
 
-@pytest.fixture
-def campaign_automation(mock_mcp_client, mock_gemini_client, mock_redis_client, mock_platform_adapter, monkeypatch):
-    """Campaign Automation instance with mocked dependencies"""
-    # Mock the PlatformRouter to return our mock adapter
-    from unittest.mock import MagicMock
-    
-    mock_router = MagicMock()
-    # get_adapter is synchronous and returns the mock adapter
-    mock_router.get_adapter.return_value = mock_platform_adapter
-    mock_router.get_supported_platforms.return_value = ["meta", "tiktok", "google"]
-    
-    # Add async methods to the router that delegate to the adapter
-    mock_router.create_campaign = mock_platform_adapter.create_campaign
-    mock_router.create_adset = mock_platform_adapter.create_adset
-    mock_router.create_ad = mock_platform_adapter.create_ad
-    mock_router.update_budget = mock_platform_adapter.update_budget
-    mock_router.pause_adset = mock_platform_adapter.pause_adset
-    mock_router.resume_adset = mock_platform_adapter.resume_adset
-    mock_router.get_campaign_status = mock_platform_adapter.get_campaign_status
-    mock_router.delete_campaign = mock_platform_adapter.delete_campaign
-    
-    # Patch PlatformRouter in both modules
-    monkeypatch.setattr(
-        "app.modules.campaign_automation.managers.campaign_manager.PlatformRouter",
-        lambda: mock_router
-    )
-    monkeypatch.setattr(
-        "app.modules.campaign_automation.capability.PlatformRouter",
-        lambda: mock_router
-    )
-    
-    return CampaignAutomation(
-        mcp_client=mock_mcp_client,
-        gemini_client=mock_gemini_client,
-        redis_client=mock_redis_client,
-    )
+# Note: campaign_automation fixture removed as we no longer use capability classes
+# Tests should directly instantiate the managers/services they need
 
 
 @pytest.fixture

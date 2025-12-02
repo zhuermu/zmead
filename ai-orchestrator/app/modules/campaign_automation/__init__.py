@@ -3,9 +3,11 @@ Campaign Automation module for AAE.
 
 This module provides automated campaign creation, management, and optimization
 capabilities for advertising platforms (Meta, TikTok, Google Ads).
+
+This module provides implementation functions that are called directly
+by Agent Custom Tools.
 """
 
-from .capability import CampaignAutomation
 from .models import (
     Campaign,
     Adset,
@@ -17,7 +19,6 @@ from .models import (
 )
 
 __all__ = [
-    "CampaignAutomation",
     "Campaign",
     "Adset",
     "Ad",

@@ -1,39 +1,34 @@
 'use client';
 
-import { useWebSocket } from '@/hooks/useWebSocket';
+import { useChat } from '@/hooks/useChat';
 
 export function ConnectionStatus() {
-  const { connectionState } = useWebSocket();
+  const { isLoading, error } = useChat();
 
-  const statusConfig = {
-    connected: {
-      color: 'bg-green-500',
-      text: '已连接',
-      icon: '●',
-    },
-    connecting: {
-      color: 'bg-yellow-500',
-      text: '连接中...',
-      icon: '●',
-    },
-    reconnecting: {
-      color: 'bg-yellow-500',
-      text: '重连中...',
-      icon: '●',
-    },
-    disconnected: {
-      color: 'bg-red-500',
-      text: '已断开',
-      icon: '●',
-    },
-  };
+  // With SSE, we don't have a persistent connection
+  // Show status based on loading/error state
+  if (error) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-white/90">
+        <span className="w-2 h-2 rounded-full bg-red-500" />
+        <span>连接错误</span>
+      </div>
+    );
+  }
 
-  const status = statusConfig[connectionState] || statusConfig.disconnected;
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-white/90">
+        <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+        <span>处理中...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-1.5 text-xs text-white/90">
-      <span className={`w-2 h-2 rounded-full ${status.color} ${connectionState === 'connecting' || connectionState === 'reconnecting' ? 'animate-pulse' : ''}`} />
-      <span>{status.text}</span>
+      <span className="w-2 h-2 rounded-full bg-green-500" />
+      <span>就绪</span>
     </div>
   );
 }

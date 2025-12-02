@@ -21,11 +21,18 @@ def metrics_data_strategy(draw):
     """Generate valid metrics data for CSV export."""
     num_metrics = draw(st.integers(min_value=1, max_value=20))
 
+    # Define printable characters excluding problematic ones for CSV
+    # Exclude: null (\x00), newline (\n), carriage return (\r), quotes ("), comma (,)
+    safe_chars = st.characters(
+        whitelist_categories=("Lu", "Ll", "Nd", "Pd", "Zs"),
+        blacklist_characters="\x00\n\r\",",
+    )
+
     metrics = []
     for _ in range(num_metrics):
         metric = {
-            "entity_id": draw(st.text(min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd")))),
-            "entity_name": draw(st.text(min_size=1, max_size=100)),
+            "entity_id": draw(st.text(min_size=1, max_size=50, alphabet=safe_chars)),
+            "entity_name": draw(st.text(min_size=1, max_size=100, alphabet=safe_chars)),
             "entity_type": draw(st.sampled_from(["campaign", "adset", "ad"])),
             "platform": draw(st.sampled_from(["meta", "tiktok", "google"])),
             "date": draw(st.dates(min_value=date(2024, 1, 1), max_value=date(2024, 12, 31))).isoformat(),
@@ -71,8 +78,19 @@ async def test_property_13_csv_export_data_completeness(data):
         # Assert: File should exist
         assert os.path.exists(file_path), f"CSV file should exist at {file_path}"
 
-        # Read the CSV file back
-        df = pd.read_csv(file_path)
+        # Read the CSV file back with explicit dtypes for string columns
+        # keep_default_na=False prevents "None" from being treated as NaN
+        df = pd.read_csv(
+            file_path,
+            dtype={
+                "entity_id": str,
+                "entity_name": str,
+                "entity_type": str,
+                "platform": str,
+                "date": str,
+            },
+            keep_default_na=False
+        )
 
         # Assert: Row count should match
         assert len(df) == original_count, (

@@ -4,10 +4,9 @@ import { useEffect, useRef } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { MessageBubble } from './MessageBubble';
 import { ToolInvocationCard } from './ToolInvocationCard';
-import { GeneratedImageGallery } from './GeneratedImageGallery';
 
 export function MessageList() {
-  const { messages, isLoading, isTimeout, retry, generatedImages } = useChat();
+  const { messages, isLoading, isTimeout, retry, agentStatus } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
@@ -58,14 +57,7 @@ export function MessageList() {
         </div>
       ))}
 
-      {/* Display generated images from v3 API */}
-      {generatedImages.length > 0 && (
-        <div className="mb-3 ml-0 mr-auto max-w-[85%]">
-          <GeneratedImageGallery images={generatedImages} />
-        </div>
-      )}
-
-      {/* Loading indicator */}
+      {/* Loading indicator with agent status */}
       {isLoading && !isTimeout && (
         <div className="flex items-center gap-2 text-gray-500 ml-2">
           <div className="flex gap-1">
@@ -73,7 +65,9 @@ export function MessageList() {
             <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
             <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
           </div>
-          <span className="text-sm">AI 正在思考...</span>
+          <span className="text-sm">
+            {agentStatus?.message || 'AI 正在思考...'}
+          </span>
         </div>
       )}
 

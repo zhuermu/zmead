@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';
 import { ConnectionStatus } from './ConnectionStatus';
+import { UserInputPrompt } from './UserInputPrompt';
 import { useChat } from '@/hooks/useChat';
 
 interface ChatWindowProps {
@@ -13,7 +14,7 @@ interface ChatWindowProps {
 
 export function ChatWindow({ isOpen, onClose }: ChatWindowProps) {
   const [showMenu, setShowMenu] = useState(false);
-  const { clearHistory } = useChat();
+  const { clearHistory, userInputRequest, respondToUserInput, isLoading } = useChat();
 
   if (!isOpen) return null;
 
@@ -90,6 +91,19 @@ export function ChatWindow({ isOpen, onClose }: ChatWindowProps) {
 
       {/* Message List */}
       <MessageList />
+
+      {/* User Input Prompt (Human-in-the-Loop) */}
+      {userInputRequest && (
+        <div className="px-4 pb-2">
+          <UserInputPrompt
+            type={userInputRequest.type}
+            message={userInputRequest.message}
+            options={userInputRequest.options}
+            onRespond={respondToUserInput}
+            isLoading={isLoading}
+          />
+        </div>
+      )}
 
       {/* Input Area */}
       <ChatInput />

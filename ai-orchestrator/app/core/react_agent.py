@@ -1,0 +1,927 @@
+"""ReAct Agent implementation for AAE.
+
+This module provides the ReActAgent class that implements the ReAct
+(Reasoning + Acting) pattern for autonomous task execution.
+
+The agent follows this loop:
+1. Perceive: Understand user intent and current state
+2. Plan: Decide what action to take next
+3. Act: Execute the selected tool
+4. Observe: Process the tool result
+5. Evaluate: Determine if task is complete
+
+The agent supports:
+- Dynamic tool loading based on user intent
+- Human-in-the-loop for confirmations
+- State persistence via Redis
+- Error handling and retry logic
+"""
+
+import asyncio
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any
+
+import structlog
+
+from app.core.evaluator import Evaluator
+from app.core.human_in_loop import HumanInLoopHandler, UserInputResponse
+from app.core.memory import AgentMemory
+from app.core.planner import Planner
+from app.core.redis_client import get_redis
+from app.services.gemini_client import GeminiClient, GeminiError
+from app.tools.base import AgentTool, ToolExecutionError
+from app.tools.registry import ToolRegistry
+
+logger = structlog.get_logger(__name__)
+
+
+class AgentStatus(str, Enum):
+    """Agent execution status."""
+
+    IDLE = "idle"
+    THINKING = "thinking"
+    ACTING = "acting"
+    WAITING_FOR_USER = "waiting_for_user"
+    COMPLETED = "completed"
+    ERROR = "error"
+
+
+@dataclass
+class ToolCall:
+    """Represents a tool call in the execution history."""
+
+    tool_name: str
+    parameters: dict[str, Any]
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class AgentStep:
+    """Represents a single step in the agent's execution."""
+
+    step_number: int
+    thought: str  # Agent's reasoning
+    action: str | None = None  # Tool name to call
+    action_input: dict[str, Any] | None = None  # Tool parameters
+    observation: str | None = None  # Tool result
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class AgentState:
+    """Agent execution state.
+
+    This state is persisted to Redis and tracks the entire
+    execution history of a conversation.
+    """
+
+    # Identifiers
+    session_id: str
+    user_id: str
+    conversation_id: str | None = None
+
+    # Current request
+    user_message: str = ""
+    user_intent: str | None = None
+
+    # Execution state
+    status: AgentStatus = AgentStatus.IDLE
+    current_step: int = 0
+    max_steps: int = 10
+
+    # Execution history
+    steps: list[AgentStep] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+
+    # Loaded tools
+    loaded_tool_names: list[str] = field(default_factory=list)
+
+    # Human-in-the-loop
+    waiting_for_user_input: bool = False
+    user_input_request: dict[str, Any] | None = None
+
+    # Results
+    final_response: str | None = None
+    error_message: str | None = None
+
+    # Metadata
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert state to dictionary for serialization."""
+        return {
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "conversation_id": self.conversation_id,
+            "user_message": self.user_message,
+            "user_intent": self.user_intent,
+            "status": self.status.value,
+            "current_step": self.current_step,
+            "max_steps": self.max_steps,
+            "steps": [
+                {
+                    "step_number": step.step_number,
+                    "thought": step.thought,
+                    "action": step.action,
+                    "action_input": step.action_input,
+                    "observation": step.observation,
+                    "timestamp": step.timestamp.isoformat(),
+                }
+                for step in self.steps
+            ],
+            "tool_calls": [
+                {
+                    "tool_name": call.tool_name,
+                    "parameters": call.parameters,
+                    "result": call.result,
+                    "error": call.error,
+                    "timestamp": call.timestamp.isoformat(),
+                }
+                for call in self.tool_calls
+            ],
+            "loaded_tool_names": self.loaded_tool_names,
+            "waiting_for_user_input": self.waiting_for_user_input,
+            "user_input_request": self.user_input_request,
+            "final_response": self.final_response,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AgentState":
+        """Create state from dictionary."""
+        # Parse steps
+        steps = []
+        for step_data in data.get("steps", []):
+            steps.append(
+                AgentStep(
+                    step_number=step_data["step_number"],
+                    thought=step_data["thought"],
+                    action=step_data.get("action"),
+                    action_input=step_data.get("action_input"),
+                    observation=step_data.get("observation"),
+                    timestamp=datetime.fromisoformat(step_data["timestamp"]),
+                )
+            )
+
+        # Parse tool calls
+        tool_calls = []
+        for call_data in data.get("tool_calls", []):
+            tool_calls.append(
+                ToolCall(
+                    tool_name=call_data["tool_name"],
+                    parameters=call_data["parameters"],
+                    result=call_data.get("result"),
+                    error=call_data.get("error"),
+                    timestamp=datetime.fromisoformat(call_data["timestamp"]),
+                )
+            )
+
+        return cls(
+            session_id=data["session_id"],
+            user_id=data["user_id"],
+            conversation_id=data.get("conversation_id"),
+            user_message=data.get("user_message", ""),
+            user_intent=data.get("user_intent"),
+            status=AgentStatus(data.get("status", "idle")),
+            current_step=data.get("current_step", 0),
+            max_steps=data.get("max_steps", 10),
+            steps=steps,
+            tool_calls=tool_calls,
+            loaded_tool_names=data.get("loaded_tool_names", []),
+            waiting_for_user_input=data.get("waiting_for_user_input", False),
+            user_input_request=data.get("user_input_request"),
+            final_response=data.get("final_response"),
+            error_message=data.get("error_message"),
+            created_at=datetime.fromisoformat(data["created_at"]),
+            updated_at=datetime.fromisoformat(data["updated_at"]),
+        )
+
+
+@dataclass
+class AgentResponse:
+    """Response from the agent."""
+
+    status: AgentStatus
+    message: str | None = None
+    data: dict[str, Any] | None = None
+    requires_user_input: bool = False
+    user_input_request: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class ReActAgent:
+    """ReAct Agent for autonomous task execution.
+
+    The agent implements the ReAct (Reasoning + Acting) pattern:
+    - Perceive: Understand user intent
+    - Plan: Decide what to do next
+    - Act: Execute tools
+    - Observe: Process results
+    - Evaluate: Check if complete
+
+    Example:
+        agent = ReActAgent(
+            gemini_client=gemini_client,
+            tool_registry=tool_registry,
+        )
+
+        response = await agent.process_message(
+            user_message="Generate an ad image for my product",
+            user_id="user123",
+            session_id="session456",
+        )
+
+        if response.requires_user_input:
+            # Handle user input request
+            pass
+        elif response.status == AgentStatus.COMPLETED:
+            # Task completed
+            print(response.message)
+    """
+
+    def __init__(
+        self,
+        gemini_client: GeminiClient | None = None,
+        tool_registry: ToolRegistry | None = None,
+        planner: Planner | None = None,
+        memory: AgentMemory | None = None,
+        evaluator: Evaluator | None = None,
+        human_in_loop_handler: HumanInLoopHandler | None = None,
+        max_steps: int = 10,
+        state_ttl: int = 3600,  # 1 hour
+    ):
+        """Initialize the ReAct Agent.
+
+        Args:
+            gemini_client: Gemini client for LLM calls
+            tool_registry: Tool registry for tool lookup
+            planner: Planner for action planning
+            memory: Memory component for state persistence
+            evaluator: Evaluator for human-in-the-loop decisions
+            human_in_loop_handler: Handler for user input requests
+            max_steps: Maximum execution steps before stopping
+            state_ttl: State TTL in Redis (seconds)
+        """
+        self.gemini_client = gemini_client or GeminiClient()
+        self.tool_registry = tool_registry
+        self.planner = planner or Planner(gemini_client=self.gemini_client)
+        self.memory = memory or AgentMemory(state_ttl=state_ttl)
+        self.evaluator = evaluator or Evaluator(gemini_client=self.gemini_client)
+        self.human_in_loop_handler = human_in_loop_handler or HumanInLoopHandler()
+        self.max_steps = max_steps
+        self.state_ttl = state_ttl
+
+        logger.info(
+            "react_agent_initialized",
+            max_steps=max_steps,
+            state_ttl=state_ttl,
+        )
+
+    async def process_message(
+        self,
+        user_message: str,
+        user_id: str,
+        session_id: str,
+        conversation_id: str | None = None,
+        loaded_tools: list[AgentTool] | None = None,
+    ) -> AgentResponse:
+        """Process a user message and execute the ReAct loop.
+
+        Args:
+            user_message: User's message
+            user_id: User ID
+            session_id: Session ID
+            conversation_id: Optional conversation ID
+            loaded_tools: Optional pre-loaded tools (if None, will load all)
+
+        Returns:
+            AgentResponse with execution result
+        """
+        log = logger.bind(
+            user_id=user_id,
+            session_id=session_id,
+            conversation_id=conversation_id,
+        )
+        log.info("process_message_start", message_length=len(user_message))
+
+        try:
+            # Initialize or load state
+            state = await self._get_or_create_state(
+                user_message=user_message,
+                user_id=user_id,
+                session_id=session_id,
+                conversation_id=conversation_id,
+            )
+
+            # Store loaded tools
+            if loaded_tools:
+                state.loaded_tool_names = [tool.name for tool in loaded_tools]
+
+            # Add user message to conversation history
+            await self.memory.add_message(
+                session_id=session_id,
+                role="user",
+                content=user_message,
+            )
+
+            # Execute ReAct loop
+            response = await self._react_loop(state, loaded_tools)
+
+            # Add assistant response to conversation history
+            if response.message:
+                await self.memory.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=response.message,
+                    metadata={"status": response.status.value},
+                )
+
+            # Save state
+            await self._save_state(state)
+
+            log.info(
+                "process_message_complete",
+                status=response.status.value,
+                steps=state.current_step,
+            )
+
+            return response
+
+        except Exception as e:
+            log.error("process_message_error", error=str(e), exc_info=True)
+            return AgentResponse(
+                status=AgentStatus.ERROR,
+                error=str(e),
+                message="An error occurred while processing your request",
+            )
+
+    async def continue_with_user_input(
+        self,
+        session_id: str,
+        user_input: str | dict[str, Any],
+    ) -> AgentResponse:
+        """Continue execution after receiving user input.
+
+        Args:
+            session_id: Session ID
+            user_input: User's input (text or structured data)
+
+        Returns:
+            AgentResponse with execution result
+        """
+        log = logger.bind(session_id=session_id)
+        log.info("continue_with_user_input")
+
+        try:
+            # Load state
+            state = await self._load_state(session_id)
+            if not state:
+                return AgentResponse(
+                    status=AgentStatus.ERROR,
+                    error="Session not found",
+                    message="Session expired or not found",
+                )
+
+            # Get the original request
+            if not state.user_input_request:
+                return AgentResponse(
+                    status=AgentStatus.ERROR,
+                    error="No pending input request",
+                    message="No input request found for this session",
+                )
+
+            # Process user response
+            from app.core.human_in_loop import UserInputRequest
+
+            original_request = UserInputRequest(
+                type=state.user_input_request["type"],
+                question=state.user_input_request["question"],
+                options=state.user_input_request.get("options"),
+                default_value=state.user_input_request.get("default_value"),
+                metadata=state.user_input_request.get("metadata"),
+            )
+
+            # Convert user_input to dict if it's a string
+            if isinstance(user_input, str):
+                user_input_dict = {"value": user_input}
+            else:
+                user_input_dict = user_input
+
+            user_response = self.human_in_loop_handler.process_user_response(
+                request=original_request,
+                user_input=user_input_dict,
+            )
+
+            log.info(
+                "user_response_processed",
+                cancelled=user_response.cancelled,
+                has_value=user_response.value is not None,
+            )
+
+            # Check if user cancelled
+            if user_response.cancelled:
+                state.status = AgentStatus.COMPLETED
+                state.final_response = "操作已取消"
+                state.waiting_for_user_input = False
+                state.user_input_request = None
+
+                await self._save_state(state)
+
+                return AgentResponse(
+                    status=AgentStatus.COMPLETED,
+                    message="操作已取消",
+                )
+
+            # Update state with user input
+            state.waiting_for_user_input = False
+            state.user_input_request = None
+
+            # Add user input as observation to last step
+            if state.steps:
+                last_step = state.steps[-1]
+                
+                # Format observation based on response type
+                if user_response.selected_option:
+                    observation = f"User selected: {user_response.selected_option['label']} ({user_response.value})"
+                else:
+                    observation = f"User input: {user_response.value}"
+                
+                last_step.observation = observation
+
+                # If user confirmed, update action_input with confirmed values
+                if original_request.metadata and "suggested_action" in original_request.metadata:
+                    suggested_action = original_request.metadata["suggested_action"]
+                    if user_response.value is True or user_response.value == "yes":
+                        # User confirmed, use suggested action
+                        last_step.action = suggested_action.get("action")
+                        last_step.action_input = suggested_action.get("parameters")
+                    else:
+                        # User provided custom value, update action_input
+                        if last_step.action_input:
+                            # Update the parameter that was being requested
+                            reason = original_request.metadata.get("reason", "")
+                            if ":" in reason:
+                                param_name = reason.split(":")[1]
+                                last_step.action_input[param_name] = user_response.value
+
+            # Add user input to conversation history
+            await self.memory.add_message(
+                session_id=session_id,
+                role="user",
+                content=str(user_response.value),
+                metadata={"type": "user_input_response"},
+            )
+
+            # Continue ReAct loop
+            response = await self._react_loop(state, None)
+
+            # Save state
+            await self._save_state(state)
+
+            return response
+
+        except Exception as e:
+            log.error("continue_with_user_input_error", error=str(e), exc_info=True)
+            return AgentResponse(
+                status=AgentStatus.ERROR,
+                error=str(e),
+                message="An error occurred while processing your input",
+            )
+
+    async def _react_loop(
+        self,
+        state: AgentState,
+        loaded_tools: list[AgentTool] | None,
+    ) -> AgentResponse:
+        """Execute the ReAct loop.
+
+        Args:
+            state: Agent state
+            loaded_tools: Loaded tools
+
+        Returns:
+            AgentResponse
+        """
+        log = logger.bind(session_id=state.session_id)
+
+        # Get tools
+        if loaded_tools is None:
+            if self.tool_registry:
+                loaded_tools = self.tool_registry.get_all_tools()
+            else:
+                loaded_tools = []
+
+        # Main loop
+        while state.current_step < state.max_steps:
+            state.current_step += 1
+            state.status = AgentStatus.THINKING
+
+            log.info("react_step_start", step=state.current_step)
+
+            try:
+                # Plan next action using Planner
+                execution_history = [
+                    {
+                        "thought": step.thought,
+                        "action": step.action,
+                        "action_input": step.action_input,
+                        "observation": step.observation,
+                    }
+                    for step in state.steps
+                ]
+
+                plan = await self.planner.plan_next_action(
+                    user_message=state.user_message,
+                    available_tools=loaded_tools,
+                    execution_history=execution_history,
+                    user_id=state.user_id,
+                )
+
+                # Create step with plan
+                step = AgentStep(
+                    step_number=state.current_step,
+                    thought=plan.thought,
+                    action=plan.action,
+                    action_input=plan.action_input,
+                )
+
+                state.steps.append(step)
+
+                log.info(
+                    "plan_generated",
+                    step=state.current_step,
+                    has_action=plan.action is not None,
+                    is_complete=plan.is_complete,
+                )
+
+                # Check if task is complete
+                if plan.is_complete:
+                    state.status = AgentStatus.COMPLETED
+                    state.final_response = plan.final_answer or "Task completed successfully"
+                    break
+
+                # If no action, something went wrong
+                if not plan.action:
+                    state.status = AgentStatus.COMPLETED
+                    state.final_response = plan.thought
+                    break
+
+                # Evaluate if human input is needed
+                evaluation = await self.evaluator.evaluate_plan(
+                    plan=plan,
+                    user_message=state.user_message,
+                    execution_history=execution_history,
+                    user_id=state.user_id,
+                )
+
+                log.info(
+                    "evaluation_complete",
+                    needs_human_input=evaluation.needs_human_input,
+                    confirmation_type=evaluation.confirmation_type.value if evaluation.needs_human_input else None,
+                )
+
+                # If human input is needed, pause and wait
+                if evaluation.needs_human_input:
+                    state.status = AgentStatus.WAITING_FOR_USER
+                    state.waiting_for_user_input = True
+
+                    # Create user input request
+                    user_input_request = self.human_in_loop_handler.create_request_from_evaluation(
+                        evaluation=evaluation
+                    )
+                    state.user_input_request = user_input_request.to_dict()
+
+                    # Save state and return
+                    await self._save_state(state)
+
+                    log.info(
+                        "waiting_for_user_input",
+                        request_type=user_input_request.type.value,
+                    )
+
+                    return AgentResponse(
+                        status=AgentStatus.WAITING_FOR_USER,
+                        message=user_input_request.question,
+                        requires_user_input=True,
+                        user_input_request=user_input_request.to_dict(),
+                    )
+
+                # Execute action
+                state.status = AgentStatus.ACTING
+
+                try:
+                    tool_result = await self._execute_tool(
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        available_tools=loaded_tools,
+                        user_id=state.user_id,
+                    )
+
+                    # Record tool call
+                    tool_call = ToolCall(
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        result=tool_result,
+                    )
+                    state.tool_calls.append(tool_call)
+
+                    # Save tool result to memory
+                    await self.memory.save_tool_result(
+                        session_id=state.session_id,
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        result=tool_result,
+                    )
+
+                    # Add observation
+                    step.observation = self._format_tool_result(tool_result)
+
+                    log.info(
+                        "tool_executed",
+                        tool_name=plan.action,
+                        success=tool_result.get("success", False),
+                    )
+
+                except ToolExecutionError as e:
+                    # Record failed tool call
+                    tool_call = ToolCall(
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        error=str(e),
+                    )
+                    state.tool_calls.append(tool_call)
+
+                    # Save error to memory
+                    await self.memory.save_tool_result(
+                        session_id=state.session_id,
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        error=str(e),
+                    )
+
+                    # Add error observation
+                    step.observation = f"Tool execution failed: {e.message}"
+
+                    log.error(
+                        "tool_execution_failed",
+                        tool_name=plan.action,
+                        error=str(e),
+                    )
+
+                except Exception as e:
+                    # Unexpected error
+                    step.observation = f"Unexpected error: {str(e)}"
+                    log.error(
+                        "tool_execution_error",
+                        tool_name=plan.action,
+                        error=str(e),
+                        exc_info=True,
+                    )
+
+                # Check if we should stop
+                if state.current_step >= state.max_steps:
+                    state.status = AgentStatus.COMPLETED
+                    state.final_response = "Maximum steps reached. Task may be incomplete."
+                    break
+
+            except GeminiError as e:
+                log.error("planning_error", error=str(e), step=state.current_step)
+                state.status = AgentStatus.ERROR
+                state.error_message = f"Planning failed: {e.message}"
+                break
+
+            except Exception as e:
+                log.error(
+                    "react_step_error",
+                    error=str(e),
+                    step=state.current_step,
+                    exc_info=True,
+                )
+                state.status = AgentStatus.ERROR
+                state.error_message = f"Execution error: {str(e)}"
+                break
+
+        return AgentResponse(
+            status=state.status,
+            message=state.final_response or state.error_message,
+            data={"steps": len(state.steps)},
+            error=state.error_message,
+        )
+
+    async def _get_or_create_state(
+        self,
+        user_message: str,
+        user_id: str,
+        session_id: str,
+        conversation_id: str | None,
+    ) -> AgentState:
+        """Get existing state or create new one.
+
+        Args:
+            user_message: User message
+            user_id: User ID
+            session_id: Session ID
+            conversation_id: Conversation ID
+
+        Returns:
+            AgentState
+        """
+        # Try to load existing state
+        state = await self._load_state(session_id)
+
+        if state:
+            # Update with new message
+            state.user_message = user_message
+            state.updated_at = datetime.utcnow()
+            return state
+
+        # Create new state
+        return AgentState(
+            session_id=session_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message=user_message,
+            max_steps=self.max_steps,
+        )
+
+    async def _load_state(self, session_id: str) -> AgentState | None:
+        """Load state from Redis.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            AgentState or None if not found
+        """
+        try:
+            redis = await get_redis()
+            key = f"agent:state:{session_id}"
+
+            data = await redis.get(key)
+            if not data:
+                return None
+
+            import json
+
+            state_dict = json.loads(data)
+            return AgentState.from_dict(state_dict)
+
+        except Exception as e:
+            logger.error("load_state_error", session_id=session_id, error=str(e))
+            return None
+
+    async def _save_state(self, state: AgentState) -> None:
+        """Save state to Redis.
+
+        Args:
+            state: Agent state
+        """
+        try:
+            redis = await get_redis()
+            key = f"agent:state:{state.session_id}"
+
+            state.updated_at = datetime.utcnow()
+
+            import json
+
+            data = json.dumps(state.to_dict(), ensure_ascii=False)
+            await redis.set(key, data, ex=self.state_ttl)
+
+            logger.debug("state_saved", session_id=state.session_id)
+
+        except Exception as e:
+            logger.error(
+                "save_state_error",
+                session_id=state.session_id,
+                error=str(e),
+            )
+
+    async def get_state(self, session_id: str) -> AgentState | None:
+        """Get current agent state for a session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            AgentState or None if not found
+        """
+        return await self._load_state(session_id)
+
+    async def clear_state(self, session_id: str) -> bool:
+        """Clear agent state for a session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            True if cleared successfully
+        """
+        try:
+            redis = await get_redis()
+            key = f"agent:state:{session_id}"
+            await redis.delete(key)
+            logger.info("state_cleared", session_id=session_id)
+            return True
+        except Exception as e:
+            logger.error("clear_state_error", session_id=session_id, error=str(e))
+            return False
+
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        parameters: dict[str, Any],
+        available_tools: list[AgentTool],
+        user_id: str,
+    ) -> dict[str, Any]:
+        """Execute a tool.
+
+        Args:
+            tool_name: Name of the tool to execute
+            parameters: Tool parameters
+            available_tools: List of available tools
+            user_id: User ID for context
+
+        Returns:
+            Tool execution result
+
+        Raises:
+            ToolExecutionError: If tool execution fails
+        """
+        log = logger.bind(tool_name=tool_name, user_id=user_id)
+        log.info("execute_tool_start")
+
+        # Find tool
+        tool = None
+        for t in available_tools:
+            if t.name == tool_name:
+                tool = t
+                break
+
+        if not tool:
+            raise ToolExecutionError(
+                message=f"Tool '{tool_name}' not found",
+                tool_name=tool_name,
+                error_code="TOOL_NOT_FOUND",
+            )
+
+        # Execute tool
+        try:
+            context = {"user_id": user_id}
+            result = await tool.execute(parameters=parameters, context=context)
+
+            log.info("execute_tool_complete", success=result.get("success", False))
+
+            return result
+
+        except ToolExecutionError:
+            raise
+
+        except Exception as e:
+            log.error("execute_tool_error", error=str(e), exc_info=True)
+            raise ToolExecutionError(
+                message=f"Tool execution failed: {str(e)}",
+                tool_name=tool_name,
+                error_code="EXECUTION_ERROR",
+            )
+
+    def _format_tool_result(self, result: dict[str, Any]) -> str:
+        """Format tool result as observation text.
+
+        Args:
+            result: Tool result dictionary
+
+        Returns:
+            Formatted observation text
+        """
+        if not result:
+            return "Tool returned no result"
+
+        # Check for success
+        success = result.get("success", False)
+        message = result.get("message", "")
+
+        if success:
+            observation = f"Success: {message}"
+
+            # Add key data points
+            if "data" in result:
+                data = result["data"]
+                if isinstance(data, dict):
+                    key_points = []
+                    for key, value in list(data.items())[:5]:  # First 5 items
+                        key_points.append(f"{key}: {value}")
+                    if key_points:
+                        observation += f"\nData: {', '.join(key_points)}"
+
+            return observation
+        else:
+            error = result.get("error", "Unknown error")
+            return f"Failed: {message or error}"

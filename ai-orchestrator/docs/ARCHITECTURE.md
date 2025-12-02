@@ -1,445 +1,245 @@
-# AI Orchestrator 架构设计
-
-> **注意**：本文档已整合到主需求文档中。
-> 请参阅：[`.kiro/specs/ai-orchestrator/implementation.md`](../../.kiro/specs/ai-orchestrator/implementation.md)
+# AI Orchestrator Architecture v3.0
 
 ## 概述
 
-本文档描述 AI Orchestrator 的架构设计，采用 Planning + Multi-step Execution 模式，支持复杂任务分解和多步骤执行。
+v3.0 架构采用 **Agents-as-Tools** 模式，利用 Gemini 3 Pro 的原生能力简化整体流程：
 
-## 核心能力
+- **原生图片生成**：直接使用 Gemini 的 `responseModalities=["TEXT", "IMAGE"]`
+- **原生视频生成**：使用 Veo 3.1 API
+- **Function Calling**：将 Sub-Agents 暴露为可调用函数
+- **简化的 Graph**：从多节点流程简化为单一 Orchestrator 节点
 
-| # | 能力 | 状态 | 核心价值 | 实现方案 |
-|---|------|------|----------|----------|
-| 1 | **统一 Tool 抽象层** | ✅ 完成 | 代码复用，易于扩展 | Tool Registry |
-| 2 | **Planning 能力** | ✅ 完成 | 复杂任务分解，多步骤规划 | Planner Node |
-| 3 | **多轮循环执行** | ✅ 完成 | ReAct 模式，动态调整 | Executor + Analyzer 循环 |
-| 4 | **网页抓取增强** | ✅ 完成 | 竞品分析，数据采集 | Web Scraper Tool |
-| 5 | **长期记忆** | 📋 计划中 | 用户画像，个性化服务 | Mem0 SDK |
-| 6 | **MCP Hub** | 📋 计划中 | 外部工具集成，生态扩展 | MCP Client Hub |
-
-## 整体架构
+## 架构图
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              AI Orchestrator                                     │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                 │
-│  ┌───────────────────────────────────────────────────────────────────────────┐ │
-│  │                        LangGraph State Machine                             │ │
-│  │                                                                            │ │
-│  │   [START]                                                                  │ │
-│  │      │                                                                     │ │
-│  │      ▼                                                                     │ │
-│  │   router ──────┬──────► planner ──► executor ◄───┐                        │ │
-│  │                │              │          │        │                        │ │
-│  │                │              │          ▼        │ (continue)             │ │
-│  │                │              │      analyzer ────┤                        │ │
-│  │                │              │          │        │                        │ │
-│  │                │              └──────────┘        │                        │ │
-│  │                │             (replan)             │                        │ │
-│  │                │                                                           │ │
-│  │                └──► respond ──► persist ──► [END]                         │ │
-│  │                                                                            │ │
-│  └───────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                         │
-│                                      ▼                                         │
-│  ┌───────────────────────────────────────────────────────────────────────────┐ │
-│  │                         Unified Tool Layer                                 │ │
-│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐         │ │
-│  │  │  Tool       │ │  Reporting  │ │  Creative   │ │   Web       │         │ │
-│  │  │  Registry   │ │   Tools     │ │   Tools     │ │  Scraper    │         │ │
-│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘         │ │
-│  └───────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                 │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                       │
-          ┌────────────────────────────┼────────────────────────────┐
-          ▼                            ▼                            ▼
-   ┌─────────────┐              ┌─────────────┐              ┌─────────────┐
-   │   Backend   │              │   Gemini    │              │    Web      │
-   │ MCP Server  │              │     LLM     │              │  Sources    │
-   │  (HTTP)     │              │             │              │ (Scraping)  │
-   └─────────────┘              └─────────────┘              └─────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Gemini 3 Pro (主 Agent)                       │
+│                                                                  │
+│  原生能力：                                                       │
+│  ├── 对话理解与推理                                               │
+│  ├── 图片生成 (gemini-2.5-flash-image / gemini-3-pro-image)      │
+│  ├── 视频生成 (Veo 3.1)                                          │
+│  └── 复杂推理 (thinking_level=high)                              │
+│                                                                  │
+│  Function Calling (Sub-Agents)：                                 │
+│  ├── creative_agent()      - 素材生成、保存                       │
+│  ├── performance_agent()   - 报表、分析、建议                     │
+│  ├── market_agent()        - 竞品分析、市场趋势                   │
+│  ├── landing_page_agent()  - 落地页生成                          │
+│  └── campaign_agent()      - 广告投放自动化                       │
+└────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    Backend (MCP Protocol)
 ```
 
-## 执行流程
+## 核心组件
 
-### 1. 简单任务流程
+### 1. Gemini 3 Client (`app/services/gemini3_client.py`)
 
-```
-用户: "看看我上周的广告数据"
-
-[router] → 识别意图: analyze_report
-    ↓
-[planner] → 生成计划: 1 步骤 (get_ad_performance)
-           → 自动确认 (简单任务)
-    ↓
-[executor] → 执行 get_ad_performance
-    ↓
-[analyzer] → 决策: respond (执行完成)
-    ↓
-[respond] → 生成响应
-    ↓
-[persist] → 保存对话
-```
-
-### 2. 复杂任务流程
-
-```
-用户: "分析表现差的广告，然后帮我生成替代素材"
-
-[router] → 识别意图: multi_step
-    ↓
-[planner] → 生成计划: 2 步骤
-           → 1. get_ad_performance (获取数据)
-           → 2. generate_creative (依赖步骤 1)
-           → 计划已确认 (成本 < 10 credits)
-    ↓
-[executor] → 执行步骤 1: get_ad_performance
-    ↓
-[analyzer] → 决策: continue (还有步骤)
-    ↓
-[executor] → 执行步骤 2: generate_creative
-           → 参数解析: $step_1.data → 使用步骤 1 的结果
-    ↓
-[analyzer] → 决策: respond (执行完成)
-    ↓
-[respond] → 生成响应 (包含执行摘要)
-    ↓
-[persist] → 保存对话
-```
-
-### 3. 高成本任务需确认
-
-```
-用户: "帮我批量生成 20 张素材"
-
-[router] → 识别意图: generate_creative
-    ↓
-[planner] → 生成计划: 1 步骤
-           → 预估成本: 10 credits (> 阈值)
-           → 需要用户确认
-    ↓
-[respond] → 展示计划，等待确认
-    ↓
-[END] → 暂停，等待用户输入
-
-用户: "确认"
-
-[planner] → 标记 plan_confirmed = True
-    ↓
-[executor] → 执行生成任务
-    ↓
-...
-```
-
-## 目录结构
-
-```
-ai-orchestrator/
-├── app/
-│   ├── api/                          # API 端点
-│   │   ├── chat.py                   # 聊天流式接口
-│   │   └── health.py
-│   │
-│   ├── core/                         # 核心配置
-│   │   ├── config.py                 # 配置管理
-│   │   ├── graph.py                  # LangGraph 构建
-│   │   ├── state.py                  # AgentState 定义
-│   │   ├── models.py                 # 核心数据模型
-│   │   └── routing.py                # 路由逻辑
-│   │
-│   ├── nodes/                        # LangGraph 节点
-│   │   ├── router.py                 # 意图路由
-│   │   ├── planner.py                # 任务规划
-│   │   ├── executor.py               # 统一执行器
-│   │   ├── analyzer.py               # 结果分析
-│   │   ├── respond.py                # 响应生成
-│   │   └── persist.py                # 对话持久化
-│   │
-│   ├── tools/                        # 统一工具层
-│   │   ├── __init__.py
-│   │   ├── base.py                   # 工具基类定义
-│   │   ├── registry.py               # 工具注册中心
-│   │   ├── setup.py                  # 工具注册启动
-│   │   │
-│   │   ├── creative/                 # 素材相关工具
-│   │   │   └── generate_creative.py
-│   │   │
-│   │   ├── reporting/                # 报表相关工具
-│   │   │   └── get_ad_performance.py
-│   │   │
-│   │   ├── campaign/                 # 广告投放工具 (TODO)
-│   │   │
-│   │   ├── market/                   # 市场洞察工具 (TODO)
-│   │   │
-│   │   └── web/                      # 网页抓取工具
-│   │       └── web_scraper.py
-│   │
-│   ├── services/                     # 外部服务客户端
-│   │   ├── gemini_client.py          # Gemini API
-│   │   ├── credit_client.py          # Credit 管理
-│   │   ├── gcs_client.py             # Google Cloud Storage
-│   │   └── mcp_client.py             # 后端 MCP 调用
-│   │
-│   └── main.py                       # FastAPI 入口
-│
-├── docs/
-│   └── ARCHITECTURE.md               # 本文档
-│
-└── tests/
-    ├── tools/                        # 工具测试
-    └── integration/                  # 集成测试
-```
-
-## 核心数据结构
-
-### AgentState
+统一的 Gemini 3 客户端，支持：
 
 ```python
-class AgentState(TypedDict, total=False):
-    # === 消息 ===
-    messages: Annotated[list[BaseMessage], operator.add]
-    user_id: str
-    session_id: str
+from app.services.gemini3_client import get_gemini3_client
 
-    # === 意图识别 ===
-    current_intent: str | None
-    extracted_params: dict[str, Any] | None
+client = get_gemini3_client()
 
-    # === 执行计划 ===
-    execution_plan: dict[str, Any] | None  # ExecutionPlan
-    current_step_index: int
-    step_results: list[dict[str, Any]]     # List[StepResult]
-    plan_confirmed: bool
-    execution_complete: bool
+# 文本对话
+response = await client.chat(messages=[...])
 
-    # === 分析决策 ===
-    analyzer_decision: str | None  # "continue" | "respond" | "replan"
-    replan_suggestion: str | None
+# 原生图片生成
+image_bytes = await client.generate_image(
+    prompt="专业广告图片",
+    aspect_ratio=AspectRatio.SQUARE,
+    image_size=ImageSize.SIZE_2K,
+)
 
-    # === Credit 管理 ===
-    credit_checked: bool
-    credit_sufficient: bool
-    estimated_cost: float | None
+# 视频生成
+result = await client.generate_video(
+    prompt="产品展示视频",
+    duration=4,
+)
 
-    # === 错误处理 ===
-    error: ErrorInfo | None
-    retry_count: int
-
-    # === 上下文 ===
-    memory_context: dict[str, Any] | None
-    context_references: dict[str, Any] | None
+# Function Calling
+result = await client.chat_with_tools(
+    messages=[...],
+    tools=[creative_agent_tool, performance_agent_tool, ...],
+    tool_handlers={...},
+)
 ```
 
-### 核心模型
+**模型配置**：
+
+| 用途 | 模型名 | 说明 |
+|-----|-------|------|
+| 对话/推理 | `gemini-3-pro-preview` | 支持 function calling 和 thinking mode |
+| 图片生成 | `gemini-2.5-flash-image` | 快速图片生成 |
+| 高质量图片 | `gemini-3-pro-image-preview` | 4K 分辨率 |
+| 视频生成 | `veo-3.1-generate-preview` | 4-8 秒视频 |
+| 快速视频 | `veo-3.1-fast-generate-preview` | 快速生成 |
+
+### 2. Sub-Agents (`app/agents/`)
+
+每个 Agent 继承 `BaseAgent`，实现 `execute` 方法：
 
 ```python
-# === Planning ===
-class ExecutionStep(BaseModel):
-    """执行步骤"""
-    step_id: int                       # 步骤 ID (1-indexed)
-    action: str                        # 动作描述
-    tool: str                          # 工具名称
-    tool_params: dict[str, Any]        # 工具参数
-    depends_on: list[int] = []         # 依赖的步骤 ID
-    reason: str                        # 执行原因
-    estimated_cost: float = 0          # 预估 credit
+class CreativeAgent(BaseAgent):
+    name = "creative_agent"
+    description = "生成广告素材..."
 
-class ExecutionPlan(BaseModel):
-    """执行计划"""
-    goal: str                          # 用户目标
-    complexity: Literal["simple", "moderate", "complex"]
-    steps: list[ExecutionStep]
-    estimated_total_credits: float
-    requires_confirmation: bool
-
-class StepResult(BaseModel):
-    """步骤执行结果"""
-    step_id: int
-    tool: str
-    success: bool
-    data: Any = None
-    error: str | None = None
-    credit_consumed: float = 0
-
-
-# === Tools ===
-class ToolCategory(str, Enum):
-    DATA = "data"           # 数据获取类
-    ANALYSIS = "analysis"   # 分析类
-    CREATIVE = "creative"   # 创意生成类
-    ACTION = "action"       # 执行操作类
-    MARKET = "market"       # 市场洞察类
-    WEB = "web"             # 网页抓取类
-    UTILITY = "utility"     # 工具类
-
-class ToolDefinition(BaseModel):
-    """工具定义元数据"""
-    name: str
-    description: str
-    category: ToolCategory
-    risk_level: ToolRiskLevel = ToolRiskLevel.LOW
-    credit_cost: float = 0
-    requires_confirmation: bool = False
-    parameters: dict[str, Any]  # JSON Schema
-    returns: dict[str, Any]     # JSON Schema
-
-class ToolContext(BaseModel):
-    """工具执行上下文"""
-    user_id: str
-    session_id: str
-    previous_results: dict[int, Any] = {}
-    memory_context: dict[str, Any] | None = None
-```
-
-## 工具层
-
-### Tool 基类
-
-```python
-class BaseTool(ABC, Generic[InputT, OutputT]):
-    """工具基类"""
-    definition: ToolDefinition
-
-    @abstractmethod
     async def execute(
-        self, params: InputT, context: ToolContext
-    ) -> ToolResult:
-        """执行工具"""
-        pass
-
-    def validate_params(self, params: dict) -> InputT:
-        """参数验证"""
-        pass
-
-    def estimate_cost(self, params: InputT) -> float:
-        """估算成本"""
-        return self.definition.credit_cost
+        self,
+        action: str,
+        params: dict,
+        context: AgentContext,
+    ) -> AgentResult:
+        if action == "generate_image":
+            return await self._generate_image(params, context)
+        elif action == "generate_video":
+            return await self._generate_video(params, context)
+        ...
 ```
 
-### 工具注册
+**可用 Agents**：
+
+| Agent | 功能 |
+|-------|------|
+| `creative_agent` | 图片/视频生成、素材保存 |
+| `performance_agent` | 报表、分析、异常检测、优化建议 |
+| `market_agent` | 竞品分析、市场趋势、策略生成 |
+| `landing_page_agent` | 落地页生成、翻译、A/B 测试 |
+| `campaign_agent` | 创建广告、预算调整、暂停/恢复 |
+
+### 3. Orchestrator (`app/core/orchestrator.py`)
+
+主协调器，接收用户消息并调用 Sub-Agents：
 
 ```python
-# app/tools/setup.py
-def register_all_tools() -> None:
-    """注册所有工具到全局 Registry"""
-    registry = get_tool_registry()
+from app.core.orchestrator import get_orchestrator
 
-    # Reporting Tools
-    from app.tools.reporting.get_ad_performance import GetAdPerformanceTool
-    registry.register(GetAdPerformanceTool())
+orchestrator = get_orchestrator()
 
-    # Creative Tools
-    from app.tools.creative.generate_creative import GenerateCreativeTool
-    registry.register(GenerateCreativeTool())
+# 处理消息
+result = await orchestrator.process_message(
+    user_id="user123",
+    session_id="session456",
+    message="帮我生成 4 张广告图片",
+)
 
-    # Web Tools
-    from app.tools.web.web_scraper import WebScrapeTool
-    registry.register(WebScrapeTool())
+# 流式响应
+async for event in orchestrator.stream_message(...):
+    print(event)
 ```
 
-### 参数引用语法
+### 4. LangGraph v3 (`app/core/graph_v3.py`)
 
-执行器支持在工具参数中引用前序步骤的结果：
+简化的状态图：
 
-```python
-# 引用语法
-"$step_1"           # 整个步骤 1 的结果
-"$step_1.data"      # 步骤 1 结果的 data 字段
-"$step_1.data.records"  # 嵌套字段访问
-"$step_1.data.0.name"   # 数组索引访问
+```
+[START] → orchestrator → persist → [END]
+```
 
-# 示例计划
+所有复杂逻辑都在 `orchestrator` 节点内通过 Gemini function calling 处理。
+
+## API 端点
+
+### v3 Chat API
+
+```
+POST /api/v1/chat/v3
+```
+
+请求：
+```json
 {
-    "steps": [
-        {
-            "step_id": 1,
-            "tool": "get_ad_performance",
-            "tool_params": {"date_range": "last_7_days"}
-        },
-        {
-            "step_id": 2,
-            "tool": "generate_creative",
-            "tool_params": {
-                "product_info": "$step_1.data.top_products",  # 引用步骤 1 结果
-                "count": 4
-            },
-            "depends_on": [1]
-        }
-    ]
+  "content": "帮我生成 4 张广告图片",
+  "user_id": "user123",
+  "session_id": "session456",
+  "history": []
 }
 ```
 
-## 路由逻辑
-
-```python
-# Router → Planner/Respond
-def route_after_router(state):
-    if state.get("error"):
-        return "respond"
-    if state.get("current_intent") in ["clarification_needed", "general_query"]:
-        return "respond"
-    return "planner"
-
-# Planner → Executor/Wait/Respond
-def route_after_planner(state):
-    if state.get("error"):
-        return "respond"
-    if not state.get("plan_confirmed"):
-        return "__end__"  # 等待用户确认
-    return "executor"
-
-# Executor → Analyzer/Respond
-def route_after_executor(state):
-    if state.get("error", {}).get("type") == "CRITICAL":
-        return "respond"
-    return "analyzer"
-
-# Analyzer → Executor/Planner/Respond (循环)
-def route_after_analyzer(state):
-    decision = state.get("analyzer_decision", "respond")
-    if state.get("execution_complete") or decision == "respond":
-        return "respond"
-    if decision == "continue":
-        return "executor"
-    if decision == "replan":
-        return "planner"
-    return "respond"
+响应：
+```json
+{
+  "response": "已生成 4 张素材...",
+  "success": true,
+  "session_id": "session456"
+}
 ```
+
+### 流式响应
+
+```
+POST /api/v1/chat/v3/stream
+```
+
+返回 Server-Sent Events：
+```
+data: {"type": "text", "content": "正在生成..."}
+data: {"type": "tool_call", "tool": "creative_agent", "args": {...}}
+data: {"type": "tool_result", "result": {...}}
+data: {"type": "done"}
+```
+
+### 列出 Agents
+
+```
+GET /api/v1/chat/v3/agents
+```
+
+## 与 v2 架构对比
+
+| 方面 | v2 (旧) | v3 (新) |
+|-----|---------|---------|
+| Graph 节点 | 6 个 (router→planner→executor→analyzer→respond→persist) | 2 个 (orchestrator→persist) |
+| 图片生成 | 通过 ImagenClient Tool | Gemini 原生能力 |
+| 路由逻辑 | LLM 意图识别 + 条件路由 | Gemini function calling |
+| 复杂度 | 高 | 低 |
+| 扩展性 | 需要修改 Graph | 添加新 Agent 即可 |
 
 ## 配置
 
-### 计划确认阈值
+`.env` 文件：
+```bash
+# 主模型
+GEMINI_MODEL_CHAT=gemini-3-pro-preview
 
-```python
-# planner.py
-CONFIRMATION_CREDIT_THRESHOLD = 10.0  # 预估成本超过 10 credits 需要确认
+# 图片生成
+GEMINI_MODEL_IMAGEN=gemini-2.5-flash-image
+GEMINI_MODEL_IMAGEN_PRO=gemini-3-pro-image-preview
+
+# 视频生成
+GEMINI_MODEL_VEO=veo-3.1-generate-preview
+GEMINI_MODEL_VEO_FAST=veo-3.1-fast-generate-preview
 ```
 
-### 复杂度判断
+## 添加新 Agent
 
-- **simple**: 单一明确任务，1-2 步骤
-- **moderate**: 需要分析或组合，2-4 步骤
-- **complex**: 复杂多步骤，4+ 步骤
+1. 创建 Agent 类：
+```python
+# app/agents/my_agent.py
+class MyAgent(BaseAgent):
+    name = "my_agent"
+    description = "..."
 
-## 未来扩展
+    async def execute(self, action, params, context):
+        ...
+```
 
-### 1. 长期记忆 (Mem0)
+2. 在 `app/agents/setup.py` 中注册：
+```python
+from app.agents.my_agent import get_my_agent
 
-- Memory Recall Node: 在 router 之前召回相关记忆
-- Memory Save Node: 在 persist 之后保存重要信息
-- 用户画像: 投放偏好、历史表现等
+def register_all_agents():
+    registry.register(get_my_agent())
+```
 
-### 2. MCP Hub
+3. Agent 会自动作为 Tool 暴露给 Gemini function calling。
 
-- 动态发现和连接外部 MCP Server
-- 工具自动注册到 Tool Registry
-- 支持 stdio/SSE/HTTP 传输
+## 参考文档
 
-## 参考资料
-
-- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
-- [Mem0 Documentation](https://docs.mem0.ai/)
-- [MCP Protocol Specification](https://spec.modelcontextprotocol.io/)
+- [Gemini 3 API](https://ai.google.dev/gemini-api/docs/gemini-3)
+- [Image Generation](https://ai.google.dev/gemini-api/docs/image-generation)
+- [Video Generation](https://ai.google.dev/gemini-api/docs/video)
+- [Function Calling](https://ai.google.dev/gemini-api/docs/function-calling)

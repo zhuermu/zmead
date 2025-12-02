@@ -5,7 +5,7 @@ import { useChat, type AgentStatus } from '@/hooks/useChat';
 import { MessageBubble } from './MessageBubble';
 import { GeneratedImageGallery } from './GeneratedImageGallery';
 import { useAuth } from '@/components/auth';
-import type { UIMessage } from 'ai';
+import type { Message } from '@/hooks/useChat';
 
 interface ChatAreaProps {
   sessionId: string | null;

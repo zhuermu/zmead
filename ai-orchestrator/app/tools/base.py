@@ -1,269 +1,184 @@
-"""Base classes for the unified tool layer.
+"""Base classes and interfaces for the 3-category Tools architecture.
 
-This module defines the core abstractions for tools:
-- ToolDefinition: Metadata about a tool (name, description, parameters, etc.)
-- ToolContext: Runtime context passed to tool execution
-- ToolResult: Standardized result from tool execution
-- BaseTool: Abstract base class for all tools
-
-All tools must inherit from BaseTool and implement the execute() method.
-
-Requirements: Architecture v2.0 - Unified Tool Layer
+This module defines the unified interface for all three types of tools:
+1. LangChain Tools - Built-in tools from LangChain framework
+2. Agent Custom Tools - Custom tools that can call LLMs
+3. MCP Server Tools - Backend API tools via MCP protocol
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, TypeVar
+from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
 
 class ToolCategory(str, Enum):
-    """Tool category for organization and filtering."""
+    """Tool category enumeration."""
 
-    DATA = "data"  # Data retrieval tools (get_ad_performance, etc.)
-    ANALYSIS = "analysis"  # Analysis tools (analyze_anomaly, etc.)
-    CREATIVE = "creative"  # Creative generation tools
-    ACTION = "action"  # Action tools (create_campaign, pause, etc.)
-    MARKET = "market"  # Market intelligence tools
-    WEB = "web"  # Web scraping tools
-    UTILITY = "utility"  # Utility tools
+    LANGCHAIN = "langchain"  # LangChain built-in tools
+    AGENT_CUSTOM = "agent_custom"  # Agent custom tools (can call LLMs)
+    MCP_SERVER = "mcp_server"  # MCP Server tools (backend API)
 
 
-class ToolRiskLevel(str, Enum):
-    """Risk level for tool operations."""
+class ToolParameter(BaseModel):
+    """Tool parameter definition.
 
-    LOW = "low"  # Read-only operations, no side effects
-    MEDIUM = "medium"  # Reversible operations (create, update)
-    HIGH = "high"  # Irreversible or high-impact operations (delete, pause_all)
-
-
-class ToolDefinition(BaseModel):
-    """Metadata definition for a tool.
-
-    This is used for:
-    - LLM tool calling (generating function descriptions)
-    - Tool discovery and filtering
-    - Credit estimation
-    - Confirmation requirements
-
-    Attributes:
-        name: Unique tool identifier
-        description: Human-readable description for LLM understanding
-        category: Tool category for organization
-        risk_level: Risk level for confirmation requirements
-        credit_cost: Base credit cost per execution
-        requires_confirmation: Whether user confirmation is needed
-        parameters: JSON Schema for input parameters
-        returns: JSON Schema for return value
+    Defines a single parameter for a tool, including its type,
+    description, and whether it's required.
     """
 
-    name: str = Field(description="Unique tool identifier")
-    description: str = Field(description="Tool description for LLM")
-    category: ToolCategory
-    risk_level: ToolRiskLevel = ToolRiskLevel.LOW
-    credit_cost: float = Field(default=0.0, description="Base credit cost")
-    requires_confirmation: bool = Field(default=False)
-    parameters: dict[str, Any] = Field(
-        default_factory=dict, description="Input JSON Schema"
+    name: str = Field(..., description="Parameter name")
+    type: str = Field(..., description="Parameter type (string, number, boolean, object, array)")
+    description: str = Field(..., description="Parameter description")
+    required: bool = Field(default=True, description="Whether parameter is required")
+    default: Any | None = Field(default=None, description="Default value if not required")
+    enum: list[str] | None = Field(default=None, description="Allowed values (for enum types)")
+
+
+class ToolMetadata(BaseModel):
+    """Tool metadata definition.
+
+    Contains all metadata about a tool including its name, description,
+    parameters, and category.
+    """
+
+    name: str = Field(..., description="Tool name (unique identifier)")
+    description: str = Field(..., description="Tool description for LLM")
+    category: ToolCategory = Field(..., description="Tool category")
+    parameters: list[ToolParameter] = Field(
+        default_factory=list,
+        description="Tool parameters",
     )
-    returns: dict[str, Any] = Field(
-        default_factory=dict, description="Output JSON Schema"
+    returns: str = Field(default="object", description="Return type description")
+    examples: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Example usage for LLM",
     )
 
-    def to_openai_function(self) -> dict[str, Any]:
-        """Convert to OpenAI function calling format.
+    # Additional metadata
+    credit_cost: float | None = Field(
+        default=None,
+        description="Credit cost for this tool (if applicable)",
+    )
+    requires_confirmation: bool = Field(
+        default=False,
+        description="Whether this tool requires user confirmation",
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Tags for categorization and search",
+    )
 
-        Returns:
-            Dict compatible with OpenAI's function calling schema
+
+class AgentTool(ABC):
+    """Base class for all agent tools.
+
+    This abstract base class defines the interface that all tools must implement,
+    regardless of their category (LangChain, Agent Custom, or MCP Server).
+
+    Attributes:
+        metadata: Tool metadata including name, description, parameters
+    """
+
+    def __init__(self, metadata: ToolMetadata):
+        """Initialize tool with metadata.
+
+        Args:
+            metadata: Tool metadata
         """
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-            },
-        }
+        self.metadata = metadata
 
+    @property
+    def name(self) -> str:
+        """Get tool name."""
+        return self.metadata.name
 
-class ToolContext(BaseModel):
-    """Runtime context for tool execution.
+    @property
+    def description(self) -> str:
+        """Get tool description."""
+        return self.metadata.description
 
-    Passed to every tool execution with user/session info
-    and results from previous steps.
-
-    Attributes:
-        user_id: Current user identifier
-        session_id: Current session identifier
-        previous_results: Results from previous steps (step_id -> result)
-        memory_context: Retrieved memory context for personalization
-        metadata: Additional metadata
-    """
-
-    user_id: str
-    session_id: str
-    previous_results: dict[int, Any] = Field(default_factory=dict)
-    memory_context: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ToolResult(BaseModel):
-    """Standardized result from tool execution.
-
-    All tools return this structure for consistent handling.
-
-    Attributes:
-        success: Whether execution succeeded
-        data: Result data (tool-specific)
-        error: Error message if failed
-        credit_consumed: Actual credits consumed
-        execution_time: Execution duration in seconds
-        metadata: Additional result metadata
-    """
-
-    success: bool
-    data: Any = None
-    error: str | None = None
-    credit_consumed: float = 0.0
-    execution_time: float = 0.0
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-    @classmethod
-    def success_result(
-        cls,
-        data: Any,
-        credit_consumed: float = 0.0,
-        execution_time: float = 0.0,
-        **metadata: Any,
-    ) -> "ToolResult":
-        """Create a successful result."""
-        return cls(
-            success=True,
-            data=data,
-            credit_consumed=credit_consumed,
-            execution_time=execution_time,
-            metadata=metadata,
-        )
-
-    @classmethod
-    def error_result(
-        cls,
-        error: str,
-        data: Any = None,
-        **metadata: Any,
-    ) -> "ToolResult":
-        """Create an error result."""
-        return cls(
-            success=False,
-            data=data,
-            error=error,
-            metadata=metadata,
-        )
-
-
-# Type variables for generic tool input/output
-InputT = TypeVar("InputT", bound=BaseModel)
-OutputT = TypeVar("OutputT", bound=BaseModel)
-
-
-class BaseTool(ABC, Generic[InputT, OutputT]):
-    """Abstract base class for all tools.
-
-    All tools must inherit from this class and implement:
-    - definition: Class attribute with ToolDefinition
-    - execute(): Async method that performs the tool's action
-
-    Optional overrides:
-    - estimate_cost(): Calculate credit cost based on parameters
-    - validate_params(): Custom parameter validation
-
-    Example:
-        class GenerateCreativeTool(BaseTool[GenerateCreativeInput, GenerateCreativeOutput]):
-            definition = ToolDefinition(
-                name="generate_creative",
-                description="Generate ad creative images",
-                category=ToolCategory.CREATIVE,
-                credit_cost=0.5,
-                parameters=GenerateCreativeInput.model_json_schema(),
-                returns=GenerateCreativeOutput.model_json_schema(),
-            )
-
-            async def execute(self, params: GenerateCreativeInput, context: ToolContext) -> ToolResult:
-                # Implementation
-                ...
-    """
-
-    # Subclasses must define this
-    definition: ToolDefinition
+    @property
+    def category(self) -> ToolCategory:
+        """Get tool category."""
+        return self.metadata.category
 
     @abstractmethod
-    async def execute(self, params: InputT, context: ToolContext) -> ToolResult:
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> Any:
         """Execute the tool with given parameters.
 
         Args:
-            params: Validated input parameters
-            context: Runtime context (user, session, previous results)
+            parameters: Tool parameters
+            context: Optional execution context (user_id, session_id, etc.)
 
         Returns:
-            ToolResult with success/error status and data
+            Tool execution result
+
+        Raises:
+            ToolExecutionError: If execution fails
         """
         pass
 
-    def estimate_cost(self, params: InputT) -> float:
-        """Estimate credit cost for given parameters.
+    def to_langchain_tool(self) -> Callable:
+        """Convert to LangChain tool format.
 
-        Override this for tools with variable cost (e.g., per-image pricing).
-
-        Args:
-            params: Input parameters
+        Returns a callable that can be used by LangChain agents.
 
         Returns:
-            Estimated credit cost
+            Callable function for LangChain
         """
-        return self.definition.credit_cost
+        async def tool_func(**kwargs) -> Any:
+            return await self.execute(kwargs)
 
-    def validate_params(self, params: dict[str, Any]) -> InputT:
-        """Validate and parse input parameters.
+        # Set function metadata for LangChain
+        tool_func.__name__ = self.name
+        tool_func.__doc__ = self.description
 
-        Override for custom validation logic.
+        return tool_func
 
-        Args:
-            params: Raw parameter dict
+    def to_dict(self) -> dict[str, Any]:
+        """Convert tool to dictionary representation.
 
         Returns:
-            Validated params as InputT model
-
-        Raises:
-            ValidationError: If validation fails
+            Dictionary with tool metadata
         """
-        # Get the input type from Generic annotation
-        # This is a simplified version - in practice you'd use get_args()
-        raise NotImplementedError(
-            "Subclasses should implement validate_params or use Pydantic directly"
-        )
+        return {
+            "name": self.name,
+            "description": self.description,
+            "category": self.category.value,
+            "parameters": [param.model_dump() for param in self.metadata.parameters],
+            "returns": self.metadata.returns,
+            "credit_cost": self.metadata.credit_cost,
+            "requires_confirmation": self.metadata.requires_confirmation,
+            "tags": self.metadata.tags,
+        }
 
-    def requires_confirmation_for(self, params: InputT) -> bool:
-        """Check if this specific call requires confirmation.
 
-        Override for dynamic confirmation (e.g., large budget changes).
+class ToolExecutionError(Exception):
+    """Exception raised when tool execution fails."""
+
+    def __init__(
+        self,
+        message: str,
+        tool_name: str,
+        error_code: str | None = None,
+        details: dict[str, Any] | None = None,
+    ):
+        """Initialize tool execution error.
 
         Args:
-            params: Input parameters
-
-        Returns:
-            True if confirmation is required
+            message: Error message
+            tool_name: Name of the tool that failed
+            error_code: Optional error code
+            details: Optional error details
         """
-        return self.definition.requires_confirmation
-
-    def get_name(self) -> str:
-        """Get tool name."""
-        return self.definition.name
-
-    def get_description(self) -> str:
-        """Get tool description."""
-        return self.definition.description
-
-    def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}(name={self.definition.name})>"
+        super().__init__(message)
+        self.message = message
+        self.tool_name = tool_name
+        self.error_code = error_code
+        self.details = details or {}

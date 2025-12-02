@@ -1,10 +1,8 @@
 'use client';
 
-import { useChat as useVercelChat } from '@ai-sdk/react';
+import { useChat } from '@/hooks/useChat';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChatStore } from '@/lib/store';
-
-const MESSAGE_TIMEOUT = 60000; // 60 seconds
 
 export function useSessionChat(sessionId: string | null) {
   const {
@@ -13,32 +11,26 @@ export function useSessionChat(sessionId: string | null) {
     getCurrentSession,
   } = useChatStore();
 
-  const [isTimeout, setIsTimeout] = useState(false);
-  const [localInput, setLocalInput] = useState('');
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const initializedRef = useRef(false);
 
   // Get current session messages
   const currentSession = sessions.find((s) => s.id === sessionId);
   const sessionMessages = currentSession?.messages || [];
 
-  const chatHelpers = useVercelChat({
-    id: sessionId || 'default-chat',
-    api: '/api/chat',
-    initialMessages: [],
-  } as any);
+  const chatHelpers = useChat();
 
   const {
     messages,
-    status,
+    isLoading,
     error,
-    regenerate,
+    retry: regenerate,
     stop,
-    sendMessage,
+    append: sendMessage,
     setMessages,
+    isTimeout,
+    input: localInput,
+    handleInputChange,
   } = chatHelpers;
-
-  const isLoading = status === 'streaming' || status === 'submitted';
 
   // Initialize messages from session when sessionId changes
   useEffect(() => {

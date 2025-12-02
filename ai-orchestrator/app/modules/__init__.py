@@ -1,10 +1,8 @@
 """
 AI Orchestrator functional modules.
+
+These modules provide implementation functions that are called directly
+by Agent Custom Tools (not through capability.py).
 """
 
-from .ad_performance.capability import AdPerformance
-from .ad_creative.capability import AdCreative
-from .campaign_automation.capability import CampaignAutomation
-from .market_insights.capability import MarketInsights
-
-__all__ = ["AdPerformance", "AdCreative", "CampaignAutomation", "MarketInsights"]
+__all__ = []

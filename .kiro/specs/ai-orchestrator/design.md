@@ -4,51 +4,85 @@
 
 AI Orchestrator 是 AAE 系统的核心智能助手，提供统一的对话入口。用户通过自然语言与系统交互，Orchestrator 负责理解意图、协调功能模块、管理对话上下文，并返回统一的响应。
 
-本设计基于 LangGraph 框架实现，采用状态机模式管理对话流程，通过 MCP 协议与 Web Platform 通信，支持流式响应和人工介入。
+本设计采用 **v3 简化架构**，基于 Gemini Function Calling 的 **Agents-as-Tools** 模式。相比 v2 的复杂多节点状态机，v3 使用 2 节点 LangGraph（orchestrator → persist），将意图识别、任务规划和 Agent 调用统一由 Gemini 处理，大幅简化了系统复杂度。
 
 ---
 
 ## 架构设计（Architecture）
 
-### 系统分层
+### v3 简化架构
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   AI Orchestrator                       │
-│                                                         │
-│  ┌───────────────────────────────────────────────┐    │
-│  │         FastAPI Application Layer             │    │
-│  │  - WebSocket Handler                          │    │
-│  │  - HTTP Streaming Handler                     │    │
-│  │  - Health Check Endpoints                     │    │
-│  └───────────────────────────────────────────────┘    │
-│                        │                               │
-│  ┌───────────────────────────────────────────────┐    │
-│  │         LangGraph Agent Layer                 │    │
-│  │  - State Machine (StateGraph)                 │    │
-│  │  - Router Node (Intent Recognition)           │    │
-│  │  - Functional Module Nodes                    │    │
-│  │  - Confirmation Node (Human-in-the-loop)      │    │
-│  │  - Response Generator Node                    │    │
-│  └───────────────────────────────────────────────┘    │
-│                        │                               │
-│  ┌───────────────────────────────────────────────┐    │
-│  │         Integration Layer                     │    │
-│  │  - MCP Client (Web Platform)                  │    │
-│  │  - LLM Client (Gemini)                        │    │
-│  │  - Redis Client (State Persistence)           │    │
-│  └───────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI Orchestrator (v3)                         │
+│                                                                  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                   FastAPI Application                      │  │
+│  │  - POST /api/v1/chat (streaming SSE)                      │  │
+│  │  - POST /api/v1/chat/sync (non-streaming)                 │  │
+│  │  - GET /health, /ready                                    │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│  ┌───────────────────────────▼───────────────────────────────┐  │
+│  │                   LangGraph (Simplified)                   │  │
+│  │                                                            │  │
+│  │    [START] → orchestrator → persist → [END]               │  │
+│  │                                                            │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│  ┌───────────────────────────▼───────────────────────────────┐  │
+│  │                   Orchestrator Node                        │  │
+│  │                                                            │  │
+│  │  Gemini 2.5 Pro + Function Calling                        │  │
+│  │  ├── Intent Understanding                                 │  │
+│  │  ├── Sub-Agent Invocation                                 │  │
+│  │  └── Response Generation                                  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│  ┌───────────────────────────▼───────────────────────────────┐  │
+│  │                   Sub-Agents (Function Tools)              │  │
+│  │                                                            │  │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐         │  │
+│  │  │ creative    │ │ performance │ │ market      │         │  │
+│  │  │ _agent      │ │ _agent      │ │ _agent      │         │  │
+│  │  └─────────────┘ └─────────────┘ └─────────────┘         │  │
+│  │                                                            │  │
+│  │  ┌─────────────┐ ┌─────────────┐                          │  │
+│  │  │ landing     │ │ campaign    │                          │  │
+│  │  │ _page_agent │ │ _agent      │                          │  │
+│  │  └─────────────┘ └─────────────┘                          │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│  ┌───────────────────────────▼───────────────────────────────┐  │
+│  │                   Integration Layer                        │  │
+│  │  - MCP Client (Web Platform)                              │  │
+│  │  - Gemini Client                                          │  │
+│  │  - Redis Client                                           │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 核心组件
 
-1. **FastAPI Application**: 处理 WebSocket 和 HTTP 请求
-2. **LangGraph State Machine**: 管理对话流程和状态转换
-3. **Intent Router**: 识别用户意图并路由到相应模块
-4. **Functional Modules**: 5 个能力模块（初期为 stub）
+1. **FastAPI Application**: 处理 HTTP 请求，提供 SSE 流式响应
+2. **Simplified LangGraph**: 2 节点流程（orchestrator → persist）
+3. **Orchestrator Node**: 使用 Gemini Function Calling 处理所有逻辑
+4. **Sub-Agents**: 5 个功能模块作为 Function Tools 暴露给 Gemini
 5. **MCP Client**: 与 Web Platform 通信
-6. **State Persistence**: Redis 存储对话状态和检查点
+6. **Redis Client**: 存储对话状态
+
+### v2 vs v3 对比
+
+| 方面 | v2 (已删除) | v3 (当前) |
+|------|-------------|-----------|
+| Graph 节点数 | 6 个 | 2 个 |
+| 路由逻辑 | 复杂条件边 + 多个路由函数 | Gemini Function Calling |
+| 意图识别 | 独立 router 节点 | Orchestrator 内部 |
+| 任务规划 | 独立 planner 节点 | Gemini 自动处理 |
+| 执行器 | 独立 executor 节点 | Sub-Agents |
+| 代码复杂度 | 高（~2000 行） | 低（~500 行） |
+| 扩展方式 | 修改 Graph + 路由 | 添加新 Agent |
+| 调试难度 | 高（多节点跳转） | 低（线性流程） |
 
 ---
 
@@ -90,7 +124,7 @@ async def validate_service_token(authorization: str) -> bool:
 
 **重要**: AI Orchestrator 不直接处理 WebSocket 连接。Web Platform 的 WebSocket handler 会将消息转发到这个 HTTP endpoint。
 
-### 2. LangGraph State Machine
+### 2. LangGraph State Machine (v3 Simplified)
 
 #### State Definition
 
@@ -101,7 +135,7 @@ from langchain_core.messages import BaseMessage
 import operator
 
 class AgentState(TypedDict):
-    """AI Orchestrator state definition."""
+    """AI Orchestrator state definition (simplified for v3)."""
     
     # Conversation messages (auto-append with operator.add)
     messages: Annotated[List[BaseMessage], operator.add]
@@ -110,258 +144,231 @@ class AgentState(TypedDict):
     user_id: str
     session_id: str
     
-    # Intent recognition result
-    current_intent: Optional[str]
-    extracted_params: Optional[dict]
-    
-    # Pending actions to execute
-    pending_actions: List[dict]
-    
-    # Completed results from modules
+    # Execution results (optional)
     completed_results: List[dict]
     
-    # Confirmation state
-    requires_confirmation: bool
-    user_confirmed: Optional[bool]
-    
-    # Credit check
-    credit_checked: bool
-    credit_sufficient: bool
-    estimated_cost: Optional[int]
-    
-    # Error handling
+    # Error handling (optional)
     error: Optional[dict]
-    retry_count: int
 ```
+
+**简化说明**：
+- 删除 `current_intent`（Gemini 自动识别）
+- 删除 `pending_actions`（Gemini 自动规划）
+- 删除 `requires_confirmation`（在 Agent 内部处理）
+- 删除 `credit_checked`（在 Agent 内部处理）
 
 #### Graph Structure
 
 ```python
-def build_agent_graph() -> StateGraph:
-    """Build the AI Orchestrator state graph."""
+def build_agent_graph() -> CompiledStateGraph:
+    """Build the simplified v3 Agent Graph.
     
+    Graph Structure:
+        [START] → orchestrator → persist → [END]
+    
+    All complexity is handled within the orchestrator node
+    using Gemini's native function calling capabilities.
+    """
     workflow = StateGraph(AgentState)
     
-    # Add nodes
-    workflow.add_node("router", router_node)
-    workflow.add_node("credit_check", credit_check_node)
-    workflow.add_node("creative_stub", creative_stub_node)
-    workflow.add_node("reporting_stub", reporting_stub_node)
-    workflow.add_node("market_intel_stub", market_intel_stub_node)
-    workflow.add_node("landing_page_stub", landing_page_stub_node)
-    workflow.add_node("ad_engine_stub", ad_engine_stub_node)
-    workflow.add_node("human_confirmation", human_confirmation_node)
-    workflow.add_node("respond", respond_node)
-    workflow.add_node("error_handler", error_handler_node)
+    # Only 2 nodes
+    workflow.add_node("orchestrator", orchestrator_node)
+    workflow.add_node("persist", persist_node)
     
-    # Set entry point
-    workflow.set_entry_point("router")
-    
-    # Add conditional edges
-    workflow.add_conditional_edges(
-        "router",
-        route_by_intent,
-        {
-            "credit_check": "credit_check",
-            "error": "error_handler",
-        }
-    )
-    
-    workflow.add_conditional_edges(
-        "credit_check",
-        check_credit_result,
-        {
-            "sufficient": route_to_module,
-            "insufficient": "respond",
-        }
-    )
-    
-    # Module nodes → confirmation check
-    for module in ["creative_stub", "reporting_stub", "market_intel_stub",
-                   "landing_page_stub", "ad_engine_stub"]:
-        workflow.add_conditional_edges(
-            module,
-            should_confirm,
-            {
-                "confirm": "human_confirmation",
-                "execute": "respond",
-            }
-        )
-    
-    # Confirmation → END (wait for user input)
-    workflow.add_edge("human_confirmation", END)
-    
-    # Response → END
-    workflow.add_edge("respond", END)
-    workflow.add_edge("error_handler", END)
+    # Simple linear flow
+    workflow.set_entry_point("orchestrator")
+    workflow.add_edge("orchestrator", "persist")
+    workflow.add_edge("persist", END)
     
     # Compile with checkpointer
     from langgraph.checkpoint.memory import MemorySaver
-    memory = MemorySaver()
-    
-    return workflow.compile(checkpointer=memory)
+    return workflow.compile(checkpointer=MemorySaver())
 ```
 
-### 3. Intent Router Node
+### 3. Orchestrator Node (v3 Core)
 
 ```python
-async def router_node(state: AgentState) -> AgentState:
+async def orchestrator_node(state: AgentState) -> AgentState:
     """
-    Recognize user intent and extract parameters.
-    Uses Gemini 2.5 Pro with structured output.
+    Main orchestrator using Gemini Function Calling.
+    
+    Handles:
+    - Intent understanding
+    - Agent selection and invocation
+    - Response generation
     """
     
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", INTENT_RECOGNITION_PROMPT),
-        ("human", "{input}")
-    ])
+    # 1. Build function tools from registered agents
+    registry = get_agent_registry()
+    tools = [agent.to_tool() for agent in registry.list_agents()]
     
-    # Use structured output for reliable parsing
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-pro",
-        temperature=0.1
+    # 2. Build messages
+    messages = state["messages"]
+    
+    # 3. Call Gemini with function calling
+    gemini_client = get_gemini_client()
+    response = await gemini_client.chat_with_tools(
+        messages=messages,
+        tools=tools,
     )
     
-    structured_llm = llm.with_structured_output(IntentSchema)
+    # 4. Execute function calls
+    tool_results = []
+    if response.function_calls:
+        for call in response.function_calls:
+            agent = registry.get(call.name)
+            result = await agent.execute(
+                action=call.args.get("action"),
+                params=call.args,
+                context=AgentContext(
+                    user_id=state["user_id"],
+                    session_id=state["session_id"],
+                ),
+            )
+            tool_results.append(result)
     
-    last_message = state["messages"][-1].content
-    result = await structured_llm.ainvoke(
-        prompt.format(input=last_message)
-    )
-    
+    # 5. Return results
     return {
-        "current_intent": result.intent,
-        "extracted_params": result.parameters,
-        "pending_actions": result.actions,
-        "estimated_cost": result.estimated_cost,
+        "messages": [AIMessage(content=response.text)],
+        "completed_results": tool_results,
     }
 ```
 
-### 4. Functional Module with Credit Check
-
-**重要设计变更**: Credit check 不是独立节点，而是在每个功能模块内部执行。
+### 4. Sub-Agent Interface
 
 ```python
-async def creative_stub_node(state: AgentState) -> AgentState:
-    """
-    Ad Creative stub with credit check.
-    Phase 1: Returns mock data
-    Phase 2: Will be replaced with real implementation
-    """
+from abc import ABC, abstractmethod
+
+class BaseAgent(ABC):
+    """Sub-Agent base class."""
     
-    action = state["pending_actions"][0]
+    name: str
+    description: str
     
-    # Step 1: Estimate cost
-    estimated_cost = estimate_creative_cost(action["params"])
-    
-    # Step 2: Check credit
-    try:
-        credit_check = await mcp_client.call_tool(
-            "check_credit",
-            {
-                "user_id": state["user_id"],
-                "estimated_credits": estimated_cost,
-                "operation_type": "generate_creative",
-            }
-        )
+    @abstractmethod
+    async def execute(
+        self,
+        action: str,
+        params: dict,
+        context: AgentContext,
+    ) -> AgentResult:
+        """Execute agent operation.
         
-        if not credit_check["allowed"]:
-            return {
-                "error": {
-                    "code": "6011",
-                    "type": "INSUFFICIENT_CREDITS",
-                    "message": "Credit 余额不足",
-                    "details": {
-                        "required": estimated_cost,
-                        "available": credit_check["current_balance"],
-                    }
-                }
-            }
+        Args:
+            action: Operation type (e.g., "generate_image", "analyze_report")
+            params: Operation parameters
+            context: Execution context (user_id, session_id, etc.)
+        
+        Returns:
+            AgentResult containing execution result
+        """
+        pass
     
-    except Exception as e:
-        logger.error(f"Credit check failed: {e}")
+    def to_tool(self) -> dict:
+        """Convert to Gemini Function Tool format.
+        
+        Returns:
+            Tool definition for Gemini function calling
+        """
         return {
-            "error": {
-                "code": "6012",
-                "message": "Credit check failed",
-            }
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": self.get_parameters_schema(),
+                "required": self.get_required_parameters(),
+            },
         }
     
-    # Step 3: Execute operation (mock in Phase 1)
-    await asyncio.sleep(2)  # Simulate processing
+    @abstractmethod
+    def get_parameters_schema(self) -> dict:
+        """Return parameters schema."""
+        pass
     
-    mock_result = {
-        "status": "success",
-        "creative_ids": ["mock_creative_1", "mock_creative_2"],
-        "message": "✅ 已生成 10 张素材（模拟数据）",
-        "mock": True,
-        "cost": estimated_cost,
-    }
+    def get_required_parameters(self) -> List[str]:
+        """Return required parameters list."""
+        return ["action"]
+```
+
+### 5. Example Sub-Agent Implementation
+
+```python
+class CreativeAgent(BaseAgent):
+    """Ad Creative generation agent."""
     
-    # Step 4: Deduct credit (even for mock data, to test the flow)
-    try:
-        await mcp_client.call_tool(
-            "deduct_credit",
-            {
-                "user_id": state["user_id"],
-                "credits": estimated_cost,
-                "operation_type": "generate_creative",
-                "operation_id": f"mock_{uuid.uuid4()}",
-            }
+    name = "creative_agent"
+    description = "Generate ad creatives, analyze competitors, create variants"
+    
+    async def execute(
+        self,
+        action: str,
+        params: dict,
+        context: AgentContext,
+    ) -> AgentResult:
+        """Execute creative operation."""
+        
+        # 1. Estimate cost
+        estimated_cost = self._estimate_cost(action, params)
+        
+        # 2. Check credit
+        credit_ok = await self._check_credit(
+            context.user_id,
+            estimated_cost
         )
-    except Exception as e:
-        logger.error(f"Credit deduction failed: {e}")
-        # Continue anyway in Phase 1
+        if not credit_ok:
+            return AgentResult(
+                success=False,
+                error={"code": "6011", "message": "Insufficient credits"}
+            )
+        
+        # 3. Execute operation
+        if action == "generate":
+            result = await self._generate_creative(params)
+        elif action == "analyze":
+            result = await self._analyze_competitor(params)
+        else:
+            return AgentResult(
+                success=False,
+                error={"code": "1001", "message": "Unknown action"}
+            )
+        
+        # 4. Deduct credit
+        await self._deduct_credit(context.user_id, estimated_cost)
+        
+        return AgentResult(success=True, data=result)
     
-    return {
-        "completed_results": [mock_result]
-    }
-
-def estimate_creative_cost(params: dict) -> int:
-    """Estimate credit cost for creative generation."""
-    count = params.get("count", 10)
-    # Assume 0.5 credits per image
-    return int(count * 0.5)
+    def get_parameters_schema(self) -> dict:
+        """Return parameters schema."""
+        return {
+            "action": {
+                "type": "string",
+                "enum": ["generate", "analyze", "variant"],
+                "description": "Operation to perform"
+            },
+            "count": {
+                "type": "integer",
+                "description": "Number of creatives to generate"
+            },
+            "style": {
+                "type": "string",
+                "description": "Creative style"
+            }
+        }
 ```
 
-### 5. Other Stub Module Nodes
+**Sub-Agent 设计原则**：
+- ✅ 每个 Agent 独立处理 credit check 和 deduction
+- ✅ 返回统一的 AgentResult 格式
+- ✅ 内部处理错误和重试
+- ✅ 通过 to_tool() 暴露给 Gemini
+
+### 6. Persist Node
 
 ```python
-async def reporting_stub_node(state: AgentState) -> AgentState:
-    """Ad Performance stub with credit check."""
-    # Similar structure to creative_stub_node
-    # 1. Estimate cost
-    # 2. Check credit
-    # 3. Execute (mock)
-    # 4. Deduct credit
-    pass
-
-async def market_intel_stub_node(state: AgentState) -> AgentState:
-    """Market Insights stub with credit check."""
-    pass
-
-async def landing_page_stub_node(state: AgentState) -> AgentState:
-    """Landing Page stub with credit check."""
-    pass
-
-async def ad_engine_stub_node(state: AgentState) -> AgentState:
-    """Campaign Automation stub with credit check."""
-    pass
-```
-
-**Phase 1 重点**: 所有 stub 模块都应该：
-- ✅ 调用 MCP check_credit 和 deduct_credit
-- ✅ 返回符合格式的 mock 数据
-- ✅ 测试完整的错误处理流程
-- ✅ 记录结构化日志
-
-### 6. Conversation Persistence Node
-
-```python
-async def persist_conversation_node(state: AgentState) -> AgentState:
+async def persist_node(state: AgentState) -> AgentState:
     """
     Persist conversation to Web Platform via MCP.
-    Called after generating response.
+    Called after orchestrator generates response.
     """
     
     try:
@@ -387,40 +394,7 @@ async def persist_conversation_node(state: AgentState) -> AgentState:
     return state
 ```
 
-### 7. Response Generator Node
-
-```python
-async def respond_node(state: AgentState) -> AgentState:
-    """
-    Generate final response based on execution results.
-    """
-    
-    # Check for errors
-    if state.get("error"):
-        return generate_error_response(state)
-    
-    # Check for insufficient credits
-    if not state.get("credit_sufficient"):
-        return generate_insufficient_credit_response(state)
-    
-    # Generate success response
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", RESPONSE_GENERATION_PROMPT),
-        ("human", "Results: {results}\n\nGenerate user-friendly response.")
-    ])
-    
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
-    
-    response = await llm.ainvoke(
-        prompt.format(
-            results=json.dumps(state["completed_results"], ensure_ascii=False)
-        )
-    )
-    
-    return {
-        "messages": [AIMessage(content=response.content)]
-    }
-```
+**注意**: v3 架构中，响应生成由 Orchestrator 节点内的 Gemini 直接处理，不需要独立的 respond 节点。
 
 ---
 
@@ -488,14 +462,16 @@ Testable: yes - property
 - Property 1 和 2 都是意图识别，可以合并为一个通用属性
 - Property 4 (重试机制) 和 Property 5 (幂等性) 是相关的，但测试不同方面，保留两个
 
-### Correctness Properties
+### Correctness Properties (v3 Architecture)
 
-#### Property 1: Intent Recognition Accuracy
-*For any* user message requesting a specific operation (creative generation, report analysis, campaign creation, etc.), the router SHALL correctly identify the corresponding intent
+#### Property 1: Agent Selection Accuracy
+*For any* user message requesting a specific operation, Gemini SHALL correctly select the appropriate sub-agent(s) via function calling
 **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
 
+**Note**: v3 uses Gemini's native function calling instead of explicit intent recognition, making this property about agent selection rather than intent classification.
+
 #### Property 2: Multi-step Execution Order
-*For any* multi-step task with dependencies, the orchestrator SHALL execute steps in dependency order (e.g., generate creative before create campaign)
+*For any* multi-step task with dependencies, Gemini SHALL invoke agents in the correct dependency order
 **Validates: Requirements 3.3**
 
 #### Property 3: Context Reference Resolution
@@ -510,9 +486,11 @@ Testable: yes - property
 *For any* failed operation that is retried, the retry SHALL produce the same result as if executed once successfully
 **Validates: Requirements 12.5**
 
-#### Property 6: Confirmation for High-Risk Operations
-*For any* high-risk operation (pause all, delete campaign, large budget change), the system SHALL require user confirmation before execution
-**Validates: Requirements 14.5.1, 14.5.2, 14.5.3**
+#### Property 6: Agent Credit Handling
+*For any* agent operation requiring credits, the agent SHALL check credit availability before execution and deduct credits after successful completion
+**Validates: Requirements 6.1, 6.2**
+
+**Note**: v3 moves credit handling into individual agents rather than a centralized node.
 
 ---
 
@@ -986,47 +964,35 @@ async def chat_endpoint(request: Request):
 
 ## 开发阶段（Development Phases）
 
-### Phase 1: 核心框架（Week 3）
+### 当前状态: v3 架构已完成
 
-**目标**: 建立基础架构，所有功能模块返回 mock 数据
+AI Orchestrator 已完成 v3 架构迁移，当前状态：
 
-**核心任务**:
-- FastAPI application setup
-- LangGraph state machine implementation
-- Intent router with Gemini integration
-- 5 个 stub functional modules (with credit check)
-- MCP client implementation
-- HTTP streaming (SSE format)
-- Service-to-service authentication
-- Conversation persistence via MCP
-- Structured logging and error handling
+**已完成**:
+- ✅ FastAPI application with SSE streaming
+- ✅ Simplified 2-node LangGraph (orchestrator → persist)
+- ✅ Gemini Function Calling integration
+- ✅ 5 个 Sub-Agents 实现（creative, performance, market, landing_page, campaign）
+- ✅ MCP client implementation
+- ✅ Service-to-service authentication
+- ✅ Conversation persistence via MCP
+- ✅ Structured logging and error handling
+- ✅ 删除 v2 架构代码
+
+**功能模块状态**:
+- ✅ Ad Creative: 完整实现（Gemini Imagen 3, 竞品分析, 变体生成）
+- ✅ Ad Performance: 完整实现（性能分析, 异常检测, 推荐引擎）
+- ✅ Campaign Automation: 完整实现（广告创建, 预算优化, 规则引擎）
+- ✅ Landing Page: 完整实现（页面生成, A/B 测试, 托管导出）
+- ✅ Market Insights: 完整实现（竞品追踪, 趋势分析, 受众洞察）
 
 **验收标准**:
-- ✅ 用户可以通过 web-platform 发送消息并收到 mock 响应
-- ✅ 意图识别准确率 > 80% (测试 20+ 样本)
+- ✅ 用户可以通过 web-platform 发送消息并收到响应
+- ✅ Gemini 正确选择和调用 Sub-Agents
 - ✅ HTTP streaming 延迟 < 2 秒
-- ✅ Credit check 和 deduct 正确调用
+- ✅ Credit check 和 deduct 在各 Agent 内正确执行
 - ✅ 对话历史正确持久化到 Web Platform
 - ✅ 所有错误码符合 INTERFACES.md 定义
-
-### Phase 2: Ad Creative 实现（Week 4）
-
-**目标**: 实现真实的素材生成功能
-
-- Replace creative_stub with real implementation
-- Integrate Gemini Imagen 3
-- Credit check and deduction
-- File upload to S3 via MCP
-- Error handling and retry
-
-**验收标准**:
-- 可以生成真实的广告图片
-- Credit 正确扣减
-- 生成失败时正确退款
-
-### Phase 3-6: 其他功能模块
-
-逐步实现其他 4 个功能模块，每个模块 1 周时间。
 
 ---
 

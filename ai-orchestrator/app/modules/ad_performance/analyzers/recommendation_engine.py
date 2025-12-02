@@ -222,7 +222,8 @@ class RecommendationEngine:
                 if baseline_ctr > 0:
                     decline = (baseline_ctr - recent_ctr) / baseline_ctr
                     
-                    if decline >= decline_threshold:
+                    # Use small epsilon for floating-point comparison
+                    if decline >= decline_threshold - 1e-9:
                         entity["ctr_decline_pct"] = decline * 100
                         entity["baseline_ctr"] = baseline_ctr
                         entity["recent_ctr"] = recent_ctr

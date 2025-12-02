@@ -41,16 +41,8 @@ def mock_redis_client():
     return client
 
 
-@pytest.fixture
-def ad_performance(mock_mcp_client, mock_gemini_client, mock_redis_client):
-    """Fixture for AdPerformance instance with mocked dependencies"""
-    from app.modules.ad_performance import AdPerformance
-
-    return AdPerformance(
-        mcp_client=mock_mcp_client,
-        gemini_client=mock_gemini_client,
-        redis_client=mock_redis_client,
-    )
+# Note: ad_performance fixture removed as we no longer use capability classes
+# Tests should directly instantiate the analyzers/services they need
 
 
 @pytest.fixture

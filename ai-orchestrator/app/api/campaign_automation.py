@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.core.auth import validate_service_token
-from app.modules.campaign_automation.capability import CampaignAutomation
+from app.modules.campaign_automation.engines.rule_engine import RuleEngine
 
 logger = structlog.get_logger(__name__)
 
@@ -53,11 +53,11 @@ async def check_rules(
             user_id=user_id,
         )
         
-        # Initialize Campaign Automation module
-        campaign_automation = CampaignAutomation()
+        # Initialize Rule Engine
+        rule_engine = RuleEngine()
         
         # Check rules
-        results = await campaign_automation.rule_engine.check_rules(user_id=user_id)
+        results = await rule_engine.check_rules(user_id=user_id)
         
         # Count actions taken
         actions_taken = sum(

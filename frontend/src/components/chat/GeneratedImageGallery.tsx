@@ -1,7 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import type { GeneratedImage } from '@/hooks/useChat';
+
+// Local type definition for generated images
+interface GeneratedImage {
+  imageData: string;
+  mimeType: string;
+  prompt?: string;
+}
 
 interface GeneratedImageGalleryProps {
   images: GeneratedImage[];

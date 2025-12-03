@@ -7,10 +7,11 @@ The Planner is responsible for:
 4. Generating reasoning (thoughts)
 
 It uses Gemini to analyze the current state and plan the next step.
+Supports streaming output for real-time thought process visibility.
 """
 
 import json
-from typing import Any
+from typing import Any, AsyncIterator
 
 import structlog
 from pydantic import BaseModel, Field
@@ -140,6 +141,176 @@ class Planner:
         except GeminiError as e:
             log.error("planning_error", error=str(e))
             raise
+
+    async def plan_next_action_stream(
+        self,
+        user_message: str,
+        available_tools: list[AgentTool],
+        execution_history: list[dict[str, Any]] | None = None,
+        user_id: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Plan the next action with streaming thought output.
+
+        This method streams the agent's thinking process in real-time,
+        allowing users to see how the agent reasons about the task.
+
+        Args:
+            user_message: User's original message
+            available_tools: List of available tools
+            execution_history: Previous execution steps
+            user_id: User ID for context
+
+        Yields:
+            dict: Events with type and content:
+                - {"type": "thought", "content": str} - Thought chunk
+                - {"type": "plan", "data": PlanAction} - Final plan
+
+        Raises:
+            GeminiError: If planning fails
+        """
+        log = logger.bind(
+            user_id=user_id,
+            tool_count=len(available_tools),
+            history_length=len(execution_history) if execution_history else 0,
+        )
+        log.info("plan_next_action_stream_start")
+
+        try:
+            # Build planning prompt
+            prompt = self._build_planning_prompt(
+                user_message=user_message,
+                available_tools=available_tools,
+                execution_history=execution_history,
+            )
+
+            # Stream the thinking process
+            full_response = ""
+            async for chunk in self.gemini_client.chat_completion_stream(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self._get_streaming_system_prompt(),
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
+                temperature=0.3,
+            ):
+                full_response += chunk
+                yield {"type": "thought", "content": chunk}
+
+            # Parse the final response to extract the plan
+            plan = self._parse_plan_from_response(full_response)
+
+            log.info(
+                "plan_next_action_stream_complete",
+                has_action=plan.action is not None,
+                is_complete=plan.is_complete,
+            )
+
+            yield {"type": "plan", "data": plan}
+
+        except GeminiError as e:
+            log.error("planning_stream_error", error=str(e))
+            raise
+
+    def _get_streaming_system_prompt(self) -> str:
+        """Get system prompt for streaming planner.
+
+        Returns:
+            System prompt optimized for streaming output
+        """
+        return """You are an AI agent that helps users with advertising automation tasks.
+
+Analyze the user's request and decide how to respond.
+
+IMPORTANT: Your response format depends on whether you need to use tools:
+
+## If you can answer directly (no tools needed):
+Just respond with a JSON block containing your answer:
+```json
+{
+    "action": null,
+    "action_input": null,
+    "is_complete": true,
+    "final_answer": "Your helpful response to the user here"
+}
+```
+
+## If you need to use a tool:
+First explain your reasoning briefly, then provide the decision:
+
+I need to [brief explanation of what you're going to do].
+
+```json
+{
+    "action": "tool_name",
+    "action_input": {"param": "value"},
+    "is_complete": false,
+    "final_answer": null
+}
+```
+
+Guidelines:
+- For simple questions (greetings, general knowledge, writing tasks), answer directly
+- Only use tools when specifically needed (generating images, checking data, etc.)
+- Keep explanations brief and user-friendly
+- Never include technical details or markdown headers in your response"""
+
+    def _parse_plan_from_response(self, response: str) -> PlanAction:
+        """Parse plan from streaming response.
+
+        Args:
+            response: Full response text
+
+        Returns:
+            PlanAction extracted from response
+        """
+        # Extract thought (everything before ## Decision or ```json)
+        thought = response
+        if "## Decision" in response:
+            thought = response.split("## Decision")[0].replace("## Thinking", "").strip()
+        elif "```json" in response:
+            thought = response.split("```json")[0].replace("## Thinking", "").strip()
+
+        # Extract JSON from response
+        try:
+            # Try to find JSON block
+            if "```json" in response and "```" in response.split("```json")[1]:
+                json_str = response.split("```json")[1].split("```")[0].strip()
+            elif "{" in response and "}" in response:
+                # Find the last JSON-like structure
+                start = response.rfind("{")
+                end = response.rfind("}") + 1
+                json_str = response[start:end]
+            else:
+                # No JSON found, treat as direct response
+                return PlanAction(
+                    thought=thought or response[:500],
+                    is_complete=True,
+                    final_answer=response,
+                )
+
+            data = json.loads(json_str)
+
+            return PlanAction(
+                thought=thought or data.get("thought", ""),
+                action=data.get("action"),
+                action_input=data.get("action_input"),
+                is_complete=data.get("is_complete", False),
+                final_answer=data.get("final_answer"),
+            )
+
+        except (json.JSONDecodeError, IndexError) as e:
+            logger.warning("plan_parse_fallback", error=str(e))
+            # Fallback: treat entire response as final answer
+            return PlanAction(
+                thought=thought or response[:500],
+                is_complete=True,
+                final_answer=response,
+            )
 
     async def understand_intent(
         self,

@@ -9,10 +9,13 @@ export function MessageList() {
   const { messages, isLoading, isTimeout, retry, agentStatus } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive or agent status changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, agentStatus]);
+
+  // Find the last assistant message index for streaming state
+  const lastAssistantIndex = messages.map(m => m.role).lastIndexOf('assistant');
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -43,33 +46,29 @@ export function MessageList() {
         </div>
       )}
 
-      {messages.map((message: any) => (
-        <div key={message.id}>
-          <MessageBubble message={message} />
+      {messages.map((message: any, index: number) => {
+        // Check if this is the last assistant message and we're streaming
+        const isLastAssistant = index === lastAssistantIndex;
+        const isStreaming = isLoading && isLastAssistant && message.role === 'assistant';
 
-          {/* Display tool invocations */}
-          {message.toolInvocations?.map((toolInvocation: any) => (
-            <ToolInvocationCard
-              key={toolInvocation.toolCallId}
-              toolInvocation={toolInvocation}
+        return (
+          <div key={message.id}>
+            <MessageBubble
+              message={message}
+              isStreaming={isStreaming}
+              agentStatus={isStreaming ? agentStatus : null}
             />
-          ))}
-        </div>
-      ))}
 
-      {/* Loading indicator with agent status */}
-      {isLoading && !isTimeout && (
-        <div className="flex items-center gap-2 text-gray-500 ml-2">
-          <div className="flex gap-1">
-            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            {/* Display tool invocations */}
+            {message.toolInvocations?.map((toolInvocation: any) => (
+              <ToolInvocationCard
+                key={toolInvocation.toolCallId}
+                toolInvocation={toolInvocation}
+              />
+            ))}
           </div>
-          <span className="text-sm">
-            {agentStatus?.message || 'AI 正在思考...'}
-          </span>
-        </div>
-      )}
+        );
+      })}
 
       {/* Timeout message */}
       {isTimeout && (

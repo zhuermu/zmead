@@ -28,6 +28,7 @@ import structlog
 
 from app.core.evaluator import Evaluator
 from app.core.human_in_loop import HumanInLoopHandler, UserInputResponse
+from app.core.i18n import get_message
 from app.core.memory import AgentMemory
 from app.core.planner import Planner
 from app.core.redis_client import get_redis
@@ -363,6 +364,81 @@ class ReActAgent:
                 message="An error occurred while processing your request",
             )
 
+    async def process_message_stream(
+        self,
+        user_message: str,
+        user_id: str,
+        session_id: str,
+        conversation_id: str | None = None,
+        loaded_tools: list[AgentTool] | None = None,
+    ):
+        """Process a user message and stream the response in real-time.
+
+        Args:
+            user_message: User's message
+            user_id: User ID
+            session_id: Session ID
+            conversation_id: Optional conversation ID
+            loaded_tools: Optional pre-loaded tools (if None, will load all)
+
+        Yields:
+            dict: Events with type and content:
+                - {"type": "text", "content": str} - Text chunk
+                - {"type": "user_input_request", "data": dict} - Needs user input
+                - {"type": "error", "error": str} - Error occurred
+        """
+        log = logger.bind(
+            user_id=user_id,
+            session_id=session_id,
+            conversation_id=conversation_id,
+        )
+        log.info("process_message_stream_start", message_length=len(user_message))
+
+        try:
+            # Initialize or load state
+            state = await self._get_or_create_state(
+                user_message=user_message,
+                user_id=user_id,
+                session_id=session_id,
+                conversation_id=conversation_id,
+            )
+
+            # Store loaded tools
+            if loaded_tools:
+                state.loaded_tool_names = [tool.name for tool in loaded_tools]
+
+            # Add user message to conversation history
+            await self.memory.add_message(
+                session_id=session_id,
+                role="user",
+                content=user_message,
+            )
+
+            # Execute ReAct loop with streaming
+            full_response = ""
+            async for event in self._react_loop_stream(state, loaded_tools):
+                if event.get("type") == "text":
+                    full_response += event.get("content", "")
+                yield event
+
+            # Add assistant response to conversation history
+            if full_response:
+                await self.memory.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=full_response,
+                    metadata={"status": "completed"},
+                )
+
+            # Save state
+            await self._save_state(state)
+
+            log.info("process_message_stream_complete", response_length=len(full_response))
+
+        except Exception as e:
+            log.error("process_message_stream_error", error=str(e), exc_info=True)
+            yield {"type": "error", "error": str(e)}
+
     async def continue_with_user_input(
         self,
         session_id: str,
@@ -429,7 +505,10 @@ class ReActAgent:
             # Check if user cancelled
             if user_response.cancelled:
                 state.status = AgentStatus.COMPLETED
-                state.final_response = "操作已取消"
+                # TODO: Get user's preferred language from user profile
+                # For now, default to English
+                cancelled_message = get_message("operation_cancelled", language="en")
+                state.final_response = cancelled_message
                 state.waiting_for_user_input = False
                 state.user_input_request = None
 
@@ -437,7 +516,7 @@ class ReActAgent:
 
                 return AgentResponse(
                     status=AgentStatus.COMPLETED,
-                    message="操作已取消",
+                    message=cancelled_message,
                 )
 
             # Update state with user input
@@ -716,6 +795,256 @@ class ReActAgent:
             error=state.error_message,
         )
 
+    async def _react_loop_stream(
+        self,
+        state: AgentState,
+        loaded_tools: list[AgentTool] | None,
+    ):
+        """Execute the ReAct loop with streaming response.
+
+        Streams the agent's thinking process and final response in real-time.
+
+        Event types emitted:
+        - thought: Agent's reasoning process (streaming)
+        - action: Tool being executed
+        - observation: Tool execution result
+        - text: Final response text (streaming for long responses)
+        - user_input_request: Needs user confirmation
+        - error: Error occurred
+
+        Args:
+            state: Agent state
+            loaded_tools: Loaded tools
+
+        Yields:
+            dict: Events with streaming content
+        """
+        log = logger.bind(session_id=state.session_id)
+
+        # Get tools
+        if loaded_tools is None:
+            if self.tool_registry:
+                loaded_tools = self.tool_registry.get_all_tools()
+            else:
+                loaded_tools = []
+
+        # Main loop
+        while state.current_step < state.max_steps:
+            state.current_step += 1
+            state.status = AgentStatus.THINKING
+
+            log.info("react_step_start", step=state.current_step)
+
+            try:
+                # Build execution history
+                execution_history = [
+                    {
+                        "thought": step.thought,
+                        "action": step.action,
+                        "action_input": step.action_input,
+                        "observation": step.observation,
+                    }
+                    for step in state.steps
+                ]
+
+                # Plan next action with streaming
+                plan = None
+                thought_content = ""
+
+                async for event in self.planner.plan_next_action_stream(
+                    user_message=state.user_message,
+                    available_tools=loaded_tools,
+                    execution_history=execution_history,
+                    user_id=state.user_id,
+                ):
+                    if event["type"] == "thought":
+                        chunk = event["content"]
+                        thought_content += chunk
+                        # Always stream thought events - frontend will handle display
+                        yield {"type": "thought", "content": chunk}
+
+                    elif event["type"] == "plan":
+                        plan = event["data"]
+
+                if not plan:
+                    log.error("no_plan_received")
+                    yield {"type": "error", "error": "Failed to generate plan"}
+                    break
+
+                # Create step with plan
+                step = AgentStep(
+                    step_number=state.current_step,
+                    thought=plan.thought or thought_content[:500],
+                    action=plan.action,
+                    action_input=plan.action_input,
+                )
+
+                state.steps.append(step)
+
+                log.info(
+                    "plan_generated",
+                    step=state.current_step,
+                    has_action=plan.action is not None,
+                    is_complete=plan.is_complete,
+                )
+
+                # Check if task is complete
+                if plan.is_complete:
+                    state.status = AgentStatus.COMPLETED
+
+                    # Use final_answer directly (don't stream again)
+                    if plan.final_answer:
+                        yield {"type": "text", "content": plan.final_answer}
+                        state.final_response = plan.final_answer
+                    else:
+                        # Fallback - extract clean response from thought
+                        clean_response = self._extract_clean_response(thought_content)
+                        state.final_response = clean_response or "Task completed."
+                        yield {"type": "text", "content": state.final_response}
+                    break
+
+                # If no action but not complete, use final_answer or clean thought
+                if not plan.action:
+                    state.status = AgentStatus.COMPLETED
+                    if plan.final_answer:
+                        state.final_response = plan.final_answer
+                    else:
+                        state.final_response = self._extract_clean_response(thought_content) or "I couldn't determine what to do."
+                    yield {"type": "text", "content": state.final_response}
+                    break
+
+                # Evaluate if human input is needed
+                evaluation = await self.evaluator.evaluate_plan(
+                    plan=plan,
+                    user_message=state.user_message,
+                    execution_history=execution_history,
+                    user_id=state.user_id,
+                )
+
+                log.info(
+                    "evaluation_complete",
+                    needs_human_input=evaluation.needs_human_input,
+                )
+
+                # If human input is needed, yield request and stop
+                if evaluation.needs_human_input:
+                    state.status = AgentStatus.WAITING_FOR_USER
+                    state.waiting_for_user_input = True
+
+                    user_input_request = self.human_in_loop_handler.create_request_from_evaluation(
+                        evaluation=evaluation
+                    )
+                    state.user_input_request = user_input_request.to_dict()
+
+                    await self._save_state(state)
+
+                    yield {
+                        "type": "user_input_request",
+                        "data": user_input_request.to_dict(),
+                        "message": user_input_request.question,
+                    }
+                    return
+
+                # Notify user about tool execution
+                yield {
+                    "type": "action",
+                    "tool": plan.action,
+                    "parameters": plan.action_input,
+                }
+
+                # Execute action
+                state.status = AgentStatus.ACTING
+
+                try:
+                    tool_result = await self._execute_tool(
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        available_tools=loaded_tools,
+                        user_id=state.user_id,
+                    )
+
+                    tool_call = ToolCall(
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        result=tool_result,
+                    )
+                    state.tool_calls.append(tool_call)
+
+                    await self.memory.save_tool_result(
+                        session_id=state.session_id,
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        result=tool_result,
+                    )
+
+                    observation = self._format_tool_result(tool_result)
+                    step.observation = observation
+
+                    # Notify user about tool result
+                    yield {
+                        "type": "observation",
+                        "tool": plan.action,
+                        "result": observation,
+                        "success": tool_result.get("success", False),
+                    }
+
+                    log.info("tool_executed", tool_name=plan.action)
+
+                except ToolExecutionError as e:
+                    tool_call = ToolCall(
+                        tool_name=plan.action,
+                        parameters=plan.action_input or {},
+                        error=str(e),
+                    )
+                    state.tool_calls.append(tool_call)
+
+                    step.observation = f"Tool execution failed: {e.message}"
+
+                    yield {
+                        "type": "observation",
+                        "tool": plan.action,
+                        "result": step.observation,
+                        "success": False,
+                    }
+
+                    log.error("tool_execution_failed", tool_name=plan.action, error=str(e))
+
+                except Exception as e:
+                    step.observation = f"Unexpected error: {str(e)}"
+
+                    yield {
+                        "type": "observation",
+                        "tool": plan.action,
+                        "result": step.observation,
+                        "success": False,
+                    }
+
+                    log.error("tool_execution_error", error=str(e), exc_info=True)
+
+                # Check if we should stop due to max steps
+                if state.current_step >= state.max_steps:
+                    state.status = AgentStatus.COMPLETED
+                    error_msg = "Maximum steps reached. Task may be incomplete."
+                    state.final_response = error_msg
+                    yield {"type": "text", "content": error_msg}
+                    break
+
+            except GeminiError as e:
+                log.error("planning_error", error=str(e))
+                state.status = AgentStatus.ERROR
+                error_msg = f"Planning failed: {e.message}"
+                state.error_message = error_msg
+                yield {"type": "error", "error": error_msg}
+                break
+
+            except Exception as e:
+                log.error("react_step_error", error=str(e), exc_info=True)
+                state.status = AgentStatus.ERROR
+                error_msg = f"Execution error: {str(e)}"
+                state.error_message = error_msg
+                yield {"type": "error", "error": error_msg}
+                break
+
     async def _get_or_create_state(
         self,
         user_message: str,
@@ -724,6 +1053,10 @@ class ReActAgent:
         conversation_id: str | None,
     ) -> AgentState:
         """Get existing state or create new one.
+
+        For each new message, we reset execution state to ensure
+        fresh processing. Conversation history is preserved in memory,
+        but agent state (steps, tool calls) is reset.
 
         Args:
             user_message: User message
@@ -734,16 +1067,9 @@ class ReActAgent:
         Returns:
             AgentState
         """
-        # Try to load existing state
-        state = await self._load_state(session_id)
-
-        if state:
-            # Update with new message
-            state.user_message = user_message
-            state.updated_at = datetime.utcnow()
-            return state
-
-        # Create new state
+        # Always create fresh state for new messages
+        # Conversation history is handled by AgentMemory, not AgentState
+        # This prevents issues with concurrent requests and stale state
         return AgentState(
             session_id=session_id,
             user_id=user_id,
@@ -925,3 +1251,33 @@ class ReActAgent:
         else:
             error = result.get("error", "Unknown error")
             return f"Failed: {message or error}"
+
+    def _extract_clean_response(self, thought_content: str) -> str:
+        """Extract clean response text from thought content.
+
+        Removes JSON blocks and technical formatting.
+
+        Args:
+            thought_content: Raw thought content from planner
+
+        Returns:
+            Clean text suitable for user display
+        """
+        if not thought_content:
+            return ""
+
+        # Remove JSON blocks
+        clean = thought_content
+        if "```json" in clean:
+            clean = clean.split("```json")[0]
+        if "```" in clean:
+            clean = clean.split("```")[0]
+
+        # Remove common headers
+        for header in ["## Thinking", "## Decision", "## Response"]:
+            clean = clean.replace(header, "")
+
+        # Remove leading/trailing whitespace
+        clean = clean.strip()
+
+        return clean

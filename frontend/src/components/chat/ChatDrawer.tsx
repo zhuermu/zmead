@@ -4,48 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { useChatStore } from '@/lib/store';
 import { MessageBubble } from './MessageBubble';
-import type { Message } from '@/hooks/useChat';
-
-// Type for agent status from streaming data
-interface AgentStatus {
-  type: 'thinking' | 'status' | 'tool_start' | 'tool_complete';
-  message?: string;
-  node?: string;
-  tool?: string;
-}
-
-// Helper to get icon for agent status type
-function getStatusIcon(type: AgentStatus['type']) {
-  switch (type) {
-    case 'thinking':
-      return (
-        <svg className="w-4 h-4 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-        </svg>
-      );
-    case 'status':
-      return (
-        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-      );
-    case 'tool_start':
-      return (
-        <svg className="w-4 h-4 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      );
-    case 'tool_complete':
-      return (
-        <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-        </svg>
-      );
-    default:
-      return null;
-  }
-}
+import type { Message, AgentStatus } from '@/hooks/useChat';
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -627,28 +586,21 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
               </div>
             ) : (
               <div className="space-y-4">
-                {messages.map((message: Message) => (
-                  <MessageBubble key={message.id} message={message} compact />
-                ))}
+                {messages.map((message: Message, index: number) => {
+                  // Check if this is the last assistant message being streamed
+                  const isLastMessage = index === messages.length - 1;
+                  const isStreamingMessage = isLoading && isLastMessage && message.role === 'assistant';
 
-                {isLoading && (
-                  <div className="flex justify-start">
-                    <div className="bg-gray-100 rounded-lg px-4 py-3">
-                      {agentStatus ? (
-                        <div className="flex items-center gap-2 text-gray-600 text-sm">
-                          {getStatusIcon(agentStatus.type)}
-                          <span>{agentStatus.message || '正在处理...'}</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
+                  return (
+                    <MessageBubble
+                      key={message.id}
+                      message={message}
+                      compact
+                      isStreaming={isStreamingMessage}
+                      agentStatus={isStreamingMessage ? agentStatus : null}
+                    />
+                  );
+                })}
 
                 <div ref={messagesEndRef} />
               </div>

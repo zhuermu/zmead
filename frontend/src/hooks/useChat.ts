@@ -12,14 +12,46 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   createdAt?: Date;
+  // Agent process info (collapsible, contains thinking + actions + observations)
+  // All intermediate process is consolidated here, only final text shows in main content
+  processInfo?: string;
+}
+
+// Helper function to extract string content from message
+// Handles both string content and legacy AI SDK v5 format (parts array)
+function getMessageContentAsString(msg: any): string {
+  // Handle string content (current format)
+  if (typeof msg.content === 'string') {
+    return msg.content;
+  }
+
+  // Handle content array format
+  if (Array.isArray(msg.content)) {
+    return msg.content
+      .filter((part: any) => part.type === 'text')
+      .map((part: any) => part.text || '')
+      .join('');
+  }
+
+  // Handle parts array format (legacy AI SDK v5 format)
+  if (Array.isArray(msg.parts)) {
+    return msg.parts
+      .filter((part: any) => part.type === 'text')
+      .map((part: any) => part.text || '')
+      .join('');
+  }
+
+  return '';
 }
 
 // Agent status from streaming data
 export interface AgentStatus {
-  type: 'thinking' | 'status' | 'tool_start' | 'tool_complete';
+  type: 'thinking' | 'status' | 'action' | 'observation' | 'thought';
   message?: string;
   node?: string;
   tool?: string;
+  success?: boolean;
+  result?: string;
 }
 
 // User input request from Human-in-the-Loop
@@ -34,7 +66,8 @@ interface UseChatSSEOptions {
 }
 
 export function useChat(options: UseChatSSEOptions = {}) {
-  const { apiUrl = '/api/v1/chat' } = options;
+  // Use Edge Runtime API route for true streaming (no buffering)
+  const { apiUrl = '/api/chat' } = options;
   const { clearMessages } = useChatStore();
   const { user } = useAuth();
   
@@ -49,6 +82,7 @@ export function useChat(options: UseChatSSEOptions = {}) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const currentAssistantMessageRef = useRef<string>('');
+  const currentProcessInfoRef = useRef<string>('');
   const currentMessageIdRef = useRef<string>('');
 
   // Generate stable session ID
@@ -119,6 +153,7 @@ export function useChat(options: UseChatSSEOptions = {}) {
     setAgentStatus(null);
     setUserInputRequest(null);
     currentAssistantMessageRef.current = '';
+    currentProcessInfoRef.current = '';
     
     // Add user message
     const userMessage: Message = {
@@ -157,11 +192,12 @@ export function useChat(options: UseChatSSEOptions = {}) {
       const token = localStorage.getItem('access_token');
       
       // Build messages array (conversation history + current message)
+      // Ensure content is always a string (handle legacy AI SDK v5 format)
       const allMessages = [
         ...messages.map(msg => ({
           role: msg.role,
-          content: msg.content,
-        })),
+          content: getMessageContentAsString(msg),
+        })).filter(msg => msg.content), // Filter out empty messages
         {
           role: 'user',
           content: content.trim(),
@@ -177,6 +213,8 @@ export function useChat(options: UseChatSSEOptions = {}) {
         },
         body: JSON.stringify({
           messages: allMessages,
+          user_id: String(user?.id || 'anonymous'),
+          session_id: sessionId,
         }),
       });
 
@@ -215,27 +253,77 @@ export function useChat(options: UseChatSSEOptions = {}) {
 
             try {
               const event = JSON.parse(data);
-              
+
               // Handle different event types
-              if (event.type === 'text' || event.type === 'token') {
-                // Append text to current assistant message
+              // All process info (thought, action, observation) goes into processInfo
+              // Only 'text' type goes to main content
+              if (event.type === 'thought') {
+                // Agent's thinking process - append to processInfo
+                if (event.content) {
+                  currentProcessInfoRef.current += event.content;
+                  setMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === currentMessageIdRef.current
+                        ? { ...msg, processInfo: currentProcessInfoRef.current }
+                        : msg
+                    )
+                  );
+                  setAgentStatus({
+                    type: 'thought',
+                    message: 'Thinking...',
+                  });
+                }
+              } else if (event.type === 'text' || event.type === 'token') {
+                // Final response text - append to main content field
                 if (event.content) {
                   currentAssistantMessageRef.current += event.content;
-                  setMessages(prev => 
-                    prev.map(msg => 
+                  setMessages(prev =>
+                    prev.map(msg =>
                       msg.id === currentMessageIdRef.current
                         ? { ...msg, content: currentAssistantMessageRef.current }
                         : msg
                     )
                   );
                 }
-              } else if (event.type === 'thinking' || event.type === 'status' || event.type === 'tool_start' || event.type === 'tool_complete') {
-                // Update agent status
+              } else if (event.type === 'action') {
+                // Tool execution - append to processInfo
+                const actionText = `\n🔧 ${event.tool}: ${event.message || 'Executing...'}`;
+                currentProcessInfoRef.current += actionText;
+                setMessages(prev =>
+                  prev.map(msg =>
+                    msg.id === currentMessageIdRef.current
+                      ? { ...msg, processInfo: currentProcessInfoRef.current }
+                      : msg
+                  )
+                );
+                setAgentStatus({
+                  type: 'action',
+                  message: event.message,
+                  tool: event.tool,
+                });
+              } else if (event.type === 'observation') {
+                // Tool result - append to processInfo
+                const resultText = `\n${event.success ? '✅' : '❌'} Result: ${event.result || 'No result'}`;
+                currentProcessInfoRef.current += resultText;
+                setMessages(prev =>
+                  prev.map(msg =>
+                    msg.id === currentMessageIdRef.current
+                      ? { ...msg, processInfo: currentProcessInfoRef.current }
+                      : msg
+                  )
+                );
+                setAgentStatus({
+                  type: 'observation',
+                  message: event.result || (event.success ? '执行成功' : '执行失败'),
+                  tool: event.tool,
+                  success: event.success,
+                  result: event.result,
+                });
+              } else if (event.type === 'thinking' || event.type === 'status') {
+                // Initial thinking status - just update status indicator
                 setAgentStatus({
                   type: event.type,
                   message: event.message,
-                  node: event.node,
-                  tool: event.tool,
                 });
               } else if (event.type === 'user_input_request') {
                 // Human-in-the-Loop request

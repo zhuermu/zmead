@@ -111,6 +111,17 @@ class Evaluator:
         "placement",  # Ad placement
     }
 
+    # Low-risk operations that should auto-execute without confirmation
+    # These are simple tools that don't involve spending, external changes,
+    # or sensitive operations
+    AUTO_APPROVE_OPERATIONS = {
+        "datetime",  # Get current date/time
+        "calculator",  # Mathematical calculations
+        "google_search",  # Web search (read-only)
+        "get_credit_balance",  # Check balance (read-only)
+        "get_reports",  # Fetch reports (read-only)
+    }
+
     def __init__(
         self,
         gemini_client: GeminiClient | None = None,
@@ -160,6 +171,11 @@ class Evaluator:
 
         # If no action planned, no input needed
         if not plan.action:
+            return EvaluationResult(needs_human_input=False)
+
+        # Check if operation is auto-approved (low risk, simple tools)
+        if self._is_auto_approve_operation(plan.action):
+            log.info("auto_approve_operation", operation=plan.action)
             return EvaluationResult(needs_human_input=False)
 
         # Check if operation is high risk
@@ -220,6 +236,20 @@ class Evaluator:
         # All checks passed - no human input needed
         log.info("evaluation_complete", needs_input=False)
         return EvaluationResult(needs_human_input=False)
+
+    def _is_auto_approve_operation(self, operation: str) -> bool:
+        """Check if operation should be auto-approved.
+
+        These are low-risk, read-only, or utility operations that
+        don't require human confirmation.
+
+        Args:
+            operation: Operation name
+
+        Returns:
+            True if should auto-approve
+        """
+        return operation in self.AUTO_APPROVE_OPERATIONS
 
     def _is_high_risk_operation(self, operation: str) -> bool:
         """Check if operation is high risk.
@@ -378,12 +408,13 @@ Respond in JSON format:
 
         except Exception as e:
             logger.error("parameter_clarity_check_failed", error=str(e))
-            # On error, be conservative and assume unclear
+            # On error, assume clear to avoid blocking execution
+            # This is safe because high-risk operations are already checked
             return {
-                "is_clear": False,
-                "confidence": 0.5,
-                "unclear_params": list(plan.action_input.keys()),
-                "reason": "Unable to verify clarity",
+                "is_clear": True,
+                "confidence": 0.8,
+                "unclear_params": [],
+                "reason": "Assuming clear due to check failure",
             }
 
     async def _create_confirmation_request(

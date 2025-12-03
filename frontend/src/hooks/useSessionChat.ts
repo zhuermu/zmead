@@ -1,14 +1,13 @@
 'use client';
 
 import { useChat } from '@/hooks/useChat';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useChatStore } from '@/lib/store';
 
 export function useSessionChat(sessionId: string | null) {
   const {
     sessions,
     addMessageToSession,
-    getCurrentSession,
   } = useChatStore();
 
   const initializedRef = useRef(false);
@@ -29,7 +28,8 @@ export function useSessionChat(sessionId: string | null) {
     setMessages,
     isTimeout,
     input: localInput,
-    handleInputChange,
+    handleInputChange: baseHandleInputChange,
+    handleSubmit: baseHandleSubmit,
   } = chatHelpers;
 
   // Initialize messages from session when sessionId changes
@@ -44,58 +44,22 @@ export function useSessionChat(sessionId: string | null) {
     };
   }, [sessionId, sessionMessages, setMessages]);
 
-  // Custom input handling
+  // Custom input handling - wraps base handler
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      setLocalInput(e.target.value);
+      baseHandleInputChange(e);
     },
-    []
+    [baseHandleInputChange]
   );
 
-  // Enhanced submit with timeout handling
+  // Enhanced submit - wraps base handler
   const handleSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
-      e.preventDefault();
-
-      if (!localInput.trim() || !sessionId) return;
-
-      // Clear any existing timeout
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-
-      setIsTimeout(false);
-
-      // Set timeout for response
-      timeoutRef.current = setTimeout(() => {
-        console.warn('Message timeout - no response received within 60 seconds');
-        setIsTimeout(true);
-        stop();
-      }, MESSAGE_TIMEOUT);
-
-      const messageContent = localInput;
-      setLocalInput('');
-
-      // Send message - AI SDK v5 expects an object with parts
-      await (sendMessage as any)({
-        parts: [{ type: 'text', text: messageContent }],
-      });
+      if (!sessionId) return;
+      await baseHandleSubmit(e);
     },
-    [localInput, sendMessage, stop, sessionId]
+    [sessionId, baseHandleSubmit]
   );
-
-  // Retry last message
-  const retry = useCallback(() => {
-    setIsTimeout(false);
-    regenerate();
-
-    // Set new timeout
-    timeoutRef.current = setTimeout(() => {
-      console.warn('Retry timeout - no response received within 60 seconds');
-      setIsTimeout(true);
-      stop();
-    }, MESSAGE_TIMEOUT);
-  }, [regenerate, stop]);
 
   // Sync messages to store when they change
   useEffect(() => {
@@ -110,23 +74,6 @@ export function useSessionChat(sessionId: string | null) {
     }
   }, [sessionId, messages, sessionMessages, addMessageToSession]);
 
-  // Clear timeout when loading completes
-  useEffect(() => {
-    if (!isLoading && timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  }, [isLoading]);
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
   return {
     messages,
     input: localInput,
@@ -134,11 +81,11 @@ export function useSessionChat(sessionId: string | null) {
     handleSubmit,
     isLoading,
     error,
-    reload: retry,
+    reload: regenerate,
     stop,
     append: sendMessage,
     setMessages,
     isTimeout,
-    retry,
+    retry: regenerate,
   };
 }

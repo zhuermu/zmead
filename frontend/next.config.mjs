@@ -3,6 +3,7 @@ const nextConfig = {
   async rewrites() {
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
     return [
+      // Backend API (excluding /api/chat which uses Edge Runtime route)
       {
         source: '/api/v1/:path*',
         destination: `${backendUrl}/api/v1/:path*`,

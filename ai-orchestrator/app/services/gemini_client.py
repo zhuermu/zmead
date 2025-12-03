@@ -350,6 +350,55 @@ class GeminiClient:
 
         return result
 
+    async def chat_completion_stream(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+    ):
+        """Generate streaming chat completion using Gemini 2.5 Flash.
+
+        Yields text chunks as they are generated for real-time streaming.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            temperature: Optional temperature override (0.0-1.0)
+
+        Yields:
+            str: Text chunks as they are generated
+
+        Raises:
+            GeminiError: If generation fails
+        """
+        log = logger.bind(
+            model=self.fast_model_name,
+            message_count=len(messages),
+        )
+        log.info("chat_completion_stream_start")
+
+        llm = self._get_fast_llm()
+
+        if temperature is not None:
+            llm = llm.bind(temperature=temperature)
+
+        langchain_messages = self._convert_messages(messages)
+
+        try:
+            # Use astream for streaming responses
+            async for chunk in llm.astream(langchain_messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    yield chunk.content
+
+            log.info("chat_completion_stream_complete")
+
+        except Exception as e:
+            gemini_error = self._handle_error(e)
+            log.error(
+                "chat_completion_stream_failed",
+                error=str(e),
+                code=gemini_error.code,
+            )
+            raise gemini_error
+
     def _convert_messages_to_genai(
         self,
         messages: list[dict[str, str]],

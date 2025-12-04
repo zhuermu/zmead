@@ -144,30 +144,65 @@ class GenerateImageTool(AgentTool):
 
             log.info("images_generated", count=len(image_bytes_list))
 
-            # Save creatives via MCP (if MCP client is available and configured)
+            # Upload images to GCS for persistent storage (not base64 in DB)
+            # This follows the requirement: 图片存储到对象存储，前端通过签名URL访问
+            gcs_client = get_gcs_client()
             creative_ids = []
-            image_urls = []
-            image_data_list = []
+            image_objects = []  # GCS object info for frontend to fetch signed URLs
 
             for idx, image_bytes in enumerate(image_bytes_list):
-                # Convert to base64 for transport/storage
-                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-                image_data_list.append({
-                    "index": idx,
-                    "format": "png",
-                    "size": len(image_bytes),
-                    "data_b64": image_b64,
-                })
+                product_name = product_info.get("name", "generated_image")
+                filename = f"{product_name}_{style}_{idx + 1}.png"
 
-                # Try to save via MCP if available
+                try:
+                    # Upload to GCS
+                    upload_result = await gcs_client.upload_for_chat_display(
+                        image_bytes=image_bytes,
+                        filename=filename,
+                        user_id=user_id or "anonymous",
+                        session_id=context.get("session_id", "unknown") if context else "unknown",
+                        style=style,
+                    )
+
+                    image_objects.append({
+                        "index": idx,
+                        "format": "png",
+                        "size": len(image_bytes),
+                        "object_name": upload_result["object_name"],
+                        "bucket": upload_result["bucket"],
+                        "gcs_url": upload_result["gcs_url"],
+                    })
+
+                    log.info(
+                        "image_uploaded_to_gcs",
+                        index=idx,
+                        object_name=upload_result["object_name"],
+                    )
+
+                except GCSError as e:
+                    log.warning(
+                        "gcs_upload_failed",
+                        index=idx,
+                        error=str(e),
+                    )
+                    # Fallback: include base64 only if GCS fails
+                    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                    image_objects.append({
+                        "index": idx,
+                        "format": "png",
+                        "size": len(image_bytes),
+                        "data_b64": image_b64,  # Fallback only
+                    })
+
+                # Try to save creative record via MCP
                 try:
                     result = await self.mcp_client.call_tool(
                         "save_creative",
                         {
                             "user_id": user_id,
-                            "image_data": image_b64,
+                            "gcs_object_name": image_objects[-1].get("object_name"),
                             "metadata": {
-                                "product_name": product_info.get("name", "generated_image"),
+                                "product_name": product_name,
                                 "style": style,
                                 "aspect_ratio": aspect_ratio,
                                 "generated_by": "gemini_imagen",
@@ -175,32 +210,22 @@ class GenerateImageTool(AgentTool):
                             },
                         },
                     )
-
                     creative_ids.append(result.get("creative_id"))
-                    image_urls.append(result.get("url"))
-
                 except MCPError as e:
-                    log.warning(
-                        "save_creative_failed",
-                        index=idx,
-                        error=str(e),
-                    )
-                    # Still include the image data even if MCP save fails
+                    log.warning("save_creative_record_failed", index=idx, error=str(e))
                     creative_ids.append(None)
-                    image_urls.append(None)
 
             log.info(
                 "generate_image_complete",
                 generated=len(image_bytes_list),
-                saved=len([cid for cid in creative_ids if cid]),
+                uploaded_to_gcs=len([obj for obj in image_objects if obj.get("object_name")]),
             )
 
             return {
                 "success": True,
-                "image_urls": [url for url in image_urls if url],
                 "creative_ids": [cid for cid in creative_ids if cid],
                 "count": len(image_bytes_list),
-                "images": image_data_list,  # Include raw image data for direct use
+                "images": image_objects,  # GCS object info for signed URL access
                 "message": f"Successfully generated {len(image_bytes_list)} images",
             }
 
@@ -280,6 +305,7 @@ class GenerateVideoTool(AgentTool):
 
     This tool calls Gemini Veo to generate advertising videos
     based on product information and creative direction.
+    Supports text-to-video, image-to-video (with first frame), and interpolation.
     """
 
     def __init__(
@@ -296,23 +322,49 @@ class GenerateVideoTool(AgentTool):
         metadata = ToolMetadata(
             name="generate_video_tool",
             description=(
-                "Generate advertising videos using AI. "
-                "Provide product information and creative direction to create "
-                "engaging video ads. Supports various durations and aspect ratios."
+                "Generate advertising videos using AI with Veo 3.1. "
+                "Supports multiple intelligent modes:\n\n"
+                "**Mode 1: Text-to-Video**\n"
+                "- Provide product_info or direct prompt\n"
+                "- Best for: Creating videos from scratch\n\n"
+                "**Mode 2: Image-to-Video (Animate Image)**\n"
+                "- Set use_context_image=true to animate the most recent image from chat\n"
+                "- Or provide first_frame_b64 directly\n"
+                "- Best for: Bringing static images to life\n\n"
+                "**Mode 3: Interpolation (First + Last Frame)**\n"
+                "- Provide both first_frame_b64 and last_frame_b64\n"
+                "- Veo creates smooth transition between frames\n"
+                "- Best for: Creating specific start-to-end animations\n\n"
+                "**Mode 4: Reference-Guided Generation**\n"
+                "- Provide reference_images_b64 (up to 3 images)\n"
+                "- Preserves subject appearance from reference images\n"
+                "- Best for: Maintaining brand consistency, character appearance\n\n"
+                "**Smart Context Usage:**\n"
+                "- If user says 'animate this image' or 'make a video from that', set use_context_image=true\n"
+                "- If user uploaded images, they're available in conversation history\n"
+                "- If user generated images earlier, they're also available\n"
+                "- Use context_image_index to select which image (0=most recent)"
             ),
             category=ToolCategory.AGENT_CUSTOM,
             parameters=[
                 ToolParameter(
                     name="product_info",
                     type="object",
-                    description="Product information including name, description, features",
-                    required=True,
+                    description="Product information including name, description, features. Optional if using image input.",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="prompt",
+                    type="string",
+                    description="Direct text prompt for video generation. Use this for more control over the output.",
+                    required=False,
                 ),
                 ToolParameter(
                     name="style",
                     type="string",
                     description="Video style and mood",
-                    required=True,
+                    required=False,
+                    default="dynamic",
                     enum=["dynamic", "calm", "energetic", "professional", "lifestyle"],
                 ),
                 ToolParameter(
@@ -331,10 +383,48 @@ class GenerateVideoTool(AgentTool):
                     default="16:9",
                     enum=["16:9", "9:16"],
                 ),
+                ToolParameter(
+                    name="first_frame_b64",
+                    type="string",
+                    description="Base64-encoded image to use as the first frame (image-to-video mode)",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="last_frame_b64",
+                    type="string",
+                    description="Base64-encoded image to use as the last frame (interpolation mode)",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="reference_images_b64",
+                    type="array",
+                    description="Array of base64-encoded reference images for style guidance (max 3)",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="use_context_image",
+                    type="boolean",
+                    description="If true, use the most recent image from conversation history as first_frame",
+                    required=False,
+                    default=False,
+                ),
+                ToolParameter(
+                    name="context_image_index",
+                    type="number",
+                    description="Index of the image to use from conversation history (0 = most recent)",
+                    required=False,
+                    default=0,
+                ),
+                ToolParameter(
+                    name="negative_prompt",
+                    type="string",
+                    description="Things to avoid in the video",
+                    required=False,
+                ),
             ],
-            returns="object with operation_id for polling video status",
+            returns="object with video URL/data once generation completes",
             credit_cost=20.0,
-            tags=["creative", "video", "generation", "ai"],
+            tags=["creative", "video", "generation", "ai", "image-to-video"],
         )
 
         super().__init__(metadata)
@@ -351,7 +441,7 @@ class GenerateVideoTool(AgentTool):
 
         Args:
             parameters: Tool parameters
-            context: Execution context with user_id
+            context: Execution context with user_id and conversation_history
 
         Returns:
             Video URL and metadata once generation completes
@@ -363,9 +453,18 @@ class GenerateVideoTool(AgentTool):
 
         user_id = context.get("user_id") if context else None
         product_info = parameters.get("product_info", {})
+        direct_prompt = parameters.get("prompt")
         style = parameters.get("style", "dynamic")
         duration = parameters.get("duration", 4)
         aspect_ratio = parameters.get("aspect_ratio", "16:9")
+        negative_prompt = parameters.get("negative_prompt")
+        
+        # Image inputs
+        first_frame_b64 = parameters.get("first_frame_b64")
+        last_frame_b64 = parameters.get("last_frame_b64")
+        reference_images_b64 = parameters.get("reference_images_b64", [])
+        use_context_image = parameters.get("use_context_image", False)
+        context_image_index = parameters.get("context_image_index", 0)
 
         log = logger.bind(
             tool=self.name,
@@ -373,18 +472,51 @@ class GenerateVideoTool(AgentTool):
             style=style,
             duration=duration,
             aspect_ratio=aspect_ratio,
+            has_first_frame=first_frame_b64 is not None,
+            has_last_frame=last_frame_b64 is not None,
+            use_context_image=use_context_image,
         )
         log.info("generate_video_start")
 
         try:
+            # Extract image from conversation history if requested
+            if use_context_image and not first_frame_b64:
+                context_image = self._extract_image_from_context(context, context_image_index)
+                if context_image:
+                    first_frame_b64 = context_image
+                    log.info("using_context_image", index=context_image_index)
+                else:
+                    log.warning("no_context_image_found")
+
+            # Convert base64 to bytes
+            first_frame = base64.b64decode(first_frame_b64) if first_frame_b64 else None
+            last_frame = base64.b64decode(last_frame_b64) if last_frame_b64 else None
+            reference_images = [
+                base64.b64decode(img) for img in reference_images_b64[:3]
+            ] if reference_images_b64 else None
+
             # Build generation prompt
-            prompt = self._build_video_prompt(product_info, style)
+            if direct_prompt:
+                prompt = direct_prompt
+            elif first_frame and not product_info:
+                # Image-to-video mode without product info
+                prompt = self._build_image_animation_prompt(style)
+            else:
+                prompt = self._build_video_prompt(product_info, style)
+
+            log.info("generating_video", 
+                     prompt_preview=prompt[:100],
+                     mode="image-to-video" if first_frame else "text-to-video")
 
             # Generate video using Gemini Veo
             result = await self.gemini_client.generate_video(
                 prompt=prompt,
                 duration=duration,
                 aspect_ratio=aspect_ratio,
+                first_frame=first_frame,
+                last_frame=last_frame,
+                reference_images=reference_images,
+                negative_prompt=negative_prompt,
                 use_fast_model=False,
             )
 
@@ -496,6 +628,82 @@ class GenerateVideoTool(AgentTool):
                 message=f"Unexpected error: {str(e)}",
                 tool_name=self.name,
             )
+
+    def _extract_image_from_context(
+        self,
+        context: dict[str, Any] | None,
+        index: int = 0,
+    ) -> str | None:
+        """Extract image from conversation history.
+
+        Args:
+            context: Execution context with conversation_history
+            index: Index of image to extract (0 = most recent)
+
+        Returns:
+            Base64-encoded image data or None
+        """
+        if not context:
+            return None
+
+        conversation_history = context.get("conversation_history", [])
+        images_found = []
+
+        # Search through conversation history for images
+        for message in reversed(conversation_history):
+            # Check for generated images in message
+            generated_images = message.get("generated_images", [])
+            for img in generated_images:
+                if img.get("data_b64"):
+                    images_found.append(img["data_b64"])
+
+            # Check for uploaded images (attachments)
+            attachments = message.get("attachments", [])
+            for att in attachments:
+                if att.get("type") == "image" and att.get("data_b64"):
+                    images_found.append(att["data_b64"])
+
+            # Check for image URLs that might have been uploaded
+            content = message.get("content", "")
+            if isinstance(content, str) and "data:image" in content:
+                # Extract base64 from data URL
+                import re
+                match = re.search(r'data:image/[^;]+;base64,([A-Za-z0-9+/=]+)', content)
+                if match:
+                    images_found.append(match.group(1))
+
+        if images_found and index < len(images_found):
+            return images_found[index]
+
+        return None
+
+    def _build_image_animation_prompt(self, style: str) -> str:
+        """Build prompt for animating an image.
+
+        Args:
+            style: Animation style
+
+        Returns:
+            Animation prompt
+        """
+        style_prompts = {
+            "dynamic": "Add dynamic camera movement, zoom effects, and energetic motion",
+            "calm": "Add gentle, smooth camera movement with subtle parallax effects",
+            "energetic": "Add exciting motion, quick zooms, and vibrant energy",
+            "professional": "Add subtle professional camera movement, smooth transitions",
+            "lifestyle": "Add natural, organic movement as if capturing a real moment",
+        }
+
+        style_desc = style_prompts.get(style, "professional camera movement")
+
+        return f"""Animate this image with {style_desc}.
+
+Requirements:
+- Maintain the original image quality and composition
+- Add natural, realistic motion
+- Create smooth, professional animation
+- Suitable for advertising use
+- No text overlays or watermarks"""
 
     def _build_video_prompt(
         self,

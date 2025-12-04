@@ -3,12 +3,18 @@
 import { useState } from 'react';
 import { Download, X, ChevronLeft, ChevronRight, ZoomIn, Image as ImageIcon } from 'lucide-react';
 
-// Support both API format and legacy format
+// Support GCS storage, API format, and legacy format
 export interface GeneratedImage {
   // API format (from generate_image_tool)
   index?: number;
   format?: string;
   size?: number;
+  // GCS storage (preferred) - frontend fetches signed URL
+  object_name?: string;
+  bucket?: string;
+  gcs_url?: string;
+  signed_url?: string;  // Resolved signed URL for display
+  // Fallback base64 (only if GCS upload fails)
   data_b64?: string;
   // Legacy format
   imageData?: string;
@@ -26,11 +32,34 @@ export function GeneratedImageGallery({ images, onSave }: GeneratedImageGalleryP
 
   if (!images || images.length === 0) return null;
 
-  const handleDownload = (image: GeneratedImage, index: number) => {
-    // Get image data from either format
-    const imageData = image.data_b64 || image.imageData || '';
+  const handleDownload = async (image: GeneratedImage, index: number) => {
     const format = image.format || image.mimeType?.split('/')[1] || 'png';
     const mimeType = image.mimeType || `image/${format}`;
+
+    // Priority: signed_url > data_b64 > imageData
+    if (image.signed_url) {
+      // For signed URLs, fetch and download
+      try {
+        const response = await fetch(image.signed_url);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `generated-image-${index + 1}.${format}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error('Download failed:', err);
+        // Fallback: open in new tab
+        window.open(image.signed_url, '_blank');
+      }
+      return;
+    }
+
+    // Get image data from either format
+    const imageData = image.data_b64 || image.imageData || '';
 
     // Handle URL format
     if (imageData.startsWith('http')) {
@@ -49,6 +78,12 @@ export function GeneratedImageGallery({ images, onSave }: GeneratedImageGalleryP
   };
 
   const getImageSrc = (image: GeneratedImage) => {
+    // Priority: signed_url > data_b64 > imageData (legacy)
+    // GCS signed URLs are preferred for performance and cost savings
+    if (image.signed_url) {
+      return image.signed_url;
+    }
+
     const imageData = image.data_b64 || image.imageData || '';
     const format = image.format || 'png';
     const mimeType = image.mimeType || `image/${format}`;
@@ -56,7 +91,21 @@ export function GeneratedImageGallery({ images, onSave }: GeneratedImageGalleryP
     if (imageData.startsWith('data:') || imageData.startsWith('http')) {
       return imageData;
     }
-    return `data:${mimeType};base64,${imageData}`;
+    if (imageData) {
+      return `data:${mimeType};base64,${imageData}`;
+    }
+
+    // If we have object_name but no signed_url yet, show placeholder
+    if (image.object_name) {
+      return ''; // Will show loading state
+    }
+
+    return '';
+  };
+
+  // Check if image is still loading (has object_name but no signed_url)
+  const isImageLoading = (image: GeneratedImage) => {
+    return image.object_name && !image.signed_url && !image.data_b64;
   };
 
   return (
@@ -84,35 +133,47 @@ export function GeneratedImageGallery({ images, onSave }: GeneratedImageGalleryP
           <div
             key={index}
             className="relative group cursor-pointer rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 aspect-square shadow-sm hover:shadow-md transition-shadow"
-            onClick={() => setSelectedIndex(index)}
+            onClick={() => !isImageLoading(image) && setSelectedIndex(index)}
           >
-            <img
-              src={getImageSrc(image)}
-              alt={`Generated image ${index + 1}`}
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDownload(image, index);
-                }}
-                className="p-2 bg-white/90 rounded-full hover:bg-white transition-colors"
-                title="下载"
-              >
-                <Download className="w-5 h-5 text-gray-700" />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedIndex(index);
-                }}
-                className="p-2 bg-white/90 rounded-full hover:bg-white transition-colors"
-                title="预览"
-              >
-                <ZoomIn className="w-5 h-5 text-gray-700" />
-              </button>
-            </div>
+            {isImageLoading(image) ? (
+              // Loading state for GCS images
+              <div className="w-full h-full flex items-center justify-center">
+                <div className="animate-pulse flex flex-col items-center gap-2">
+                  <ImageIcon className="w-8 h-8 text-gray-400" />
+                  <span className="text-xs text-gray-500">加载中...</span>
+                </div>
+              </div>
+            ) : (
+              <img
+                src={getImageSrc(image)}
+                alt={`Generated image ${index + 1}`}
+                className="w-full h-full object-cover"
+              />
+            )}
+            {!isImageLoading(image) && (
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDownload(image, index);
+                  }}
+                  className="p-2 bg-white/90 rounded-full hover:bg-white transition-colors"
+                  title="下载"
+                >
+                  <Download className="w-5 h-5 text-gray-700" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedIndex(index);
+                  }}
+                  className="p-2 bg-white/90 rounded-full hover:bg-white transition-colors"
+                  title="预览"
+                >
+                  <ZoomIn className="w-5 h-5 text-gray-700" />
+                </button>
+              </div>
+            )}
             <div className="absolute bottom-1 right-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
               {index + 1}
             </div>

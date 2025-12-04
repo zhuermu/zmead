@@ -213,18 +213,26 @@ class AgentMemory:
     ) -> list[dict[str, str]]:
         """Get conversation context formatted for LLM.
 
+        IMPORTANT: Only returns text content, no files/images/videos.
+        This is critical for cost control - including historical files
+        in every LLM call would cause costs to skyrocket.
+
+        Files are stored in GCS for viewing history, but not sent to LLM.
+
         Args:
             session_id: Session ID
             max_messages: Maximum number of messages to include
 
         Returns:
-            List of message dicts with role and content
+            List of message dicts with role and content (text only)
         """
         messages = await self.get_conversation_history(
             session_id=session_id,
             limit=max_messages,
         )
 
+        # Only return text content - no files/images/videos
+        # This prevents cost explosion from sending historical media to LLM
         return [{"role": msg.role, "content": msg.content} for msg in messages]
 
     async def clear_conversation(self, session_id: str) -> bool:

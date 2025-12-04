@@ -48,6 +48,7 @@ export interface ChatSession {
   messages: Message[];
   createdAt: Date;
   updatedAt: Date;
+  synced?: boolean; // Whether this session is synced with backend
 }
 
 interface ChatState {
@@ -64,15 +65,23 @@ interface ChatState {
   sessions: ChatSession[];
   currentSessionId: string | null;
   sidebarOpen: boolean;
+  isLoadingFromDb: boolean;
+  pendingDeleteId: string | null; // For delete confirmation
 
   // Session actions
   createSession: () => string;
   deleteSession: (sessionId: string) => void;
+  confirmDeleteSession: (sessionId: string) => void;
+  cancelDeleteSession: () => void;
   selectSession: (sessionId: string) => void;
   getCurrentSession: () => ChatSession | null;
   addMessageToSession: (sessionId: string, message: Message) => void;
   updateSessionTitle: (sessionId: string, title: string) => void;
+  updateSessionMessages: (sessionId: string, messages: Message[]) => void;
   toggleSidebar: () => void;
+  setIsLoadingFromDb: (loading: boolean) => void;
+  setSessions: (sessions: ChatSession[]) => void;
+  markSessionSynced: (sessionId: string) => void;
 }
 
 // Generate unique session ID
@@ -104,6 +113,8 @@ export const useChatStore = create<ChatState>()(
       sessions: [],
       currentSessionId: null,
       sidebarOpen: true,
+      isLoadingFromDb: false,
+      pendingDeleteId: null,
 
       createSession: () => {
         const newSession: ChatSession = {
@@ -112,6 +123,7 @@ export const useChatStore = create<ChatState>()(
           messages: [],
           createdAt: new Date(),
           updatedAt: new Date(),
+          synced: false,
         };
         set((state) => ({
           sessions: [newSession, ...state.sessions],
@@ -120,16 +132,26 @@ export const useChatStore = create<ChatState>()(
         return newSession.id;
       },
 
+      confirmDeleteSession: (sessionId: string) => {
+        set({ pendingDeleteId: sessionId });
+      },
+
+      cancelDeleteSession: () => {
+        set({ pendingDeleteId: null });
+      },
+
       deleteSession: (sessionId: string) => {
         set((state) => {
           const newSessions = state.sessions.filter((s) => s.id !== sessionId);
-          const newCurrentId =
-            state.currentSessionId === sessionId
-              ? newSessions[0]?.id || null
-              : state.currentSessionId;
+          // If deleting current session, clear messages and select another or create new
+          let newCurrentId = state.currentSessionId;
+          if (state.currentSessionId === sessionId) {
+            newCurrentId = newSessions[0]?.id || null;
+          }
           return {
             sessions: newSessions,
             currentSessionId: newCurrentId,
+            pendingDeleteId: null,
           };
         });
       },
@@ -187,41 +209,45 @@ export const useChatStore = create<ChatState>()(
         }));
       },
 
+      updateSessionMessages: (sessionId: string, messages: Message[]) => {
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === sessionId ? { ...s, messages, updatedAt: new Date() } : s
+          ),
+        }));
+      },
+
       toggleSidebar: () => {
         set((state) => ({ sidebarOpen: !state.sidebarOpen }));
+      },
+
+      setIsLoadingFromDb: (loading: boolean) => {
+        set({ isLoadingFromDb: loading });
+      },
+
+      setSessions: (sessions: ChatSession[]) => {
+        set({ sessions });
+      },
+
+      markSessionSynced: (sessionId: string) => {
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === sessionId ? { ...s, synced: true } : s
+          ),
+        }));
       },
     }),
     {
       name: 'chat-storage',
       partialize: (state) => ({
-        // Strip large binary data from messages before persisting to localStorage
-        // to avoid exceeding the ~5MB quota
-        // Keep videoObjectName so we can re-fetch signed URLs on page load
-        messages: state.messages.map((msg) => ({
-          ...msg,
-          // Remove base64 video data URLs (can be several MB)
-          // Keep videoObjectName for re-fetching signed URLs
-          generatedVideoUrl: msg.generatedVideoUrl?.startsWith('data:')
-            ? undefined
-            : msg.generatedVideoUrl,
-          // Remove base64 image data, keep only metadata
-          generatedImages: msg.generatedImages?.map((img) => ({
-            ...img,
-            data_b64: undefined, // Remove the actual image data
-          })),
-        })),
+        // Only persist minimal data - full messages are in database
         sessions: state.sessions.map((session) => ({
-          ...session,
-          messages: session.messages.map((msg) => ({
-            ...msg,
-            generatedVideoUrl: msg.generatedVideoUrl?.startsWith('data:')
-              ? undefined
-              : msg.generatedVideoUrl,
-            generatedImages: msg.generatedImages?.map((img) => ({
-              ...img,
-              data_b64: undefined,
-            })),
-          })),
+          id: session.id,
+          title: session.title,
+          messages: [], // Don't persist messages to localStorage, they're in DB
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+          synced: session.synced,
         })),
         currentSessionId: state.currentSessionId,
       }),

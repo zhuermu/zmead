@@ -82,10 +82,22 @@ def _create_agent_with_tools() -> ReActAgent:
 router = APIRouter()
 
 
+class MessageAttachment(BaseModel):
+    """File attachment with S3 URL."""
+    id: str
+    filename: str
+    contentType: str
+    size: int
+    s3Url: str
+    cdnUrl: str | None = None
+    type: str  # 'image', 'video', 'document', 'other'
+
+
 class ChatMessage(BaseModel):
     """Single chat message."""
     role: str = Field(..., description="Message role: user, assistant, or system")
     content: str = Field(..., description="Message content")
+    attachments: list[MessageAttachment] | None = Field(None, description="File attachments with S3 URLs")
 
 
 class ChatRequest(BaseModel):
@@ -132,10 +144,15 @@ async def chat_stream(
         language=language,
     )
 
-    # Extract last user message
-    last_message = request.messages[-1].content if request.messages else ""
+    # Extract last user message and attachments
+    last_message_obj = request.messages[-1] if request.messages else None
+    last_message = last_message_obj.content if last_message_obj else ""
+    attachments = last_message_obj.attachments if last_message_obj else None
 
-    log.info("chat_stream_request", message_preview=last_message[:100])
+    log.info("chat_stream_request", 
+             message_preview=last_message[:100],
+             has_attachments=bool(attachments),
+             attachment_count=len(attachments) if attachments else 0)
 
     async def generate():
         """Generate SSE events."""
@@ -151,6 +168,7 @@ async def chat_stream(
                 user_message=last_message,
                 user_id=request.user_id,
                 session_id=request.session_id,
+                attachments=[att.model_dump() for att in attachments] if attachments else None,
             ):
                 event_type = event.get("type")
 

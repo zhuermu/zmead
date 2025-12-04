@@ -99,6 +99,9 @@ class AgentState:
     steps: list[AgentStep] = field(default_factory=list)
     tool_calls: list[ToolCall] = field(default_factory=list)
 
+    # Conversation messages (LangChain BaseMessage objects)
+    messages: list[Any] = field(default_factory=list)
+
     # Loaded tools
     loaded_tool_names: list[str] = field(default_factory=list)
 
@@ -116,6 +119,17 @@ class AgentState:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert state to dictionary for serialization."""
+        # Serialize messages to simple dict format
+        serialized_messages = []
+        for msg in self.messages:
+            msg_dict = {
+                "type": getattr(msg, "type", "unknown"),
+                "content": getattr(msg, "content", ""),
+            }
+            if hasattr(msg, "additional_kwargs") and msg.additional_kwargs:
+                msg_dict["additional_kwargs"] = msg.additional_kwargs
+            serialized_messages.append(msg_dict)
+
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,
@@ -146,6 +160,7 @@ class AgentState:
                 }
                 for call in self.tool_calls
             ],
+            "messages": serialized_messages,
             "loaded_tool_names": self.loaded_tool_names,
             "waiting_for_user_input": self.waiting_for_user_input,
             "user_input_request": self.user_input_request,
@@ -158,6 +173,8 @@ class AgentState:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AgentState":
         """Create state from dictionary."""
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
         # Parse steps
         steps = []
         for step_data in data.get("steps", []):
@@ -185,6 +202,23 @@ class AgentState:
                 )
             )
 
+        # Parse messages
+        messages = []
+        for msg_data in data.get("messages", []):
+            msg_type = msg_data.get("type", "human")
+            content = msg_data.get("content", "")
+            additional_kwargs = msg_data.get("additional_kwargs", {})
+
+            if msg_type == "human":
+                messages.append(HumanMessage(content=content, additional_kwargs=additional_kwargs))
+            elif msg_type == "ai":
+                messages.append(AIMessage(content=content, additional_kwargs=additional_kwargs))
+            elif msg_type == "system":
+                messages.append(SystemMessage(content=content, additional_kwargs=additional_kwargs))
+            else:
+                # Default to HumanMessage for unknown types
+                messages.append(HumanMessage(content=content, additional_kwargs=additional_kwargs))
+
         return cls(
             session_id=data["session_id"],
             user_id=data["user_id"],
@@ -196,6 +230,7 @@ class AgentState:
             max_steps=data.get("max_steps", 10),
             steps=steps,
             tool_calls=tool_calls,
+            messages=messages,
             loaded_tool_names=data.get("loaded_tool_names", []),
             waiting_for_user_input=data.get("waiting_for_user_input", False),
             user_input_request=data.get("user_input_request"),
@@ -371,6 +406,7 @@ class ReActAgent:
         session_id: str,
         conversation_id: str | None = None,
         loaded_tools: list[AgentTool] | None = None,
+        attachments: list[dict] | None = None,
     ):
         """Process a user message and stream the response in real-time.
 
@@ -380,6 +416,7 @@ class ReActAgent:
             session_id: Session ID
             conversation_id: Optional conversation ID
             loaded_tools: Optional pre-loaded tools (if None, will load all)
+            attachments: Optional file attachments with S3 URLs
 
         Yields:
             dict: Events with type and content:
@@ -407,11 +444,31 @@ class ReActAgent:
             if loaded_tools:
                 state.loaded_tool_names = [tool.name for tool in loaded_tools]
 
+            # Build enhanced user message with attachment info
+            enhanced_message = user_message
+            if attachments:
+                # Add attachment information to message for agent context
+                attachment_info = "\n\n附件信息：\n"
+                for att in attachments:
+                    att_type = att.get("type", "file")
+                    filename = att.get("filename", "unknown")
+                    s3_url = att.get("s3Url", "")
+                    
+                    if att_type == "image":
+                        attachment_info += f"- 图片: {filename} (URL: {s3_url})\n"
+                    elif att_type == "video":
+                        attachment_info += f"- 视频: {filename} (URL: {s3_url})\n"
+                    else:
+                        attachment_info += f"- 文件: {filename} (URL: {s3_url})\n"
+                
+                enhanced_message = user_message + attachment_info
+                log.info("attachments_included", count=len(attachments))
+            
             # Add user message to conversation history
             await self.memory.add_message(
                 session_id=session_id,
                 role="user",
-                content=user_message,
+                content=enhanced_message,
             )
 
             # Execute ReAct loop with streaming
@@ -697,11 +754,15 @@ class ReActAgent:
                 state.status = AgentStatus.ACTING
 
                 try:
+                    # Convert messages to dict format for tool context
+                    conversation_history = self._messages_to_history(state.messages)
+                    
                     tool_result = await self._execute_tool(
                         tool_name=plan.action,
                         parameters=plan.action_input or {},
                         available_tools=loaded_tools,
                         user_id=state.user_id,
+                        conversation_history=conversation_history,
                     )
 
                     # Record tool call
@@ -956,11 +1017,15 @@ class ReActAgent:
                 state.status = AgentStatus.ACTING
 
                 try:
+                    # Convert messages to dict format for tool context
+                    conversation_history = self._messages_to_history(state.messages)
+                    
                     tool_result = await self._execute_tool(
                         tool_name=plan.action,
                         parameters=plan.action_input or {},
                         available_tools=loaded_tools,
                         user_id=state.user_id,
+                        conversation_history=conversation_history,
                     )
 
                     tool_call = ToolCall(
@@ -1114,14 +1179,19 @@ class ReActAgent:
 
             return existing_state
 
-        # Create fresh state for new messages
-        return AgentState(
+        # Create fresh state for new messages (using dataclass, not TypedDict)
+        from langchain_core.messages import HumanMessage
+        
+        state = AgentState(
             session_id=session_id,
             user_id=user_id,
             conversation_id=conversation_id,
             user_message=user_message,
             max_steps=self.max_steps,
+            messages=[HumanMessage(content=user_message)],
         )
+        
+        return state
 
     async def _load_state(self, session_id: str) -> AgentState | None:
         """Load state from Redis.
@@ -1211,6 +1281,7 @@ class ReActAgent:
         parameters: dict[str, Any],
         available_tools: list[AgentTool],
         user_id: str,
+        conversation_history: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Execute a tool.
 
@@ -1219,6 +1290,7 @@ class ReActAgent:
             parameters: Tool parameters
             available_tools: List of available tools
             user_id: User ID for context
+            conversation_history: Optional conversation history for context-aware tools
 
         Returns:
             Tool execution result
@@ -1245,7 +1317,10 @@ class ReActAgent:
 
         # Execute tool
         try:
-            context = {"user_id": user_id}
+            context = {
+                "user_id": user_id,
+                "conversation_history": conversation_history or [],
+            }
             result = await tool.execute(parameters=parameters, context=context)
 
             log.info("execute_tool_complete", success=result.get("success", False))
@@ -1262,6 +1337,37 @@ class ReActAgent:
                 tool_name=tool_name,
                 error_code="EXECUTION_ERROR",
             )
+
+    def _messages_to_history(self, messages: list | None) -> list[dict[str, Any]]:
+        """Convert LangChain messages to simple dict format for tool context.
+
+        Args:
+            messages: List of LangChain BaseMessage objects or None
+
+        Returns:
+            List of message dicts with role, content, and metadata
+        """
+        if not messages:
+            return []
+            
+        history = []
+        for msg in messages:
+            msg_dict = {
+                "role": getattr(msg, "type", "unknown"),
+                "content": getattr(msg, "content", ""),
+            }
+            
+            # Extract any image data from message metadata
+            if hasattr(msg, "additional_kwargs"):
+                kwargs = msg.additional_kwargs
+                if "generated_images" in kwargs:
+                    msg_dict["generated_images"] = kwargs["generated_images"]
+                if "attachments" in kwargs:
+                    msg_dict["attachments"] = kwargs["attachments"]
+            
+            history.append(msg_dict)
+        
+        return history
 
     def _format_tool_result(self, result: dict[str, Any]) -> str:
         """Format tool result as observation text.

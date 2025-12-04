@@ -13,6 +13,21 @@ AAE (Automated Ad Engine) is an advertising SaaS platform with an embedded AI ag
 
 ## Development Commands
 
+### Quick Start (Local Development)
+```bash
+# 1. Start infrastructure only (recommended for local dev)
+docker-compose up -d mysql redis
+
+# 2. Start backend (in separate terminal)
+cd backend && source venv/bin/activate && uvicorn app.main:app --reload --port 8000
+
+# 3. Start AI orchestrator (in separate terminal)
+cd ai-orchestrator && source venv/bin/activate && uvicorn app.main:app --reload --port 8001
+
+# 4. Start frontend (in separate terminal)
+cd frontend && npm run dev
+```
+
 ### Infrastructure (Docker)
 ```bash
 # Start all services (MySQL, Redis, backend, ai-orchestrator, frontend)
@@ -23,6 +38,16 @@ docker-compose up -d mysql redis
 
 # Stop services
 docker-compose down
+
+# View logs
+docker-compose logs -f backend              # Follow backend logs
+docker-compose logs -f ai-orchestrator      # Follow AI orchestrator logs
+docker-compose logs --tail=100 backend      # Show last 100 lines
+
+# Check service health
+docker-compose ps                           # Show all services status
+curl http://localhost:8000/health           # Backend health check
+curl http://localhost:8001/health           # AI orchestrator health check
 ```
 
 ### Backend (FastAPI) - Port 8000
@@ -36,23 +61,24 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 # Install dependencies (including dev tools)
 pip install -e ".[dev]"
 
-# Run database migrations
-alembic upgrade head
+# Database migrations
+alembic upgrade head                           # Apply all migrations
+alembic downgrade -1                           # Rollback one migration
+alembic revision --autogenerate -m "message"   # Create new migration
+alembic current                                # Show current migration
 
 # Start development server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # Run tests
 pytest
-
-# Run single test file
-pytest tests/test_file.py
-
-# Run with coverage
-pytest --cov=app
+pytest tests/test_file.py                      # Run single test file
+pytest tests/test_file.py::test_function       # Run specific test
+pytest --cov=app --cov-report=html             # Generate HTML coverage report
 
 # Linting and type checking
-ruff check app/
+ruff check app/                                # Check for issues
+ruff format app/                               # Auto-format code
 mypy app/
 
 # Celery worker (background tasks)
@@ -78,12 +104,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 
 # Run tests
 pytest
-
-# Run with coverage
-pytest --cov=app tests/
+pytest tests/test_file.py                      # Run single test file
+pytest --cov=app --cov-report=html             # Generate HTML coverage report
 
 # Linting and type checking
-ruff check .
+ruff check .                                   # Check for issues
+ruff format .                                  # Auto-format code
 mypy app/
 ```
 
@@ -102,6 +128,10 @@ npm run build
 
 # Run production server
 npm start
+
+# Testing
+npm run test        # Run tests in watch mode
+npm run test:ci     # Run tests once (for CI)
 
 # Lint
 npm run lint
@@ -169,13 +199,15 @@ Unified AI Agent (LangGraph)
 
 ## Key Technical Decisions
 
-- **AI Agent Framework**: LangGraph (state machine with checkpointing)
-- **Frontend Chat**: Vercel AI SDK (`ai` package) with streaming
+- **AI Agent Framework**: LangGraph with ReAct (Reasoning + Acting) pattern
+- **Frontend-to-Agent Communication**: HTTP POST + SSE (Server-Sent Events) for streaming responses
+- **Agent-to-Backend Communication**: MCP Protocol (Model Context Protocol)
 - **State Management**: Zustand (frontend), React Query for server state
-- **Communication**: HTTP Streaming (frontend ↔ agent) + MCP Protocol (agent ↔ portal)
 - **Billing**: Credit-based system (¥199/30K credits, ¥1999/400K credits, overage at ¥0.01/credit)
-- **Primary LLM**: Gemini 2.5 Flash (Claude 3.5 Sonnet as fallback)
-- **Image Generation**: AWS Bedrock Stable Diffusion XL
+- **Primary LLM**: Gemini 2.5 Flash/Pro (with fallback to Claude 3.5 Sonnet)
+- **Image Generation**: Gemini Imagen 3
+- **Video Generation**: Gemini Veo 3.1
+- **Memory Storage**: Redis for conversation context and agent state
 
 ## Specification Documents
 
@@ -234,7 +266,47 @@ Required environment variables:
 - All specs are in Chinese with English technical terms
 - Requirements follow WHEN/THEN acceptance criteria format
 - Credit consumption rules are dynamically configurable
-- Capability modules communicate with User Portal exclusively via MCP (no direct DB access)
+- AI Orchestrator communicates with Backend exclusively via MCP (no direct DB access)
 - Backend uses async SQLAlchemy with aiomysql
 - Frontend uses Next.js App Router (not Pages Router)
 - Python version: 3.12+ required for both backend services
+- Chat uses HTTP streaming (SSE) instead of WebSocket for simplicity
+- Agent uses ReAct pattern: Plan → Evaluate (Human-in-the-Loop) → Act → Memory → Perceive
+
+## Important File Locations
+
+```
+Key configuration files:
+├── backend/.env                     # Backend environment variables
+├── backend/alembic.ini              # Database migration config
+├── ai-orchestrator/.env             # AI orchestrator environment variables
+├── frontend/.env.local              # Frontend environment variables
+├── docker-compose.yml               # Docker services configuration
+└── .kiro/specs/                     # All requirements and specs
+    ├── ARCHITECTURE.md              # System architecture overview
+    ├── INTERFACES.md                # API and protocol specifications
+    └── */requirements.md            # Module-specific requirements
+```
+
+## Common Troubleshooting
+
+### Backend won't start
+```bash
+# Check if MySQL is running
+docker-compose ps mysql
+# Check database connection
+mysql -h 127.0.0.1 -u aae_user -paae_password aae_platform
+```
+
+### AI Orchestrator connection errors
+```bash
+# Verify WEB_PLATFORM_SERVICE_TOKEN matches in both .env files
+grep WEB_PLATFORM_SERVICE_TOKEN backend/.env
+grep WEB_PLATFORM_SERVICE_TOKEN ai-orchestrator/.env
+```
+
+### Frontend can't connect to backend
+```bash
+# Check NEXT_PUBLIC_API_URL in frontend/.env.local
+# Should be http://localhost:8000 for local development
+```

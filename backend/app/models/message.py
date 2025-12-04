@@ -23,6 +23,9 @@ class Message(Base):
         BigInteger, ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False, index=True
     )
+    
+    # Client-generated message ID for deduplication
+    client_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Message content
     role: Mapped[str] = mapped_column(
@@ -36,6 +39,15 @@ class Message(Base):
 
     # Message metadata (renamed to avoid SQLAlchemy reserved word)
     message_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    
+    # Agent process info (thinking steps, tool calls, observations)
+    process_info: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # Generated assets (images, videos, etc.)
+    generated_assets: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    
+    # Attachments (uploaded files with S3 URLs)
+    attachments: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # Token usage tracking
     input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

@@ -6,12 +6,30 @@ import { useAuth } from '@/components/auth/AuthProvider';
 
 const MESSAGE_TIMEOUT = 60000; // 60 seconds
 
-// Generated image data
+// Generated image data (supports both GCS object and fallback base64)
 export interface GeneratedImage {
   index: number;
   format: string;
   size: number;
-  data_b64: string;
+  // GCS storage (preferred) - frontend fetches signed URL
+  object_name?: string;
+  bucket?: string;
+  gcs_url?: string;
+  // Signed URL (resolved from object_name)
+  signed_url?: string;
+  // Fallback base64 (only if GCS upload fails)
+  data_b64?: string;
+}
+
+// File attachment with S3 URL
+export interface MessageAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  s3Url: string;
+  cdnUrl?: string;
+  type: 'image' | 'video' | 'document' | 'other';
 }
 
 // Message type matching AI SDK format
@@ -29,6 +47,8 @@ export interface Message {
   generatedVideoUrl?: string;
   // GCS object name for video (used to fetch signed URL)
   videoObjectName?: string;
+  // Uploaded file attachments (with S3 URLs)
+  attachments?: MessageAttachment[];
 }
 
 // Helper function to extract string content from message
@@ -153,6 +173,42 @@ export function useChat(options: UseChatSSEOptions = {}) {
     }
   }, []);
 
+  // Fetch signed URL for GCS image object
+  const fetchImageSignedUrl = useCallback(async (objectName: string, messageId: string, imageIndex: number) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`/api/media/signed-url/${encodeURIComponent(objectName)}`, {
+        method: 'GET',
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!response.ok) {
+        console.error('Failed to fetch image signed URL:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      const signedUrl = data.signed_url;
+
+      // Update the specific image in the message with the signed URL
+      setMessages(prev =>
+        prev.map(msg => {
+          if (msg.id === messageId && msg.generatedImages) {
+            const updatedImages = msg.generatedImages.map((img, idx) =>
+              idx === imageIndex ? { ...img, signed_url: signedUrl } : img
+            );
+            return { ...msg, generatedImages: updatedImages };
+          }
+          return msg;
+        })
+      );
+    } catch (err) {
+      console.error('Error fetching image signed URL:', err);
+    }
+  }, []);
+
   // Load chat history from store on mount and refresh signed URLs
   useEffect(() => {
     const storedMessages = useChatStore.getState().messages;
@@ -165,9 +221,17 @@ export function useChat(options: UseChatSSEOptions = {}) {
         if (msg.videoObjectName && !msg.generatedVideoUrl) {
           fetchSignedUrl(msg.videoObjectName, msg.id);
         }
+        // Re-fetch signed URLs for images with GCS object names
+        if (msg.generatedImages) {
+          msg.generatedImages.forEach((img, idx) => {
+            if (img.object_name && !img.signed_url && !img.data_b64) {
+              fetchImageSignedUrl(img.object_name, msg.id, idx);
+            }
+          });
+        }
       });
     }
-  }, [messages.length, fetchSignedUrl]);
+  }, [messages.length, fetchSignedUrl, fetchImageSignedUrl]);
 
   // Sync messages to store
   useEffect(() => {
@@ -206,7 +270,10 @@ export function useChat(options: UseChatSSEOptions = {}) {
   }, []);
 
   // Send message using fetch + EventSource
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (
+    content: string, 
+    attachments?: MessageAttachment[]
+  ) => {
     if (!content.trim() || isLoading) return;
 
     // Close any existing connection
@@ -220,12 +287,13 @@ export function useChat(options: UseChatSSEOptions = {}) {
     currentAssistantMessageRef.current = '';
     currentProcessInfoRef.current = '';
     
-    // Add user message
+    // Add user message with attachments
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: content.trim(),
       createdAt: new Date(),
+      attachments: attachments || [],
     };
     
     setMessages(prev => [...prev, userMessage]);
@@ -262,10 +330,12 @@ export function useChat(options: UseChatSSEOptions = {}) {
         ...messages.map(msg => ({
           role: msg.role,
           content: getMessageContentAsString(msg),
+          attachments: msg.attachments,
         })).filter(msg => msg.content), // Filter out empty messages
         {
           role: 'user',
           content: content.trim(),
+          attachments: attachments || [],
         }
       ];
 
@@ -391,6 +461,9 @@ export function useChat(options: UseChatSSEOptions = {}) {
                   generatedVideoUrl = event.video_url as string;
                 }
 
+                // Process images - fetch signed URLs for GCS objects
+                const processedImages = generatedImages ? [...generatedImages] : [];
+                
                 setMessages(prev =>
                   prev.map(msg => {
                     if (msg.id === currentMessageIdRef.current) {
@@ -398,10 +471,10 @@ export function useChat(options: UseChatSSEOptions = {}) {
                         processInfo: currentProcessInfoRef.current,
                       };
                       // Append new images to existing ones
-                      if (generatedImages && generatedImages.length > 0) {
+                      if (processedImages.length > 0) {
                         updates.generatedImages = [
                           ...(msg.generatedImages || []),
-                          ...generatedImages,
+                          ...processedImages,
                         ];
                       }
                       if (generatedVideoUrl) {
@@ -416,6 +489,15 @@ export function useChat(options: UseChatSSEOptions = {}) {
                     return msg;
                   })
                 );
+
+                // Fetch signed URLs for images with GCS object names
+                if (processedImages.length > 0) {
+                  processedImages.forEach((img, idx) => {
+                    if (img.object_name && !img.signed_url && !img.data_b64) {
+                      fetchImageSignedUrl(img.object_name, currentMessageIdRef.current, idx);
+                    }
+                  });
+                }
 
                 // If we have a video object name, fetch the signed URL
                 if (pendingVideoObjectName) {

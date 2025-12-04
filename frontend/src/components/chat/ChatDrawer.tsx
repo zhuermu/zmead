@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { useChatStore } from '@/lib/store';
+import { useConversationSync } from '@/hooks/useConversationSync';
 import { MessageBubble } from './MessageBubble';
-import type { Message, AgentStatus, UserInputRequest } from '@/hooks/useChat';
+import type { Message, AgentStatus } from '@/hooks/useChat';
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -21,22 +22,13 @@ interface FileAttachment {
 
 // Supported file extensions
 const ACCEPTED_FILE_TYPES = [
-  // Images
-  'image/*',
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico',
-  // Videos
-  'video/*',
-  '.mp4', '.webm', '.mov', '.avi', '.mkv',
-  // Documents
+  'image/*', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico',
+  'video/*', '.mp4', '.webm', '.mov', '.avi', '.mkv',
   '.pdf', '.doc', '.docx', '.odt', '.rtf',
-  // Spreadsheets
   '.xls', '.xlsx', '.csv', '.ods',
-  // Presentations
   '.ppt', '.pptx', '.odp',
-  // Text/Code
   '.txt', '.md', '.markdown', '.json', '.xml', '.yaml', '.yml',
   '.js', '.ts', '.jsx', '.tsx', '.css', '.html', '.py', '.java', '.cpp', '.c', '.go', '.rs',
-  // Archives
   '.zip', '.rar', '.7z', '.tar', '.gz',
 ].join(',');
 
@@ -44,7 +36,6 @@ const ACCEPTED_FILE_TYPES = [
 const getFileCategory = (file: File): FileAttachment['type'] => {
   const mimeType = file.type.toLowerCase();
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
-
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('video/')) return 'video';
   if (['pdf', 'doc', 'docx', 'odt', 'rtf'].includes(ext)) return 'document';
@@ -54,54 +45,79 @@ const getFileCategory = (file: File): FileAttachment['type'] => {
   return 'file';
 };
 
-// Get icon for file type
+
+// File type icon component
 const FileTypeIcon = ({ type, className = "w-5 h-5" }: { type: FileAttachment['type']; className?: string }) => {
-  switch (type) {
-    case 'image':
-      return (
-        <svg className={`${className} text-green-600`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      );
-    case 'video':
-      return (
-        <svg className={`${className} text-purple-600`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      );
-    case 'document':
-      return (
-        <svg className={`${className} text-blue-600`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      );
-    case 'spreadsheet':
-      return (
-        <svg className={`${className} text-emerald-600`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-        </svg>
-      );
-    case 'presentation':
-      return (
-        <svg className={`${className} text-orange-600`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-        </svg>
-      );
-    case 'text':
-      return (
-        <svg className={`${className} text-gray-600`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-        </svg>
-      );
-    default:
-      return (
-        <svg className={`${className} text-gray-500`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-        </svg>
-      );
-  }
+  const icons: Record<FileAttachment['type'], { color: string; path: string }> = {
+    image: { color: 'text-green-600', path: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
+    video: { color: 'text-purple-600', path: 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z' },
+    document: { color: 'text-blue-600', path: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+    spreadsheet: { color: 'text-emerald-600', path: 'M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z' },
+    presentation: { color: 'text-orange-600', path: 'M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z' },
+    text: { color: 'text-gray-600', path: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4' },
+    file: { color: 'text-gray-500', path: 'M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z' },
+  };
+  const { color, path } = icons[type];
+  return (
+    <svg className={`${className} ${color}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={path} />
+    </svg>
+  );
 };
+
+// Delete confirmation dialog component
+function DeleteConfirmDialog({ 
+  isOpen, 
+  sessionTitle, 
+  onConfirm, 
+  onCancel 
+}: { 
+  isOpen: boolean; 
+  sessionTitle: string; 
+  onConfirm: () => void; 
+  onCancel: () => void;
+}) {
+  if (!isOpen) return null;
+  
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onCancel}>
+      <div 
+        className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 animate-in fade-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+            <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">删除会话</h3>
+            <p className="text-sm text-gray-500">此操作无法撤销</p>
+          </div>
+        </div>
+        <p className="text-sm text-gray-600 mb-6">
+          确定要删除会话 "<span className="font-medium">{sessionTitle}</span>" 吗？所有消息记录将被永久删除。
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+          >
+            确认删除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   const {
@@ -110,29 +126,36 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     createSession,
     deleteSession,
     selectSession,
+    pendingDeleteId,
+    confirmDeleteSession,
+    cancelDeleteSession,
+    updateSessionMessages,
   } = useChatStore();
+
+  const { 
+    loadConversations, 
+    loadSessionMessages, 
+    saveMessages, 
+    deleteConversation,
+    createConversation,
+  } = useConversationSync();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isComposing, setIsComposing] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [localInput, setLocalInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const prevSessionIdRef = useRef<string | null>(null);
-  const isLoadingFromStoreRef = useRef(false);
-
-  // Initialize session if none exists
-  useEffect(() => {
-    if (isOpen && sessions.length === 0) {
-      createSession();
-    }
-  }, [isOpen, sessions.length, createSession]);
-
-  // State for agent status during streaming
-  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const isLoadingFromDbRef = useRef(false);
+  const hasLoadedConversationsRef = useRef(false);
+  const lastSavedMessageCountRef = useRef<number>(0);
 
   // Use SSE-based chat hook
   const {
@@ -146,53 +169,72 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     respondToUserInput,
   } = useChat();
 
+  // Load conversations from database on first open
+  useEffect(() => {
+    if (isOpen && !hasLoadedConversationsRef.current) {
+      hasLoadedConversationsRef.current = true;
+      loadConversations();
+    }
+  }, [isOpen, loadConversations]);
+
+  // Initialize session if none exists
+  useEffect(() => {
+    if (isOpen && sessions.length === 0) {
+      const newSessionId = createSession();
+      createConversation(newSessionId);
+    }
+  }, [isOpen, sessions.length, createSession, createConversation]);
+
+
   // Update agent status from hook
   useEffect(() => {
-    if (hookAgentStatus) {
-      setAgentStatus(hookAgentStatus);
-    } else {
-      setAgentStatus(null);
-    }
+    setAgentStatus(hookAgentStatus || null);
   }, [hookAgentStatus]);
 
-  // Load messages when session changes (only when session ID changes)
+  // Load messages when session changes
   useEffect(() => {
     if (currentSessionId && currentSessionId !== prevSessionIdRef.current) {
       prevSessionIdRef.current = currentSessionId;
-      isLoadingFromStoreRef.current = true;
+      isLoadingFromDbRef.current = true;
+      lastSavedMessageCountRef.current = 0; // Reset counter for new session
 
       const session = sessions.find(s => s.id === currentSessionId);
-      if (session && session.messages.length > 0) {
-        setMessages(session.messages as any);
+      
+      // If session is synced, load from database
+      if (session?.synced) {
+        loadSessionMessages(currentSessionId).then((dbMessages) => {
+          setMessages(dbMessages);
+          lastSavedMessageCountRef.current = dbMessages.length;
+          isLoadingFromDbRef.current = false;
+        });
+      } else if (session && session.messages.length > 0) {
+        setMessages(session.messages as Message[]);
+        lastSavedMessageCountRef.current = session.messages.length;
+        isLoadingFromDbRef.current = false;
       } else {
         setMessages([]);
+        isLoadingFromDbRef.current = false;
       }
-
-      setTimeout(() => {
-        isLoadingFromStoreRef.current = false;
-      }, 100);
     }
-  }, [currentSessionId, setMessages]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSessionId, setMessages, loadSessionMessages]);
 
-  // Save messages to session when they change (skip if loading from store)
+  // Save messages to database when they change (only new messages)
   useEffect(() => {
-    if (currentSessionId && messages.length > 0 && !isLoadingFromStoreRef.current) {
-      useChatStore.setState(state => ({
-        sessions: state.sessions.map(s =>
-          s.id === currentSessionId
-            ? {
-                ...s,
-                messages: messages as any,
-                updatedAt: new Date(),
-                title: s.title === '新对话' && messages[0]?.role === 'user'
-                  ? generateTitle(messages[0])
-                  : s.title,
-              }
-            : s
-        ),
-      }));
-    }
-  }, [messages, currentSessionId]);
+    // Skip if loading from DB, still streaming, or no new messages
+    if (!currentSessionId || isLoadingFromDbRef.current || isLoading) return;
+    if (messages.length === 0 || messages.length <= lastSavedMessageCountRef.current) return;
+    
+    // Generate title from first user message if needed
+    const title = messages[0]?.role === 'user' && messages[0]?.content
+      ? generateTitle(messages[0])
+      : undefined;
+    
+    // Save to database (this handles deduplication internally)
+    saveMessages(currentSessionId, messages, title);
+    lastSavedMessageCountRef.current = messages.length;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSessionId, messages.length, isLoading, saveMessages]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -210,12 +252,17 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
-        onClose();
+        if (pendingDeleteId) {
+          cancelDeleteSession();
+        } else {
+          onClose();
+        }
       }
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, pendingDeleteId, cancelDeleteSession]);
+
 
   const generateTitle = (message: Message) => {
     const content = message.content || '';
@@ -224,26 +271,50 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     return cleaned.length > maxLength ? cleaned.slice(0, maxLength) + '...' : cleaned || '新对话';
   };
 
-  const handleNewSession = () => {
-    createSession();
+  const handleNewSession = useCallback(() => {
+    const newSessionId = createSession();
+    createConversation(newSessionId);
     setMessages([]);
     setLocalInput('');
     setAttachments([]);
-  };
+  }, [createSession, createConversation, setMessages]);
 
-  const handleSelectSession = (sessionId: string) => {
+  const handleSelectSession = useCallback((sessionId: string) => {
     selectSession(sessionId);
-  };
+  }, [selectSession]);
 
-  const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
+  const handleDeleteClick = useCallback((e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    deleteSession(sessionId);
-    if (sessions.length <= 1) {
-      createSession();
-    }
-  };
+    confirmDeleteSession(sessionId);
+  }, [confirmDeleteSession]);
 
-  // Process files for attachment
+  const handleConfirmDelete = useCallback(async () => {
+    if (!pendingDeleteId) return;
+    
+    const isCurrentSession = pendingDeleteId === currentSessionId;
+    const sessionToDelete = pendingDeleteId;
+    
+    // Delete from database first
+    await deleteConversation(sessionToDelete);
+    
+    // Delete from local store
+    deleteSession(sessionToDelete);
+    
+    // If we deleted the current session and it was the last one, create a new session
+    if (isCurrentSession) {
+      const remainingSessions = sessions.filter(s => s.id !== sessionToDelete);
+      if (remainingSessions.length === 0) {
+        const newSessionId = createSession();
+        createConversation(newSessionId);
+        setMessages([]);
+      } else {
+        // Messages will be loaded by the session change effect
+      }
+    }
+  }, [pendingDeleteId, currentSessionId, sessions, deleteConversation, deleteSession, createSession, createConversation, setMessages]);
+
+
+  // File handling
   const processFiles = useCallback((files: FileList | File[]) => {
     const fileArray = Array.from(files);
     const newAttachments: FileAttachment[] = fileArray.map(file => {
@@ -253,29 +324,19 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
         file,
         type,
       };
-
-      // Create preview for images
       if (type === 'image') {
         attachment.preview = URL.createObjectURL(file);
       }
-
       return attachment;
     });
-
     setAttachments(prev => [...prev, ...newAttachments]);
   }, []);
 
-  // File input handler
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      processFiles(e.target.files);
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (e.target.files) processFiles(e.target.files);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   }, [processFiles]);
 
-  // Drag and drop handlers
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -285,7 +346,6 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only set dragging to false if leaving the drop zone entirely
     if (dropZoneRef.current && !dropZoneRef.current.contains(e.relatedTarget as Node)) {
       setIsDragging(false);
     }
@@ -300,115 +360,32 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      processFiles(files);
-    }
+    if (e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files);
   }, [processFiles]);
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments(prev => {
       const att = prev.find(a => a.id === id);
-      if (att?.preview) {
-        URL.revokeObjectURL(att.preview);
-      }
+      if (att?.preview) URL.revokeObjectURL(att.preview);
       return prev.filter(a => a.id !== id);
     });
   }, []);
 
-  const [isUploading, setIsUploading] = useState(false);
 
-  const uploadFiles = async (files: FileAttachment[]): Promise<Array<{
-    id: string;
-    filename: string;
-    contentType: string;
-    size: number;
-    s3Url: string;
-    cdnUrl: string;
-  }>> => {
+  const uploadFiles = async (files: FileAttachment[]) => {
     if (files.length === 0) return [];
-
     const formData = new FormData();
-    files.forEach(att => {
-      formData.append('files', att.file);
-    });
-
-    const response = await fetch('/api/upload', {
-      method: 'POST',
+    files.forEach(att => formData.append('files', att.file));
+    
+    const token = localStorage.getItem('access_token');
+    const response = await fetch('/api/v1/uploads', { 
+      method: 'POST', 
       body: formData,
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     });
-
-    if (!response.ok) {
-      throw new Error('File upload failed');
-    }
-
+    if (!response.ok) throw new Error('File upload failed');
     const result = await response.json();
     return result.uploaded || [];
-  };
-
-  const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if ((!localInput.trim() && attachments.length === 0) || isLoading || isComposing || isUploading) return;
-
-    let messageContent = localInput;
-    setLocalInput('');
-
-    // Upload files if any
-    if (attachments.length > 0) {
-      setIsUploading(true);
-      try {
-        const uploadedFiles = await uploadFiles(attachments);
-
-        // Add file references to message content
-        const fileRefs = uploadedFiles.map(f => 
-          `[文件: ${f.filename} (${formatFileSize(f.size)})]`
-        ).join('\n');
-        
-        messageContent = messageContent.trim() 
-          ? `${messageContent}\n\n${fileRefs}`
-          : fileRefs;
-      } catch (error) {
-        console.error('File upload failed:', error);
-        // Show error to user
-        messageContent = messageContent.trim()
-          ? `${messageContent}\n\n[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`
-          : `[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`;
-      } finally {
-        setIsUploading(false);
-      }
-    }
-
-    attachments.forEach(att => {
-      if (att.preview) URL.revokeObjectURL(att.preview);
-    });
-    setAttachments([]);
-
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-
-    if (messageContent.trim()) {
-      await sendMessage(messageContent);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
-      e.preventDefault();
-      const formEvent = new Event('submit', {
-        bubbles: true,
-        cancelable: true,
-      }) as unknown as React.FormEvent<HTMLFormElement>;
-      onSubmit(formEvent);
-    }
-  };
-
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setLocalInput(e.target.value);
-    const textarea = e.target;
-    textarea.style.height = 'auto';
-    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
   };
 
   const formatFileSize = (bytes: number) => {
@@ -424,16 +401,94 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
     const isYesterday = d.toDateString() === yesterday.toDateString();
-
     if (isToday) return '今天';
     if (isYesterday) return '昨天';
     return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
   };
 
+  const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if ((!localInput.trim() && attachments.length === 0) || isLoading || isComposing || isUploading) return;
+
+    let messageContent = localInput;
+    let uploadedAttachments: any[] = [];
+    setLocalInput('');
+
+    if (attachments.length > 0) {
+      setIsUploading(true);
+      try {
+        const uploadedFiles = await uploadFiles(attachments);
+        
+        // Convert uploaded files to MessageAttachment format
+        uploadedAttachments = uploadedFiles.map((f: any) => ({
+          id: f.id,
+          filename: f.filename,
+          contentType: f.contentType,
+          size: f.size,
+          s3Url: f.s3Url,
+          cdnUrl: f.cdnUrl,
+          type: f.contentType.startsWith('image/') ? 'image' 
+               : f.contentType.startsWith('video/') ? 'video'
+               : f.contentType.includes('pdf') || f.contentType.includes('document') ? 'document'
+               : 'other',
+        }));
+        
+        // Add file references to message content for display
+        const fileRefs = uploadedFiles.map((f: any) => 
+          `[文件: ${f.filename} (${formatFileSize(f.size)})]`
+        ).join('\n');
+        
+        messageContent = messageContent.trim() 
+          ? `${messageContent}\n\n${fileRefs}`
+          : fileRefs;
+      } catch (error) {
+        console.error('File upload failed:', error);
+        messageContent = messageContent.trim()
+          ? `${messageContent}\n\n[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`
+          : `[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`;
+      } finally {
+        setIsUploading(false);
+      }
+    }
+
+    attachments.forEach(att => { if (att.preview) URL.revokeObjectURL(att.preview); });
+    setAttachments([]);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    
+    if (messageContent.trim()) {
+      await sendMessage(messageContent, uploadedAttachments);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+      e.preventDefault();
+      const formEvent = new Event('submit', { bubbles: true, cancelable: true }) as unknown as React.FormEvent<HTMLFormElement>;
+      onSubmit(formEvent);
+    }
+  };
+
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setLocalInput(e.target.value);
+    const textarea = e.target;
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+  };
+
+  const pendingSession = sessions.find(s => s.id === pendingDeleteId);
+
+
   return (
     <>
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        isOpen={!!pendingDeleteId}
+        sessionTitle={pendingSession?.title || ''}
+        onConfirm={handleConfirmDelete}
+        onCancel={cancelDeleteSession}
+      />
 
-      {/* Drawer - wider layout */}
+      {/* Drawer */}
       <div
         ref={dropZoneRef}
         onDragEnter={handleDragEnter}
@@ -459,49 +514,31 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
           </div>
         )}
 
-        {/* Session Sidebar - narrower */}
-        <div
-          className={`
-            ${sidebarOpen ? 'w-52' : 'w-0'}
-            transition-all duration-300 overflow-hidden border-r border-gray-200 bg-gray-50 flex flex-col flex-shrink-0
-          `}
-        >
-          {/* Sidebar Header */}
+        {/* Session Sidebar */}
+        <div className={`${sidebarOpen ? 'w-52' : 'w-0'} transition-all duration-300 overflow-hidden border-r border-gray-200 bg-gray-50 flex flex-col flex-shrink-0`}>
           <div className="flex items-center justify-between p-3 border-b border-gray-200 min-w-[208px]">
             <span className="text-sm font-medium text-gray-700">历史会话</span>
-            <button
-              onClick={handleNewSession}
-              className="p-1.5 hover:bg-gray-200 rounded-lg transition-colors"
-              title="新建会话"
-            >
+            <button onClick={handleNewSession} className="p-1.5 hover:bg-gray-200 rounded-lg transition-colors" title="新建会话">
               <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
             </button>
           </div>
 
-          {/* Session List */}
           <div className="flex-1 overflow-y-auto min-w-[208px]">
             {sessions.map((session) => (
               <div
                 key={session.id}
                 onClick={() => handleSelectSession(session.id)}
-                className={`
-                  group px-3 py-2.5 cursor-pointer border-b border-gray-100 hover:bg-gray-100
-                  ${currentSessionId === session.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}
-                `}
+                className={`group px-3 py-2.5 cursor-pointer border-b border-gray-100 hover:bg-gray-100 ${currentSessionId === session.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {session.title}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {formatDate(session.updatedAt || session.createdAt)}
-                    </p>
+                    <p className="text-sm font-medium text-gray-900 truncate">{session.title}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{formatDate(session.updatedAt || session.createdAt)}</p>
                   </div>
                   <button
-                    onClick={(e) => handleDeleteSession(e, session.id)}
+                    onClick={(e) => handleDeleteClick(e, session.id)}
                     className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-all flex-shrink-0"
                     title="删除会话"
                   >
@@ -512,24 +549,17 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 </div>
               </div>
             ))}
-
-            {sessions.length === 0 && (
-              <div className="p-4 text-center text-gray-500 text-sm">
-                暂无会话记录
-              </div>
-            )}
+            {sessions.length === 0 && <div className="p-4 text-center text-gray-500 text-sm">暂无会话记录</div>}
           </div>
         </div>
+
 
         {/* Main Chat Area */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Header */}
           <div className="flex items-center justify-between h-14 px-4 border-b border-gray-200 bg-gradient-to-r from-blue-600 to-indigo-600 flex-shrink-0">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-              >
+              <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
                 </svg>
@@ -541,10 +571,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
               </div>
               <h2 className="text-base font-semibold text-white">AI 助手</h2>
             </div>
-            <button
-              onClick={onClose}
-              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-            >
+            <button onClick={onClose} className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -562,23 +589,17 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 </div>
                 <h3 className="text-lg font-medium text-gray-900 mb-2">有什么可以帮你的？</h3>
                 <p className="text-sm text-gray-500 mb-6">我可以帮你生成素材、分析数据、管理投放等</p>
-
                 <div className="flex flex-wrap justify-center gap-2 mb-6">
                   {['生成广告素材', '查看投放数据', '优化建议'].map((suggestion) => (
                     <button
                       key={suggestion}
-                      onClick={() => {
-                        setLocalInput(suggestion);
-                        textareaRef.current?.focus();
-                      }}
+                      onClick={() => { setLocalInput(suggestion); textareaRef.current?.focus(); }}
                       className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm rounded-full transition-colors"
                     >
                       {suggestion}
                     </button>
                   ))}
                 </div>
-
-                {/* Drag hint */}
                 <div className="text-xs text-gray-400 flex items-center gap-2">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
@@ -589,10 +610,8 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
             ) : (
               <div className="space-y-4">
                 {messages.map((message: Message, index: number) => {
-                  // Check if this is the last assistant message being streamed
                   const isLastMessage = index === messages.length - 1;
                   const isStreamingMessage = isLoading && isLastMessage && message.role === 'assistant';
-
                   return (
                     <MessageBubble
                       key={message.id}
@@ -603,11 +622,11 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                     />
                   );
                 })}
-
                 <div ref={messagesEndRef} />
               </div>
             )}
           </div>
+
 
           {/* Human-in-the-Loop User Input Dialog */}
           {userInputRequest && (
@@ -620,14 +639,11 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                   <button
                     key={option.value}
                     onClick={() => respondToUserInput(option.value === '__cancel__' ? '取消操作' : option.label)}
-                    className={`
-                      px-3 py-1.5 text-sm rounded-lg transition-colors
-                      ${option.value === '__cancel__'
-                        ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        : option.value === '__other__'
-                        ? 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                        : 'bg-blue-600 text-white hover:bg-blue-700'}
-                    `}
+                    className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                      option.value === '__cancel__' ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        : option.value === '__other__' ? 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+                        : 'bg-blue-600 text-white hover:bg-blue-700'
+                    }`}
                     title={option.description}
                   >
                     {option.label}
@@ -656,10 +672,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
             <div className="px-4 py-2 border-t border-gray-100 bg-gray-50 flex-shrink-0">
               <div className="flex flex-wrap gap-2">
                 {attachments.map((att) => (
-                  <div
-                    key={att.id}
-                    className="relative group flex items-center gap-2 px-2 py-1.5 bg-white border border-gray-200 rounded-lg"
-                  >
+                  <div key={att.id} className="relative group flex items-center gap-2 px-2 py-1.5 bg-white border border-gray-200 rounded-lg">
                     {att.type === 'image' && att.preview ? (
                       <img src={att.preview} alt={att.file.name} className="w-10 h-10 object-cover rounded" />
                     ) : (
@@ -685,18 +698,12 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
             </div>
           )}
 
+
           {/* Input */}
           <div className="border-t border-gray-200 bg-white p-4 flex-shrink-0">
             <form onSubmit={onSubmit}>
               <div className="flex gap-2 items-end">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept={ACCEPTED_FILE_TYPES}
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
+                <input ref={fileInputRef} type="file" multiple accept={ACCEPTED_FILE_TYPES} onChange={handleFileSelect} className="hidden" />
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -729,11 +736,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                     type="button"
                     onClick={isLoading ? stop : undefined}
                     disabled={isUploading}
-                    className={`p-3 text-white rounded-xl transition-colors ${
-                      isUploading
-                        ? 'bg-blue-500 cursor-wait'
-                        : 'bg-red-500 hover:bg-red-600'
-                    }`}
+                    className={`p-3 text-white rounded-xl transition-colors ${isUploading ? 'bg-blue-500 cursor-wait' : 'bg-red-500 hover:bg-red-600'}`}
                     title={isUploading ? '上传中...' : '停止生成'}
                   >
                     {isUploading ? (

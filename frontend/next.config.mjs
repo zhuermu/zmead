@@ -1,5 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'storage.googleapis.com',
+        pathname: '/**',
+      },
+    ],
+  },
   async rewrites() {
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
     return [

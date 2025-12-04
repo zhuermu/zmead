@@ -287,13 +287,13 @@ export function useChat(options: UseChatSSEOptions = {}) {
     currentAssistantMessageRef.current = '';
     currentProcessInfoRef.current = '';
 
-    // Add user message with attachments (for display only)
+    // Add user message with attachments (for display)
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: content.trim(),
       createdAt: new Date(),
-      attachments: [], // Display doesn't need full attachments yet
+      attachments: attachments || [], // Include attachments for display
     };
 
     setMessages(prev => [...prev, userMessage]);
@@ -324,7 +324,11 @@ export function useChat(options: UseChatSSEOptions = {}) {
       // Get auth token
       const token = localStorage.getItem('access_token');
 
-      // Determine if attachments are temp files or permanent files
+      // Determine attachment format
+      // New format: has 'gcs_path' field
+      // Legacy temp format: has 'fileKey' field
+      // Legacy permanent format: has 's3Url' field
+      const hasNewFormat = attachments && attachments.length > 0 && 'gcs_path' in attachments[0];
       const hasTempAttachments = attachments && attachments.length > 0 && 'fileKey' in attachments[0];
 
       // Build messages array (conversation history + current message)
@@ -337,10 +341,12 @@ export function useChat(options: UseChatSSEOptions = {}) {
         {
           role: 'user',
           content: content.trim(),
-          // Send tempAttachments if they are temp files, otherwise send attachments
+          // Send attachments in appropriate format
           ...(hasTempAttachments
             ? { tempAttachments: attachments }
-            : { attachments: attachments || [] }
+            : hasNewFormat || (attachments && attachments.length > 0)
+            ? { attachments: attachments || [] }
+            : {}
           ),
         }
       ];

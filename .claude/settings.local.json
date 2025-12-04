@@ -70,7 +70,9 @@
       "Bash(mcp__playwright__browser_navigate http://localhost:3000)",
       "mcp__playwright__browser_file_upload",
       "Bash(pip show:*)",
-      "Bash(python -m json.tool:*)"
+      "Bash(python -m json.tool:*)",
+      "Bash(mysql:*)",
+      "Bash(sips:*)"
     ],
     "deny": [],
     "ask": []

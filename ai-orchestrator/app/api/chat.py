@@ -86,13 +86,22 @@ router = APIRouter()
 
 class MessageAttachment(BaseModel):
     """File attachment with GCS and Gemini info."""
-    fileId: str  # Changed from 'id' to match backend
-    filename: str
-    contentType: str
-    size: int
-    permanentUrl: str  # GCS permanent URL (gs://...)
+    # New format (preferred)
+    gcs_path: str | None = Field(None, description="GCS object path (e.g., user_id/chat-attachments/session_id/file.ext)")
+    filename: str = Field(..., description="Original filename")
+    content_type: str = Field(..., description="MIME type")
+    file_size: int = Field(..., description="File size in bytes")
+    download_url: str | None = Field(None, description="Signed download URL (valid for 1 hour)")
+
+    # Legacy format (backward compatibility)
+    fileId: str | None = None  # File ID
+    contentType: str | None = None  # Use content_type instead
+    size: int | None = None  # Use file_size instead
+    permanentUrl: str | None = None  # GCS permanent URL (gs://...)
     cdnUrl: str | None = None
-    geminiFileUri: str | None = None  # Gemini File API URI (already uploaded by backend)
+
+    # Gemini File API info (populated after upload)
+    geminiFileUri: str | None = None  # Gemini File API URI
     geminiFileName: str | None = None  # Gemini File name
     type: str | None = None  # 'image', 'video', 'document', 'other'
 
@@ -162,15 +171,77 @@ async def chat_stream(
     last_message_obj = request.messages[-1] if request.messages else None
     last_message = last_message_obj.content if last_message_obj else ""
 
-    # Handle both processed attachments and temp attachments
+    # Handle processed attachments, temp attachments, and new format attachments
     attachments = []
 
-    # Process temp attachments if present (convert to attachment format for agent)
+    # Process new-format attachments (with gcs_path)
+    if last_message_obj and last_message_obj.attachments:
+        log.info("Processing attachments", count=len(last_message_obj.attachments))
+        for att in last_message_obj.attachments:
+            # Get content type (prefer new format)
+            content_type = att.content_type or att.contentType or "application/octet-stream"
+            file_size = att.file_size or att.size or 0
+
+            # Build attachment info dict
+            attachment_info = {
+                "filename": att.filename,
+                "contentType": content_type,
+                "size": file_size,
+                "type": content_type.split('/')[0] if '/' in content_type else 'other',
+            }
+
+            # Check if we need to upload to Gemini (new format without geminiFileUri)
+            if att.gcs_path and not att.geminiFileUri:
+                # New format: download from GCS and upload to Gemini
+                from app.core.config import get_settings
+                settings = get_settings()
+                gcs_uri = f"gs://{settings.gcs_bucket_uploads}/{att.gcs_path}"
+
+                log.info(
+                    "Uploading attachment to Gemini",
+                    filename=att.filename,
+                    gcs_path=att.gcs_path,
+                )
+
+                # Upload to Gemini Files API
+                gemini_result = gemini_files_service.upload_from_gcs(
+                    gcs_uri=gcs_uri,
+                    mime_type=content_type,
+                    display_name=att.filename,
+                )
+
+                if gemini_result:
+                    attachment_info["geminiFileUri"] = gemini_result["uri"]
+                    attachment_info["geminiFileName"] = gemini_result["name"]
+                    log.info(
+                        "Uploaded to Gemini",
+                        filename=att.filename,
+                        gemini_uri=gemini_result["uri"],
+                    )
+                else:
+                    attachment_info["geminiFileUri"] = None
+                    attachment_info["geminiFileName"] = None
+                    log.warning(
+                        "Failed to upload to Gemini",
+                        filename=att.filename,
+                        gcs_uri=gcs_uri,
+                    )
+            elif att.geminiFileUri:
+                # Already has Gemini URI (legacy or pre-uploaded)
+                attachment_info["geminiFileUri"] = att.geminiFileUri
+                attachment_info["geminiFileName"] = att.geminiFileName
+
+            attachments.append(attachment_info)
+
+    # Process temp attachments (legacy format) - kept for backward compatibility
     if last_message_obj and last_message_obj.tempAttachments:
-        log.info("Processing temp attachments", count=len(last_message_obj.tempAttachments))
+        log.info("Processing temp attachments (legacy)", count=len(last_message_obj.tempAttachments))
+        from app.core.config import get_settings
+        settings = get_settings()
+
         for temp_att in last_message_obj.tempAttachments:
-            # Construct GCS URI
-            gcs_uri = f"gs://aae-user-uploads-temp/{temp_att.fileKey}"
+            # Construct GCS URI (legacy temp bucket)
+            gcs_uri = f"gs://{settings.gcs_bucket_uploads}/{temp_att.fileKey}"
 
             # Upload to Gemini Files API
             gemini_result = gemini_files_service.upload_from_gcs(
@@ -185,34 +256,27 @@ async def chat_stream(
                 "filename": temp_att.filename,
                 "contentType": temp_att.contentType,
                 "size": temp_att.size,
-                "permanentUrl": gcs_uri,
                 "type": temp_att.contentType.split('/')[0] if '/' in temp_att.contentType else 'other',
             }
 
             if gemini_result:
-                # Successfully uploaded to Gemini
                 attachment_info["geminiFileUri"] = gemini_result["uri"]
                 attachment_info["geminiFileName"] = gemini_result["name"]
                 log.info(
-                    "Uploaded to Gemini",
+                    "Uploaded temp attachment to Gemini",
                     filename=temp_att.filename,
                     gemini_uri=gemini_result["uri"],
                 )
             else:
-                # Failed to upload to Gemini (maybe API key not configured)
                 attachment_info["geminiFileUri"] = None
                 attachment_info["geminiFileName"] = None
                 log.warning(
-                    "Failed to upload to Gemini",
+                    "Failed to upload temp attachment to Gemini",
                     filename=temp_att.filename,
                     gcs_uri=gcs_uri,
                 )
 
             attachments.append(attachment_info)
-
-    # Use processed attachments if provided
-    if last_message_obj and last_message_obj.attachments:
-        attachments.extend([att.dict() for att in last_message_obj.attachments])
 
     log.info("chat_stream_request",
              message_preview=last_message[:100],

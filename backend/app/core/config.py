@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,9 +78,20 @@ class Settings(BaseSettings):
     gcs_bucket_creatives: str = "aae-creatives"
     gcs_bucket_landing_pages: str = "aae-landing-pages"
     gcs_bucket_exports: str = "aae-exports"
-    gcs_bucket_uploads_temp: str = "aae-user-uploads-temp"  # Temporary file uploads (48h lifecycle)
-    gcs_bucket_uploads: str = "aae-user-uploads"  # Permanent file uploads
+    gcs_bucket_uploads: str = "aae-user-uploads"  # All file uploads (permanent storage)
     gcs_cdn_domain: str = Field(default="")  # Custom domain or Cloud CDN domain
+
+    @field_validator("gcs_cdn_domain", mode="before")
+    @classmethod
+    def clean_cdn_domain(cls, v: str) -> str:
+        """Strip whitespace and comments from CDN domain."""
+        if not v:
+            return ""
+        # Strip whitespace and anything after #
+        v = v.strip()
+        if "#" in v:
+            v = v.split("#")[0].strip()
+        return v
 
     # OAuth - Google
     google_client_id: str = Field(default="")

@@ -81,13 +81,9 @@ class Settings(BaseSettings):
         default="zmead-creatives",
         description="GCS bucket for storing creatives",
     )
-    gcs_bucket_uploads_temp: str = Field(
-        default="aae-user-uploads-temp",
-        description="GCS bucket for temporary file uploads (48h lifecycle)",
-    )
     gcs_bucket_uploads: str = Field(
         default="aae-user-uploads",
-        description="GCS bucket for permanent file uploads",
+        description="GCS bucket for all file uploads (permanent storage)",
     )
     gcs_signed_url_expiration: int = Field(
         default=60,

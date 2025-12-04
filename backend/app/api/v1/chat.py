@@ -13,15 +13,25 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
-from app.services.file_processor import process_temp_attachments
+from app.services.file_processor import process_temp_attachments, process_attachments
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+class FileAttachment(BaseModel):
+    """File attachment for chat messages."""
+
+    gcs_path: str = Field(..., description="GCS object path")
+    filename: str = Field(..., description="Original filename")
+    content_type: str = Field(..., description="MIME type")
+    file_size: int = Field(..., description="File size in bytes")
+    download_url: str | None = Field(None, description="Signed download URL")
+
+
 class TempFileAttachment(BaseModel):
-    """Temporary file attachment reference."""
+    """Temporary file attachment reference (DEPRECATED)."""
 
     fileKey: str = Field(..., description="Temporary file key in GCS")
     fileId: str = Field(..., description="Unique file ID")
@@ -35,8 +45,12 @@ class ChatMessage(BaseModel):
 
     role: str = Field(..., description="Message role: user, assistant, or system")
     content: str = Field(..., description="Message content")
+    attachments: list[FileAttachment] | None = Field(
+        None, description="File attachments (images, videos, documents)"
+    )
+    # Deprecated: kept for backward compatibility
     tempAttachments: list[TempFileAttachment] | None = Field(
-        None, description="Temporary file attachments (not yet confirmed)"
+        None, description="DEPRECATED: Use attachments instead"
     )
 
 
@@ -68,23 +82,49 @@ async def chat_stream(
 
     # DEBUG: Log the raw request to see what we're receiving
     for i, msg in enumerate(request.messages):
-        logger.info(f"Message {i}: role={msg.role}, content_length={len(msg.content)}, has_tempAttachments={msg.tempAttachments is not None}")
+        logger.info(
+            f"Message {i}: role={msg.role}, content_length={len(msg.content)}, "
+            f"has_attachments={msg.attachments is not None}, "
+            f"has_tempAttachments={msg.tempAttachments is not None}"
+        )
+        if msg.attachments:
+            logger.info(f"  attachments count: {len(msg.attachments)}")
+            for j, att in enumerate(msg.attachments):
+                logger.info(f"    Attachment {j}: filename={att.filename}, gcs_path={att.gcs_path}")
         if msg.tempAttachments:
             logger.info(f"  tempAttachments count: {len(msg.tempAttachments)}")
             for j, att in enumerate(msg.tempAttachments):
                 logger.info(f"    Attachment {j}: fileId={att.fileId}, filename={att.filename}")
 
-    # Process temporary attachments from ALL messages before starting stream
-    # This ensures files are ready for AI Agent to use
+    # Process attachments from ALL messages before starting stream
+    # New flow: attachments are already in permanent storage, just need to prepare for AI
+    # Old flow: tempAttachments need to be moved from temp to permanent storage
     processed_messages = []
 
     for msg in request.messages:
         processed_msg = {"role": msg.role, "content": msg.content}
 
-        # Process temp attachments if present
-        if msg.tempAttachments:
+        # Process new-style attachments (already in permanent storage)
+        if msg.attachments:
+            logger.info(f"Processing {len(msg.attachments)} attachments for message")
+
+            # Convert attachments to dict format for AI orchestrator
+            processed_msg["attachments"] = [
+                {
+                    "gcs_path": att.gcs_path,
+                    "filename": att.filename,
+                    "content_type": att.content_type,
+                    "file_size": att.file_size,
+                    "download_url": att.download_url,
+                }
+                for att in msg.attachments
+            ]
+            logger.info(f"Prepared {len(msg.attachments)} attachments for AI")
+
+        # Process old-style temp attachments (backward compatibility)
+        elif msg.tempAttachments:
             logger.info(
-                f"Processing {len(msg.tempAttachments)} temp attachments for message"
+                f"Processing {len(msg.tempAttachments)} temp attachments for message (legacy flow)"
             )
 
             # Convert to dict format for processing

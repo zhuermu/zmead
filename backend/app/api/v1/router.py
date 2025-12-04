@@ -15,6 +15,7 @@ from app.api.v1.media import router as media_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.uploads import router as uploads_router
+from app.api.v1.upload_presigned import router as upload_presigned_router
 from app.api.v1.users import router as users_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.websocket import router as websocket_router
@@ -35,6 +36,7 @@ api_router.include_router(media_router, prefix="/media", tags=["media"])
 api_router.include_router(notifications_router)
 api_router.include_router(reports_router)
 api_router.include_router(uploads_router)
+api_router.include_router(upload_presigned_router)
 api_router.include_router(users_router)
 api_router.include_router(webhooks_router)
 api_router.include_router(websocket_router)

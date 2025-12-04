@@ -148,6 +148,7 @@ class Planner:
         available_tools: list[AgentTool],
         execution_history: list[dict[str, Any]] | None = None,
         user_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Plan the next action with streaming thought output.
 
@@ -159,6 +160,7 @@ class Planner:
             available_tools: List of available tools
             execution_history: Previous execution steps
             user_id: User ID for context
+            attachments: Optional file attachments with Gemini File URIs
 
         Yields:
             dict: Events with type and content:
@@ -172,6 +174,7 @@ class Planner:
             user_id=user_id,
             tool_count=len(available_tools),
             history_length=len(execution_history) if execution_history else 0,
+            has_attachments=bool(attachments),
         )
         log.info("plan_next_action_stream_start")
 
@@ -183,6 +186,17 @@ class Planner:
                 execution_history=execution_history,
             )
 
+            # Build user message with attachments
+            user_msg = {
+                "role": "user",
+                "content": prompt,
+            }
+
+            # Include attachments if present (files already uploaded to Gemini)
+            if attachments:
+                user_msg["attachments"] = attachments
+                log.info("attachments_included_in_planning", count=len(attachments))
+
             # Stream the thinking process
             full_response = ""
             async for chunk in self.gemini_client.chat_completion_stream(
@@ -191,10 +205,7 @@ class Planner:
                         "role": "system",
                         "content": self._get_streaming_system_prompt(),
                     },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
+                    user_msg,
                 ],
                 temperature=0.3,
             ):

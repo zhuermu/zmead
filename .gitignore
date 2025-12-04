@@ -47,3 +47,4 @@ htmlcov/
 # Misc
 *.bak
 *.tmp
+custom-unison-*.json

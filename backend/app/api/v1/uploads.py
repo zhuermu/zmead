@@ -7,9 +7,14 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
-from app.core.storage import get_gcs_client
+from app.core.storage import GCSStorage
+from app.core.config import settings
+from app.core.gemini_files import gemini_files_service
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
+
+# Create uploads storage instance
+uploads_storage = GCSStorage(settings.gcs_bucket_uploads)
 
 
 class UploadedFileResponse(BaseModel):
@@ -19,8 +24,10 @@ class UploadedFileResponse(BaseModel):
     filename: str
     contentType: str
     size: int
-    s3Url: str
-    cdnUrl: str | None = None
+    s3Url: str  # GCS URL (gs://bucket/path)
+    cdnUrl: str | None = None  # CDN URL for viewing
+    geminiFileUri: str | None = None  # Gemini file URI for AI processing
+    geminiFileName: str | None = None  # Gemini file name
 
 
 class MultipleUploadResponse(BaseModel):
@@ -46,9 +53,8 @@ async def upload_files(
         files: List of files to upload
 
     Returns:
-        Upload results with S3 URLs
+        Upload results with GCS URLs and Gemini file URIs
     """
-    storage = get_gcs_client()
     uploaded = []
     failed = []
 
@@ -62,15 +68,27 @@ async def upload_files(
             ext = file.filename.split(".")[-1] if "." in file.filename else ""
             object_name = f"chat-attachments/{current_user.id}/{file_id}.{ext}"
 
-            # Upload to GCS
-            gcs_url = storage.upload_file(
+            # Upload to GCS for persistent storage
+            gcs_url = uploads_storage.upload_file(
                 key=object_name,
                 data=content,
                 content_type=file.content_type or "application/octet-stream",
             )
-            
-            # Get CDN URL
-            cdn_url = storage.get_cdn_url(object_name)
+
+            # Get CDN URL for viewing
+            cdn_url = uploads_storage.get_cdn_url(object_name)
+
+            # Upload to Gemini Files API for AI processing
+            gemini_file_uri = None
+            gemini_file_name = None
+            gemini_result = gemini_files_service.upload_file(
+                data=content,
+                mime_type=file.content_type or "application/octet-stream",
+                display_name=file.filename,
+            )
+            if gemini_result:
+                gemini_file_uri = gemini_result.get("uri")
+                gemini_file_name = gemini_result.get("name")
 
             uploaded.append(
                 UploadedFileResponse(
@@ -80,6 +98,8 @@ async def upload_files(
                     size=len(content),
                     s3Url=gcs_url,
                     cdnUrl=cdn_url,
+                    geminiFileUri=gemini_file_uri,
+                    geminiFileName=gemini_file_name,
                 )
             )
 

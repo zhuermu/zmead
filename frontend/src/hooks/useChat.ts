@@ -271,8 +271,8 @@ export function useChat(options: UseChatSSEOptions = {}) {
 
   // Send message using fetch + EventSource
   const sendMessage = useCallback(async (
-    content: string, 
-    attachments?: MessageAttachment[]
+    content: string,
+    attachments?: any[]  // Can be MessageAttachment[] or temp attachment references
   ) => {
     if (!content.trim() || isLoading) return;
 
@@ -286,30 +286,30 @@ export function useChat(options: UseChatSSEOptions = {}) {
     setUserInputRequest(null);
     currentAssistantMessageRef.current = '';
     currentProcessInfoRef.current = '';
-    
-    // Add user message with attachments
+
+    // Add user message with attachments (for display only)
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: content.trim(),
       createdAt: new Date(),
-      attachments: attachments || [],
+      attachments: [], // Display doesn't need full attachments yet
     };
-    
+
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
     // Create assistant message placeholder
     const assistantMessageId = `assistant-${Date.now()}`;
     currentMessageIdRef.current = assistantMessageId;
-    
+
     const assistantMessage: Message = {
       id: assistantMessageId,
       role: 'assistant',
       content: '',
       createdAt: new Date(),
     };
-    
+
     setMessages(prev => [...prev, assistantMessage]);
 
     // Set timeout
@@ -323,19 +323,25 @@ export function useChat(options: UseChatSSEOptions = {}) {
     try {
       // Get auth token
       const token = localStorage.getItem('access_token');
-      
+
+      // Determine if attachments are temp files or permanent files
+      const hasTempAttachments = attachments && attachments.length > 0 && 'fileKey' in attachments[0];
+
       // Build messages array (conversation history + current message)
       // Ensure content is always a string (handle legacy AI SDK v5 format)
       const allMessages = [
         ...messages.map(msg => ({
           role: msg.role,
           content: getMessageContentAsString(msg),
-          attachments: msg.attachments,
         })).filter(msg => msg.content), // Filter out empty messages
         {
           role: 'user',
           content: content.trim(),
-          attachments: attachments || [],
+          // Send tempAttachments if they are temp files, otherwise send attachments
+          ...(hasTempAttachments
+            ? { tempAttachments: attachments }
+            : { attachments: attachments || [] }
+          ),
         }
       ];
 

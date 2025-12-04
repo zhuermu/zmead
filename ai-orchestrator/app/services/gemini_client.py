@@ -358,9 +358,10 @@ class GeminiClient:
         """Generate streaming chat completion using Gemini 2.5 Flash.
 
         Yields text chunks as they are generated for real-time streaming.
+        Supports file attachments via Gemini Files API.
 
         Args:
-            messages: List of message dicts with 'role' and 'content'
+            messages: List of message dicts with 'role', 'content', and optional 'attachments'
             temperature: Optional temperature override (0.0-1.0)
 
         Yields:
@@ -375,18 +376,37 @@ class GeminiClient:
         )
         log.info("chat_completion_stream_start")
 
-        llm = self._get_fast_llm()
+        client = self._get_genai_client()
 
-        if temperature is not None:
-            llm = llm.bind(temperature=temperature)
-
-        langchain_messages = self._convert_messages(messages)
+        # Convert messages to google-genai format (handles attachments)
+        contents = self._convert_messages_to_genai(messages)
 
         try:
-            # Use astream for streaming responses
-            async for chunk in llm.astream(langchain_messages):
-                if hasattr(chunk, 'content') and chunk.content:
-                    yield chunk.content
+            # Use native google-genai SDK for streaming with file support
+            # Create stream in thread to avoid blocking
+            def _create_stream():
+                return client.models.generate_content_stream(
+                    model=self.fast_model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        temperature=temperature if temperature is not None else 0.3,
+                    ),
+                )
+
+            # Get the stream generator
+            stream = await asyncio.to_thread(_create_stream)
+
+            # Iterate through chunks (each next() call may block on network I/O)
+            def _get_next_chunk():
+                return next(stream)
+
+            while True:
+                try:
+                    chunk = await asyncio.to_thread(_get_next_chunk)
+                    if chunk.text:
+                        yield chunk.text
+                except StopIteration:
+                    break
 
             log.info("chat_completion_stream_complete")
 
@@ -406,7 +426,7 @@ class GeminiClient:
         """Convert dict messages to google-genai Content objects.
 
         Args:
-            messages: List of message dicts with 'role' and 'content'
+            messages: List of message dicts with 'role', 'content', and optional 'attachments'
 
         Returns:
             List of google-genai Content objects
@@ -428,20 +448,55 @@ class GeminiClient:
                     parts=[types.Part.from_text(text=content)],
                 ))
             else:  # user
+                # Build parts list starting with text
+                parts = [types.Part.from_text(text=content)]
+
+                # Add file attachments if present (files already uploaded to Gemini Files API)
+                attachments = msg.get("attachments")
+                if attachments:
+                    for att in attachments:
+                        # Use geminiFileUri from pre-uploaded files
+                        gemini_uri = att.get("geminiFileUri")
+                        if gemini_uri:
+                            # Extract mime type from contentType or infer from type
+                            mime_type = att.get("contentType", "application/octet-stream")
+
+                            # Add file part using File API URI
+                            parts.append(types.Part.from_uri(
+                                file_uri=gemini_uri,
+                                mime_type=mime_type,
+                            ))
+                            logger.debug(
+                                "added_file_to_message",
+                                filename=att.get("filename"),
+                                gemini_uri=gemini_uri,
+                                mime_type=mime_type,
+                            )
+
                 contents.append(types.Content(
                     role="user",
-                    parts=[types.Part.from_text(text=content)],
+                    parts=parts,
                 ))
 
         # If there's a system instruction, prepend it to the first user message
         if system_instruction and contents:
             first_content = contents[0]
             if first_content.role == "user":
-                combined_text = f"{system_instruction}\n\n{first_content.parts[0].text}"
-                contents[0] = types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=combined_text)],
-                )
+                # Combine system instruction with existing text part
+                first_text_part = None
+                for i, part in enumerate(first_content.parts):
+                    if hasattr(part, 'text'):
+                        first_text_part = i
+                        break
+
+                if first_text_part is not None:
+                    combined_text = f"{system_instruction}\n\n{first_content.parts[first_text_part].text}"
+                    new_parts = first_content.parts.copy()
+                    new_parts[first_text_part] = types.Part.from_text(text=combined_text)
+                    contents[0] = types.Content(
+                        role="user",
+                        parts=new_parts,
+                    )
 
         return contents
 

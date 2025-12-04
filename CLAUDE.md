@@ -258,8 +258,28 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 Required environment variables:
-- **Backend**: `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `WEB_PLATFORM_SERVICE_TOKEN`
+- **Backend**:
+  - Core: `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `WEB_PLATFORM_SERVICE_TOKEN`
+  - File Upload: `GCS_PROJECT_ID`, `GCS_CREDENTIALS_PATH`, `GEMINI_API_KEY`
+  - GCS Buckets: `aae-user-uploads-temp`, `aae-user-uploads` (临时+永久存储)
 - **AI Orchestrator**: `GEMINI_API_KEY`, `WEB_PLATFORM_URL`, `WEB_PLATFORM_SERVICE_TOKEN`, `REDIS_URL`
+
+### File Upload Configuration
+
+**GCS Service Account Setup**:
+1. Create Service Account at [IAM Console](https://console.cloud.google.com/iam-admin/serviceaccounts)
+2. Grant role: `Storage Object Admin`
+3. Download JSON key and set `GCS_CREDENTIALS_PATH=/path/to/key.json`
+
+**GCS Buckets** (需要手动创建):
+- `aae-user-uploads-temp` - 临时存储 (48h lifecycle)
+- `aae-user-uploads` - 永久存储 (按用户组织)
+
+**File Upload Methods**:
+- Traditional: `POST /api/v1/uploads` - 文件经过backend
+- Direct Upload: `POST /api/v1/uploads/presigned/*` - 前端直接上传GCS (推荐)
+
+详见: `frontend/DIRECT_UPLOAD_EXAMPLE.md`
 
 ## Development Notes
 

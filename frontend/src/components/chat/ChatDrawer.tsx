@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { useChatStore } from '@/lib/store';
 import { useConversationSync } from '@/hooks/useConversationSync';
+import { useDirectUpload } from '@/hooks/useDirectUpload';
 import { MessageBubble } from './MessageBubble';
 import type { Message, AgentStatus } from '@/hooks/useChat';
 
@@ -142,11 +143,19 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isComposing, setIsComposing] = useState(false);
-  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [localInput, setLocalInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+
+  // Use direct upload hook for GCS
+  const {
+    uploadFiles: uploadFilesToGCS,
+    uploadedFiles,
+    confirmUploads,
+    removeFile: removeUploadedFile,
+    clearFiles,
+    isUploading,
+  } = useDirectUpload();
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -276,8 +285,8 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     createConversation(newSessionId);
     setMessages([]);
     setLocalInput('');
-    setAttachments([]);
-  }, [createSession, createConversation, setMessages]);
+    clearFiles();
+  }, [createSession, createConversation, setMessages, clearFiles]);
 
   const handleSelectSession = useCallback((sessionId: string) => {
     selectSession(sessionId);
@@ -314,26 +323,21 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   }, [pendingDeleteId, currentSessionId, sessions, deleteConversation, deleteSession, createSession, createConversation, setMessages]);
 
 
-  // File handling
-  const processFiles = useCallback((files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const newAttachments: FileAttachment[] = fileArray.map(file => {
-      const type = getFileCategory(file);
-      const attachment: FileAttachment = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        file,
-        type,
-      };
-      if (type === 'image') {
-        attachment.preview = URL.createObjectURL(file);
-      }
-      return attachment;
-    });
-    setAttachments(prev => [...prev, ...newAttachments]);
-  }, []);
+  // File handling - directly upload to GCS
+  const processFiles = useCallback(async (files: FileList | File[]) => {
+    try {
+      const fileArray = Array.from(files);
+      await uploadFilesToGCS(fileArray);
+    } catch (error) {
+      console.error('[ChatDrawer] File upload failed:', error);
+      alert(`文件上传失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+  }, [uploadFilesToGCS]);
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) processFiles(e.target.files);
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      await processFiles(e.target.files);
+    }
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [processFiles]);
 
@@ -356,38 +360,14 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     e.stopPropagation();
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    if (e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files);
+    if (e.dataTransfer.files.length > 0) {
+      await processFiles(e.dataTransfer.files);
+    }
   }, [processFiles]);
-
-  const removeAttachment = useCallback((id: string) => {
-    setAttachments(prev => {
-      const att = prev.find(a => a.id === id);
-      if (att?.preview) URL.revokeObjectURL(att.preview);
-      return prev.filter(a => a.id !== id);
-    });
-  }, []);
-
-
-  const uploadFiles = async (files: FileAttachment[]) => {
-    if (files.length === 0) return [];
-    const formData = new FormData();
-    files.forEach(att => formData.append('files', att.file));
-    
-    const token = localStorage.getItem('access_token');
-    const response = await fetch('/api/v1/uploads', { 
-      method: 'POST', 
-      body: formData,
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-    });
-    if (!response.ok) throw new Error('File upload failed');
-    const result = await response.json();
-    return result.uploaded || [];
-  };
-
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -408,55 +388,45 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if ((!localInput.trim() && attachments.length === 0) || isLoading || isComposing || isUploading) return;
+    if ((!localInput.trim() && uploadedFiles.length === 0) || isLoading || isComposing || isUploading) return;
 
     let messageContent = localInput;
-    let uploadedAttachments: any[] = [];
+    let tempAttachments: any[] = [];
     setLocalInput('');
 
-    if (attachments.length > 0) {
-      setIsUploading(true);
-      try {
-        const uploadedFiles = await uploadFiles(attachments);
-        
-        // Convert uploaded files to MessageAttachment format
-        uploadedAttachments = uploadedFiles.map((f: any) => ({
-          id: f.id,
-          filename: f.filename,
-          contentType: f.contentType,
-          size: f.size,
-          s3Url: f.s3Url,
-          cdnUrl: f.cdnUrl,
-          type: f.contentType.startsWith('image/') ? 'image' 
-               : f.contentType.startsWith('video/') ? 'video'
-               : f.contentType.includes('pdf') || f.contentType.includes('document') ? 'document'
-               : 'other',
-        }));
-        
-        // Add file references to message content for display
-        const fileRefs = uploadedFiles.map((f: any) => 
-          `[文件: ${f.filename} (${formatFileSize(f.size)})]`
-        ).join('\n');
-        
-        messageContent = messageContent.trim() 
-          ? `${messageContent}\n\n${fileRefs}`
-          : fileRefs;
-      } catch (error) {
-        console.error('File upload failed:', error);
-        messageContent = messageContent.trim()
-          ? `${messageContent}\n\n[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`
-          : `[文件上传失败: ${attachments.map(a => a.file.name).join(', ')}]`;
-      } finally {
-        setIsUploading(false);
-      }
+    // Send temporary file references (backend will process asynchronously)
+    if (uploadedFiles.length > 0) {
+      // Convert uploaded files to temporary attachment references with preview URLs
+      tempAttachments = uploadedFiles.map((uploaded) => {
+        // Generate preview URL for images (use blob URL for local preview)
+        let previewUrl = '';
+        if (uploaded.file.type.startsWith('image/')) {
+          previewUrl = URL.createObjectURL(uploaded.file);
+        }
+
+        return {
+          fileKey: uploaded.presigned.fileKey,
+          fileId: uploaded.presigned.fileId,
+          filename: uploaded.file.name,
+          contentType: uploaded.file.type || 'application/octet-stream',
+          size: uploaded.file.size,
+          previewUrl,  // Local blob URL for image preview
+          cdnUrl: uploaded.presigned.cdnUrl,  // CDN URL (if available)
+        };
+      });
+
+      // Don't add file references to text content anymore - let MessageBubble handle rendering
+      // Images will be shown as previews in the bubble
     }
 
-    attachments.forEach(att => { if (att.preview) URL.revokeObjectURL(att.preview); });
-    setAttachments([]);
+    // Clear files after submission
+    clearFiles();
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    
+
     if (messageContent.trim()) {
-      await sendMessage(messageContent, uploadedAttachments);
+      // Send message with temporary attachment references
+      // Backend will process these files asynchronously
+      await sendMessage(messageContent, tempAttachments);
     }
   };
 
@@ -668,32 +638,53 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
           )}
 
           {/* Attachments Preview */}
-          {attachments.length > 0 && (
+          {uploadedFiles.length > 0 && (
             <div className="px-4 py-2 border-t border-gray-100 bg-gray-50 flex-shrink-0">
               <div className="flex flex-wrap gap-2">
-                {attachments.map((att) => (
-                  <div key={att.id} className="relative group flex items-center gap-2 px-2 py-1.5 bg-white border border-gray-200 rounded-lg">
-                    {att.type === 'image' && att.preview ? (
-                      <img src={att.preview} alt={att.file.name} className="w-10 h-10 object-cover rounded" />
-                    ) : (
-                      <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center">
-                        <FileTypeIcon type={att.type} />
+                {uploadedFiles.map((uploaded) => {
+                  const fileType = getFileCategory(uploaded.file);
+                  const isImage = fileType === 'image';
+
+                  return (
+                    <div key={uploaded.presigned.fileId} className="relative group flex items-center gap-2 px-2 py-1.5 bg-white border border-gray-200 rounded-lg">
+                      {isImage ? (
+                        <img
+                          src={URL.createObjectURL(uploaded.file)}
+                          alt={uploaded.file.name}
+                          className="w-10 h-10 object-cover rounded"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center">
+                          <FileTypeIcon type={fileType} />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-700 truncate max-w-[100px]">{uploaded.file.name}</p>
+                        <p className="text-xs text-gray-400">
+                          {uploaded.status === 'uploading' ? `${Math.round(uploaded.progress)}%` : formatFileSize(uploaded.file.size)}
+                        </p>
                       </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-gray-700 truncate max-w-[100px]">{att.file.name}</p>
-                      <p className="text-xs text-gray-400">{formatFileSize(att.file.size)}</p>
+                      {uploaded.status === 'uploaded' && (
+                        <button
+                          onClick={() => removeUploadedFile(uploaded.presigned.fileId)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      )}
+                      {uploaded.status === 'uploading' && (
+                        <div className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-blue-500 text-white rounded-full flex items-center justify-center">
+                          <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                        </div>
+                      )}
                     </div>
-                    <button
-                      onClick={() => removeAttachment(att.id)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -753,7 +744,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 ) : (
                   <button
                     type="submit"
-                    disabled={(!localInput.trim() && attachments.length === 0) || isComposing}
+                    disabled={(!localInput.trim() && uploadedFiles.length === 0) || isComposing}
                     className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

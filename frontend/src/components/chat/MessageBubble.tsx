@@ -387,7 +387,35 @@ export function MessageBubble({ message, compact = false, isStreaming = false, a
         {/* Main Content */}
         <div className="px-4 py-3">
           {isUser ? (
-            <p className="text-sm whitespace-pre-wrap break-words">{content}</p>
+            <>
+              {/* User message text */}
+              {content && <p className="text-sm whitespace-pre-wrap break-words">{content}</p>}
+
+              {/* User uploaded attachments preview */}
+              {((message as any).tempAttachments || (message as any).attachments) && (
+                <div className="mt-2 space-y-2">
+                  {((message as any).tempAttachments || (message as any).attachments)?.map((att: any, idx: number) => (
+                    <div key={idx}>
+                      {att.contentType?.startsWith('image/') && (att.previewUrl || att.cdnUrl) ? (
+                        <img
+                          src={att.previewUrl || att.cdnUrl}
+                          alt={att.filename}
+                          className="max-w-xs rounded-lg shadow-md"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-white/10 rounded-lg text-xs">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                          </svg>
+                          <span>{att.filename}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           ) : content ? (
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown

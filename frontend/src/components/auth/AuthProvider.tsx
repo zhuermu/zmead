@@ -30,6 +30,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [isDevMode, setIsDevMode] = useState(false);
   const { user, isAuthenticated, setUser, logout: clearStore } = useAuthStore();
 
+  // Initialize dev mode token if enabled
+  useEffect(() => {
+    const devModeEnabled = process.env.NEXT_PUBLIC_DEV_MODE === 'true';
+    setIsDevMode(devModeEnabled);
+
+    if (devModeEnabled && !hasStoredTokens()) {
+      console.log('[AuthProvider] Dev mode enabled - generating dev token');
+      // Generate a dev token for local development
+      const devToken = 'dev-token-' + Date.now();
+      localStorage.setItem('access_token', devToken);
+      localStorage.setItem('refresh_token', devToken);
+      console.log('[AuthProvider] Dev token created:', devToken);
+    }
+  }, []);
+
   const refreshUser = useCallback(async () => {
     try {
       // Try to get current user - backend handles dev mode internally

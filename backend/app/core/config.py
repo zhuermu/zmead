@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     gcs_bucket_creatives: str = "aae-creatives"
     gcs_bucket_landing_pages: str = "aae-landing-pages"
     gcs_bucket_exports: str = "aae-exports"
+    gcs_bucket_uploads_temp: str = "aae-user-uploads-temp"  # Temporary file uploads (48h lifecycle)
+    gcs_bucket_uploads: str = "aae-user-uploads"  # Permanent file uploads
     gcs_cdn_domain: str = Field(default="")  # Custom domain or Cloud CDN domain
 
     # OAuth - Google
@@ -116,6 +118,9 @@ class Settings(BaseSettings):
     ai_orchestrator_url: str = "http://localhost:8001"
     ai_orchestrator_timeout: int = 60  # seconds
     ai_orchestrator_service_token: str = Field(default="")
+
+    # Gemini API
+    gemini_api_key: str = Field(default="")
 
     # Development - Disable authentication for local development
     disable_auth: bool = False

@@ -61,7 +61,16 @@
       "mcp__playwright__browser_close",
       "mcp__playwright__browser_install",
       "Bash(pkill:*)",
-      "mcp__playwright__browser_tabs"
+      "mcp__playwright__browser_tabs",
+      "Bash(docker-compose up:*)",
+      "Bash(python test_direct_upload.py:*)",
+      "Bash(python test_gemini_upload.py:*)",
+      "Bash(/Users/xiaowely/ws/git/zmead/backend/venv/bin/python:*)",
+      "Bash(tail:*)",
+      "Bash(mcp__playwright__browser_navigate http://localhost:3000)",
+      "mcp__playwright__browser_file_upload",
+      "Bash(pip show:*)",
+      "Bash(python -m json.tool:*)"
     ],
     "deny": [],
     "ask": []

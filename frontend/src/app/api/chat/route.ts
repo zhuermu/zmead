@@ -40,10 +40,15 @@ export async function POST(req: Request) {
     const sessionId = String(body.session_id || req.headers.get('x-session-id') || `session-${Date.now()}`);
 
     // Normalize messages format (handle legacy AI SDK v5 format)
+    // IMPORTANT: Preserve tempAttachments and attachments fields for file upload
     const normalizedMessages = (body.messages || [])
       .map((msg: any) => ({
         role: msg.role,
         content: getMessageContent(msg),
+        // Preserve temp attachments (for files uploaded to GCS temp bucket)
+        ...(msg.tempAttachments ? { tempAttachments: msg.tempAttachments } : {}),
+        // Preserve permanent attachments (for already processed files)
+        ...(msg.attachments ? { attachments: msg.attachments } : {}),
       }))
       .filter((msg: any) => msg.content); // Filter out empty messages
 

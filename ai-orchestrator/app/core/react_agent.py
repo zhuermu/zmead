@@ -90,6 +90,9 @@ class AgentState:
     user_message: str = ""
     user_intent: str | None = None
 
+    # File attachments (with Gemini File URIs from backend processing)
+    attachments: list[dict[str, Any]] = field(default_factory=list)
+
     # Execution state
     status: AgentStatus = AgentStatus.IDLE
     current_step: int = 0
@@ -136,6 +139,7 @@ class AgentState:
             "conversation_id": self.conversation_id,
             "user_message": self.user_message,
             "user_intent": self.user_intent,
+            "attachments": self.attachments,
             "status": self.status.value,
             "current_step": self.current_step,
             "max_steps": self.max_steps,
@@ -225,6 +229,7 @@ class AgentState:
             conversation_id=data.get("conversation_id"),
             user_message=data.get("user_message", ""),
             user_intent=data.get("user_intent"),
+            attachments=data.get("attachments", []),
             status=AgentStatus(data.get("status", "idle")),
             current_step=data.get("current_step", 0),
             max_steps=data.get("max_steps", 10),
@@ -444,31 +449,36 @@ class ReActAgent:
             if loaded_tools:
                 state.loaded_tool_names = [tool.name for tool in loaded_tools]
 
-            # Build enhanced user message with attachment info
-            enhanced_message = user_message
+            # Process and store attachments with Gemini File URIs
+            gemini_attachments = []
             if attachments:
-                # Add attachment information to message for agent context
-                attachment_info = "\n\n附件信息：\n"
+                # Filter attachments to keep only those with Gemini File URIs
                 for att in attachments:
-                    att_type = att.get("type", "file")
-                    filename = att.get("filename", "unknown")
-                    s3_url = att.get("s3Url", "")
-                    
-                    if att_type == "image":
-                        attachment_info += f"- 图片: {filename} (URL: {s3_url})\n"
-                    elif att_type == "video":
-                        attachment_info += f"- 视频: {filename} (URL: {s3_url})\n"
-                    else:
-                        attachment_info += f"- 文件: {filename} (URL: {s3_url})\n"
-                
-                enhanced_message = user_message + attachment_info
-                log.info("attachments_included", count=len(attachments))
-            
-            # Add user message to conversation history
+                    # Check if file was already uploaded to Gemini Files API
+                    if att.get("geminiFileUri"):
+                        gemini_attachments.append({
+                            "filename": att.get("filename", "unknown"),
+                            "contentType": att.get("contentType", "application/octet-stream"),
+                            "geminiFileUri": att["geminiFileUri"],
+                            "geminiFileName": att.get("geminiFileName"),
+                            "type": att.get("type", "file"),
+                        })
+
+            # Store attachments in state for passing to planner
+            if gemini_attachments:
+                state.attachments = gemini_attachments
+                log.info("attachments_stored_in_state", count=len(gemini_attachments))
+
+            # Add user message to conversation history with attachments in metadata
+            message_metadata = {}
+            if gemini_attachments:
+                message_metadata["attachments"] = gemini_attachments
+
             await self.memory.add_message(
                 session_id=session_id,
                 role="user",
-                content=enhanced_message,
+                content=user_message,
+                metadata=message_metadata,
             )
 
             # Execute ReAct loop with streaming
@@ -917,6 +927,7 @@ class ReActAgent:
                     available_tools=loaded_tools,
                     execution_history=execution_history,
                     user_id=state.user_id,
+                    attachments=state.attachments if state.attachments else None,
                 ):
                     if event["type"] == "thought":
                         chunk = event["content"]

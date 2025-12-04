@@ -1,21 +1,33 @@
 """HTTP streaming chat endpoint for Vercel AI SDK compatibility."""
 
+import asyncio
 import json
 import logging
 import uuid
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
+from app.services.file_processor import process_temp_attachments
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+class TempFileAttachment(BaseModel):
+    """Temporary file attachment reference."""
+
+    fileKey: str = Field(..., description="Temporary file key in GCS")
+    fileId: str = Field(..., description="Unique file ID")
+    filename: str = Field(..., description="Original filename")
+    contentType: str = Field(..., description="File content type")
+    size: int = Field(..., description="File size in bytes")
 
 
 class ChatMessage(BaseModel):
@@ -23,6 +35,9 @@ class ChatMessage(BaseModel):
 
     role: str = Field(..., description="Message role: user, assistant, or system")
     content: str = Field(..., description="Message content")
+    tempAttachments: list[TempFileAttachment] | None = Field(
+        None, description="Temporary file attachments (not yet confirmed)"
+    )
 
 
 class ChatRequest(BaseModel):
@@ -38,13 +53,60 @@ async def chat_stream(
 ) -> StreamingResponse:
     """
     HTTP streaming chat endpoint compatible with Vercel AI SDK.
-    
+
     This endpoint forwards chat requests to the AI Orchestrator and streams
     the response back to the client in a format compatible with Vercel AI SDK.
-    
+
+    Automatically processes temporary file attachments:
+    - Moves files from temp to permanent storage
+    - Uploads files to Gemini Files API
+    - Attaches processed files to messages for AI Agent
+
     Requirements: 4.1.3, 4.1.4
     """
     logger.info(f"Chat request from user {current_user.id} with {len(request.messages)} messages")
+
+    # DEBUG: Log the raw request to see what we're receiving
+    for i, msg in enumerate(request.messages):
+        logger.info(f"Message {i}: role={msg.role}, content_length={len(msg.content)}, has_tempAttachments={msg.tempAttachments is not None}")
+        if msg.tempAttachments:
+            logger.info(f"  tempAttachments count: {len(msg.tempAttachments)}")
+            for j, att in enumerate(msg.tempAttachments):
+                logger.info(f"    Attachment {j}: fileId={att.fileId}, filename={att.filename}")
+
+    # Process temporary attachments from ALL messages before starting stream
+    # This ensures files are ready for AI Agent to use
+    processed_messages = []
+
+    for msg in request.messages:
+        processed_msg = {"role": msg.role, "content": msg.content}
+
+        # Process temp attachments if present
+        if msg.tempAttachments:
+            logger.info(
+                f"Processing {len(msg.tempAttachments)} temp attachments for message"
+            )
+
+            # Convert to dict format for processing
+            temp_files = [att.dict() for att in msg.tempAttachments]
+
+            # Process attachments (async)
+            processed_attachments = await process_temp_attachments(
+                temp_files, str(current_user.id)
+            )
+
+            if processed_attachments:
+                # Add processed attachments to message
+                processed_msg["attachments"] = [
+                    att.to_dict() for att in processed_attachments
+                ]
+                logger.info(
+                    f"Successfully processed {len(processed_attachments)} attachments"
+                )
+            else:
+                logger.warning("No attachments were successfully processed")
+
+        processed_messages.append(processed_msg)
 
     async def generate_stream():
         """Generate streaming response."""
@@ -55,10 +117,7 @@ async def chat_stream(
                 session_id = f"session-{current_user.id}-{uuid.uuid4().hex[:8]}"
 
                 payload = {
-                    "messages": [
-                        {"role": msg.role, "content": msg.content}
-                        for msg in request.messages
-                    ],
+                    "messages": processed_messages,
                     "user_id": str(current_user.id),
                     "session_id": session_id,
                 }

@@ -69,13 +69,25 @@ class Settings(BaseSettings):
     )
 
     # Google Cloud Storage configuration
+    gcs_project_id: str = Field(
+        default="",
+        description="GCS project ID",
+    )
+    gcs_credentials_path: str | None = Field(
+        default=None,
+        description="Path to GCS service account credentials JSON",
+    )
     gcs_bucket_name: str = Field(
         default="zmead-creatives",
         description="GCS bucket for storing creatives",
     )
-    gcs_credentials_path: str | None = Field(
-        default=None,
-        description="Path to GCS service account credentials JSON (for signed URLs)",
+    gcs_bucket_uploads_temp: str = Field(
+        default="aae-user-uploads-temp",
+        description="GCS bucket for temporary file uploads (48h lifecycle)",
+    )
+    gcs_bucket_uploads: str = Field(
+        default="aae-user-uploads",
+        description="GCS bucket for permanent file uploads",
     )
     gcs_signed_url_expiration: int = Field(
         default=60,

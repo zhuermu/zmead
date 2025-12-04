@@ -170,6 +170,87 @@ const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat(
 });
 ```
 
+##### 1.1 视频持久化机制（Video Persistence）
+
+生成的视频通过 GCS Signed URL 机制实现持久化访问，确保页面刷新后视频仍可播放。
+
+**Message 数据结构**：
+```typescript
+interface Message {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  createdAt?: Date;
+  processInfo?: string;              // Agent 处理过程
+  generatedImages?: GeneratedImage[]; // 生成的图片
+  generatedVideoUrl?: string;        // 视频 Signed URL（临时）
+  videoObjectName?: string;          // GCS 对象路径（持久化存储）
+}
+```
+
+**持久化流程**：
+
+1. **视频生成时**：后端返回 `video_object_name`（GCS 路径），前端调用 Signed URL API 获取 `generatedVideoUrl`
+2. **存储到 localStorage**：Zustand `partialize` 保留 `videoObjectName`，剥离 base64 数据 URL
+3. **页面刷新后**：检测有 `videoObjectName` 但无 `generatedVideoUrl` 的消息，重新获取 Signed URL
+
+**实现代码**：
+```typescript
+// hooks/useChat.ts
+// 获取 GCS Signed URL
+const fetchSignedUrl = useCallback(async (objectName: string, messageId: string) => {
+  const response = await fetch(`/api/media/signed-url/${encodeURIComponent(objectName)}`);
+  const data = await response.json();
+  setMessages(prev =>
+    prev.map(msg =>
+      msg.id === messageId
+        ? { ...msg, generatedVideoUrl: data.signed_url }
+        : msg
+    )
+  );
+}, []);
+
+// 页面加载时恢复视频 URL
+useEffect(() => {
+  const storedMessages = useChatStore.getState().messages;
+  if (storedMessages.length > 0 && messages.length === 0) {
+    const loadedMessages = storedMessages as Message[];
+    setMessages(loadedMessages);
+    // Re-fetch signed URLs for messages with videoObjectName
+    loadedMessages.forEach((msg) => {
+      if (msg.videoObjectName && !msg.generatedVideoUrl) {
+        fetchSignedUrl(msg.videoObjectName, msg.id);
+      }
+    });
+  }
+}, [messages.length, fetchSignedUrl]);
+```
+
+**Zustand Store 配置**：
+```typescript
+// lib/store.ts
+persist(
+  (set, get) => ({ /* state */ }),
+  {
+    name: 'chat-storage',
+    partialize: (state) => ({
+      messages: state.messages.map((msg) => ({
+        ...msg,
+        // 剥离 base64 数据 URL，保留 videoObjectName
+        generatedVideoUrl: msg.generatedVideoUrl?.startsWith('data:')
+          ? undefined
+          : msg.generatedVideoUrl,
+        // 剥离图片 base64 数据
+        generatedImages: msg.generatedImages?.map((img) => ({
+          ...img,
+          data_b64: undefined,
+        })),
+      })),
+    }),
+  }
+)
+```
+
 #### 2. Dashboard Component
 ```typescript
 // app/dashboard/page.tsx

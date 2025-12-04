@@ -951,10 +951,48 @@ class GeminiClient:
 
                 if generated_samples:
                     video_info = generated_samples[0].get("video", {})
+                    video_uri = video_info.get("uri")
+
+                    # Download the video data since the URI requires authentication
+                    video_data_b64 = None
+                    if video_uri:
+                        try:
+                            # The URI format is like: https://generativelanguage.googleapis.com/download/...
+                            # We need to add the API key to download it
+                            download_url = video_uri
+                            if "?" in download_url:
+                                download_url += f"&key={self.api_key}"
+                            else:
+                                download_url += f"?key={self.api_key}"
+
+                            # Use a client with follow_redirects to handle 302
+                            video_response = await client.get(
+                                download_url,
+                                timeout=120.0,  # Longer timeout for video download
+                                follow_redirects=True,
+                            )
+
+                            if video_response.status_code == 200:
+                                video_bytes = video_response.content
+                                video_data_b64 = base64.b64encode(video_bytes).decode("utf-8")
+                                log.info(
+                                    "video_downloaded",
+                                    size=len(video_bytes),
+                                )
+                            else:
+                                log.warning(
+                                    "video_download_failed",
+                                    status_code=video_response.status_code,
+                                )
+                        except Exception as e:
+                            log.warning("video_download_error", error=str(e))
+
                     return {
                         "status": "completed",
-                        "video_uri": video_info.get("uri"),
+                        "video_uri": video_uri,
                         "video_state": video_info.get("state"),
+                        "video_data_b64": video_data_b64,
+                        "video_bytes": video_bytes if video_data_b64 else None,  # Raw bytes for GCS upload
                     }
 
                 return {"status": "completed", "data": response_data}

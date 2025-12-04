@@ -10,10 +10,12 @@ These tools can call LLMs (Gemini) for AI capabilities.
 They call the module functions directly (not through capability.py).
 """
 
+import base64
 import structlog
 from typing import Any
 
 from app.services.gemini_client import GeminiClient, GeminiError
+from app.services.gcs_client import GCSClient, GCSError, get_gcs_client
 from app.services.mcp_client import MCPClient, MCPError
 from app.tools.base import (
     AgentTool,
@@ -22,9 +24,6 @@ from app.tools.base import (
     ToolMetadata,
     ToolParameter,
 )
-# Import module functions directly
-from app.modules.ad_creative.generators.image_generator import ImageGenerator
-from app.modules.ad_creative.models import ProductInfo
 
 logger = structlog.get_logger(__name__)
 
@@ -129,45 +128,50 @@ class GenerateImageTool(AgentTool):
         log.info("generate_image_start")
 
         try:
-            # Use the ImageGenerator from the module
-            image_generator = ImageGenerator(gemini_client=self.gemini_client)
-            
-            # Convert product_info dict to ProductInfo model
-            product = ProductInfo(
-                name=product_info.get("name", ""),
-                description=product_info.get("description", ""),
-                features=product_info.get("features", []),
-                price=product_info.get("price"),
-                category=product_info.get("category"),
-            )
-            
-            # Generate images using the module
-            generated_images = await image_generator.generate(
-                product_info=product,
+            # Build prompt directly for simple image generation
+            # This allows generating general images without full ProductInfo validation
+            prompt = self._build_image_prompt(product_info, style)
+
+            log.info("generating_image", prompt_preview=prompt[:100])
+
+            # Generate images directly using Gemini client
+            image_bytes_list = await self.gemini_client.generate_images(
+                prompt=prompt,
                 count=count,
-                style=style,
                 aspect_ratio=aspect_ratio,
+                use_pro_model=False,
             )
 
-            log.info("images_generated", count=len(generated_images))
+            log.info("images_generated", count=len(image_bytes_list))
 
-            # Save creatives via MCP
+            # Save creatives via MCP (if MCP client is available and configured)
             creative_ids = []
             image_urls = []
+            image_data_list = []
 
-            for idx, gen_image in enumerate(generated_images):
+            for idx, image_bytes in enumerate(image_bytes_list):
+                # Convert to base64 for transport/storage
+                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                image_data_list.append({
+                    "index": idx,
+                    "format": "png",
+                    "size": len(image_bytes),
+                    "data_b64": image_b64,
+                })
+
+                # Try to save via MCP if available
                 try:
                     result = await self.mcp_client.call_tool(
                         "save_creative",
                         {
                             "user_id": user_id,
-                            "image_data": gen_image.image_bytes,
+                            "image_data": image_b64,
                             "metadata": {
-                                "product_name": product_info.get("name"),
+                                "product_name": product_info.get("name", "generated_image"),
                                 "style": style,
                                 "aspect_ratio": aspect_ratio,
                                 "generated_by": "gemini_imagen",
-                                "prompt": gen_image.prompt,
+                                "prompt": prompt,
                             },
                         },
                     )
@@ -181,19 +185,23 @@ class GenerateImageTool(AgentTool):
                         index=idx,
                         error=str(e),
                     )
+                    # Still include the image data even if MCP save fails
+                    creative_ids.append(None)
+                    image_urls.append(None)
 
             log.info(
                 "generate_image_complete",
-                generated=len(generated_images),
-                saved=len(creative_ids),
+                generated=len(image_bytes_list),
+                saved=len([cid for cid in creative_ids if cid]),
             )
 
             return {
                 "success": True,
-                "image_urls": image_urls,
-                "creative_ids": creative_ids,
-                "count": len(creative_ids),
-                "message": f"Successfully generated {len(creative_ids)} images",
+                "image_urls": [url for url in image_urls if url],
+                "creative_ids": [cid for cid in creative_ids if cid],
+                "count": len(image_bytes_list),
+                "images": image_data_list,  # Include raw image data for direct use
+                "message": f"Successfully generated {len(image_bytes_list)} images",
             }
 
         except GeminiError as e:
@@ -313,7 +321,7 @@ class GenerateVideoTool(AgentTool):
                     description="Video duration in seconds",
                     required=False,
                     default=4,
-                    enum=[4, 6, 8],
+                    enum=["4", "6", "8"],
                 ),
                 ToolParameter(
                     name="aspect_ratio",
@@ -346,11 +354,13 @@ class GenerateVideoTool(AgentTool):
             context: Execution context with user_id
 
         Returns:
-            Operation ID for polling video status
+            Video URL and metadata once generation completes
 
         Raises:
             ToolExecutionError: If generation fails
         """
+        import asyncio
+
         user_id = context.get("user_id") if context else None
         product_info = parameters.get("product_info", {})
         style = parameters.get("style", "dynamic")
@@ -382,11 +392,94 @@ class GenerateVideoTool(AgentTool):
 
             log.info("video_generation_started", operation_id=operation_id)
 
+            # Poll for completion (max 5 minutes with 5 second intervals)
+            max_attempts = 60
+            poll_interval = 5
+
+            for attempt in range(max_attempts):
+                poll_result = await self.gemini_client.poll_video_operation(operation_id)
+
+                if poll_result.get("status") == "completed":
+                    video_uri = poll_result.get("video_uri")
+                    video_bytes = poll_result.get("video_bytes")
+
+                    log.info(
+                        "video_generation_complete",
+                        operation_id=operation_id,
+                        video_uri=video_uri[:100] if video_uri else None,
+                        has_video_bytes=video_bytes is not None,
+                    )
+
+                    result = {
+                        "success": True,
+                        "status": "completed",
+                        "operation_id": operation_id,
+                        "message": "Video generated successfully",
+                    }
+
+                    # Upload video to GCS for persistent public access
+                    if video_bytes:
+                        try:
+                            gcs_client = get_gcs_client()
+                            product_name = product_info.get("name", "video")
+                            filename = f"{product_name}_{style}_{operation_id[-8:]}.mp4"
+
+                            upload_result = await gcs_client.upload_video(
+                                video_bytes=video_bytes,
+                                filename=filename,
+                                user_id=user_id or "anonymous",
+                                content_type="video/mp4",
+                                prefix="chat-videos",
+                                metadata={
+                                    "style": style,
+                                    "duration": str(duration),
+                                    "aspect_ratio": aspect_ratio,
+                                    "operation_id": operation_id,
+                                },
+                            )
+
+                            # Return object_name for signed URL generation
+                            result["video_object_name"] = upload_result["object_name"]
+                            result["video_bucket"] = upload_result["bucket"]
+                            result["video_gcs_url"] = upload_result["gcs_url"]
+                            log.info(
+                                "video_uploaded_to_gcs",
+                                object_name=upload_result["object_name"],
+                                size=upload_result["size"],
+                            )
+                        except GCSError as e:
+                            log.warning(
+                                "gcs_upload_failed",
+                                error=str(e),
+                            )
+                            # Fallback to base64 if GCS upload fails
+                            video_data_b64 = poll_result.get("video_data_b64")
+                            if video_data_b64:
+                                result["video_data_b64"] = video_data_b64
+                                result["video_format"] = "mp4"
+                    elif video_uri:
+                        # Fallback to URI (may require auth)
+                        result["video_url"] = video_uri
+
+                    return result
+
+                # Still processing
+                progress = poll_result.get("progress", 0)
+                log.info(
+                    "video_generation_polling",
+                    attempt=attempt + 1,
+                    progress=progress,
+                )
+
+                await asyncio.sleep(poll_interval)
+
+            # Timeout
+            log.warning("video_generation_timeout", operation_id=operation_id)
             return {
-                "success": True,
-                "status": "processing",
+                "success": False,
+                "status": "timeout",
                 "operation_id": operation_id,
-                "message": "Video generation started. Use check_video_status to poll for completion.",
+                "message": "Video generation timed out. Please check back later.",
             }
 
         except GeminiError as e:

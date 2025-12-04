@@ -226,24 +226,25 @@ class Planner:
 
 Analyze the user's request and decide how to respond.
 
-IMPORTANT: Your response format depends on whether you need to use tools:
+## CRITICAL: When to use tools vs direct response
 
-## If you can answer directly (no tools needed):
-Just respond with a JSON block containing your answer:
-```json
-{
-    "action": null,
-    "action_input": null,
-    "is_complete": true,
-    "final_answer": "Your helpful response to the user here"
-}
-```
+### MUST USE TOOLS for these tasks (DO NOT just promise to do them):
+- **Image generation**: Use `generate_image_tool` - you CANNOT generate images yourself
+- **Video generation**: Use `generate_video_tool` - you CANNOT generate videos yourself
+- **Data queries**: Use appropriate data tools - you CANNOT access real data yourself
+- **File operations**: Use file tools - you CANNOT access files yourself
+- **External API calls**: Use API tools - you CANNOT make external requests yourself
 
-## If you need to use a tool:
-First explain your reasoning briefly, then provide the decision:
+### Can answer directly (no tools needed):
+- General knowledge questions
+- Greetings and casual conversation
+- Writing, translation, explanation tasks
+- Math calculations, date calculations
+- Advice and suggestions (without requiring real data)
 
-I need to [brief explanation of what you're going to do].
+## Response format:
 
+### If you need to use a tool (image/video generation, data access, etc.):
 ```json
 {
     "action": "tool_name",
@@ -253,11 +254,62 @@ I need to [brief explanation of what you're going to do].
 }
 ```
 
+### If you can answer directly WITHOUT any tool:
+```json
+{
+    "action": null,
+    "action_input": null,
+    "is_complete": true,
+    "final_answer": "Your direct answer here"
+}
+```
+
+## IMPORTANT RULES:
+1. **NEVER say "I'm generating..." and then set is_complete=true** - you must actually call the tool!
+2. If user asks to generate/create something, you MUST call the appropriate tool
+3. Only set is_complete=true AFTER the tool has been executed and returned results
+4. Do not promise to do something without actually doing it
+
+## CRITICAL: Reflective Problem-Solving Loop (2-3 Rounds)
+
+When you encounter failures or obstacles, DO NOT give up immediately. You MUST reflect and retry 2-3 times before giving up.
+
+### The Reflection Loop (Repeat 2-3 times before giving up):
+1. **OBSERVE**: What went wrong? Why did it fail?
+2. **REFLECT**: What data do I already have? What alternative approaches exist?
+3. **RE-PLAN**: Choose a different path and try again
+4. **If still failing after 2-3 attempts**: Only then consider giving up with a clear explanation
+
+### Key Principles:
+
+1. **Retry at least 2-3 times**:
+   - First attempt fails? Try a different tool or approach
+   - Second attempt fails? Try combining existing data with reasoning
+   - Third attempt fails? Try one more creative solution
+   - Only give up after exhausting multiple approaches
+
+2. **Use data you already have**: After getting ANY tool result, ask yourself:
+   - What can I infer or calculate from this data?
+   - Does this data, combined with my knowledge, answer the user's question?
+
+3. **Your reasoning is a tool**: You are an LLM with knowledge and reasoning ability
+   - You can calculate dates, do math, make logical inferences
+   - Tool results + YOUR reasoning = Complete answers
+
+4. **Decompose complex problems**: Break into steps where each step uses available resources
+
+### IMPORTANT: Only give up after 2-3 reflection rounds
+- Do NOT give up after a single failure
+- Each failed approach should trigger a new reflection and re-plan
+- Track your attempts mentally: "Attempt 1 failed, let me try approach 2..."
+- Only say "I cannot help" after genuinely trying 2-3 different approaches
+
 Guidelines:
 - For simple questions (greetings, general knowledge, writing tasks), answer directly
 - Only use tools when specifically needed (generating images, checking data, etc.)
 - Keep explanations brief and user-friendly
-- Never include technical details or markdown headers in your response"""
+- Never include technical details or markdown headers in your response
+- When a tool fails, you MUST try alternative approaches (2-3 times) before giving up"""
 
     def _parse_plan_from_response(self, response: str) -> PlanAction:
         """Parse plan from streaming response.
@@ -405,17 +457,55 @@ Your role is to:
 4. Execute actions systematically
 5. Provide clear, helpful responses
 
+## CRITICAL: When to use tools vs direct response
+
+### MUST USE TOOLS for these tasks (DO NOT just promise to do them):
+- **Image generation**: Use `generate_image_tool` - you CANNOT generate images yourself
+- **Video generation**: Use `generate_video_tool` - you CANNOT generate videos yourself
+- **Data queries**: Use appropriate data tools - you CANNOT access real data yourself
+- **File operations**: Use file tools - you CANNOT access files yourself
+- **External API calls**: Use API tools - you CANNOT make external requests yourself
+
+### Can answer directly (no tools needed):
+- General knowledge questions
+- Greetings and casual conversation
+- Writing, translation, explanation tasks
+- Math calculations, date calculations
+- Advice and suggestions (without requiring real data)
+
+## IMPORTANT RULES:
+1. **NEVER say "I'm generating..." and then set is_complete=true** - you must actually call the tool!
+2. If user asks to generate/create something, you MUST call the appropriate tool
+3. Only set is_complete=true AFTER the tool has been executed and returned results
+4. Do not promise to do something without actually doing it
+
 Follow the ReAct (Reasoning + Acting) pattern:
 - Think: Reason about what to do next
 - Act: Choose a tool and provide parameters
 - Observe: Process the tool result
 - Evaluate: Decide if the task is complete
 
+## CRITICAL: Reflective Problem-Solving Loop (2-3 Rounds)
+
+When you encounter failures or obstacles, DO NOT give up immediately. You MUST reflect and retry 2-3 times before giving up.
+
+### The Reflection Loop:
+1. **OBSERVE**: What went wrong? Why did it fail?
+2. **REFLECT**: What data do I already have? What alternatives exist?
+3. **RE-PLAN**: Choose a different path and try again
+4. **If still failing after 2-3 attempts**: Only then consider giving up with explanation
+
+### Key Principles:
+
+1. **Retry at least 2-3 times** before giving up
+2. **Your reasoning is powerful**: Tool results + YOUR reasoning = Complete answers
+3. **Use data you already have**: Infer and combine information
+4. **Decompose problems**: Break complex tasks into steps
+
 Guidelines:
 - Be systematic and thorough
-- Use tools when needed, don't try to do everything yourself
+- Use tools when needed for generation/data tasks
 - Ask for clarification if information is missing
-- Provide clear explanations of your reasoning
 - Complete tasks efficiently without unnecessary steps
 
 When the task is complete, set is_complete=true and provide a final_answer."""
@@ -462,6 +552,12 @@ When the task is complete, set is_complete=true and provide a final_answer."""
 
         # Instructions
         prompt_parts.append("What should I do next?")
+        prompt_parts.append("")
+        prompt_parts.append("IMPORTANT: Reflect 2-3 times before giving up!")
+        prompt_parts.append("- If a tool fails, try alternative approaches (at least 2-3 attempts)")
+        prompt_parts.append("- Tools give you DATA, your reasoning gives you ANSWERS")
+        prompt_parts.append("- Combine tool results with your knowledge to derive answers")
+        prompt_parts.append("- Only give up after genuinely trying 2-3 different approaches")
         prompt_parts.append("")
         prompt_parts.append("Provide:")
         prompt_parts.append("1. thought: Your reasoning about what to do next")

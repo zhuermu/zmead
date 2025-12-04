@@ -981,12 +981,32 @@ class ReActAgent:
                     step.observation = observation
 
                     # Notify user about tool result
-                    yield {
+                    # Include full data for media-generating tools
+                    observation_event = {
                         "type": "observation",
                         "tool": plan.action,
                         "result": observation,
                         "success": tool_result.get("success", False),
                     }
+
+                    # Include generated images/videos in the event
+                    if plan.action == "generate_image_tool" and tool_result.get("images"):
+                        observation_event["images"] = tool_result["images"]
+                    elif plan.action == "generate_video_tool":
+                        # Priority: GCS object name > base64 > direct URL
+                        if tool_result.get("video_object_name"):
+                            # GCS object name for signed URL generation
+                            observation_event["video_object_name"] = tool_result["video_object_name"]
+                            observation_event["video_bucket"] = tool_result.get("video_bucket")
+                        elif tool_result.get("video_data_b64"):
+                            # Fallback to base64 data
+                            observation_event["video_data_b64"] = tool_result["video_data_b64"]
+                            observation_event["video_format"] = tool_result.get("video_format", "mp4")
+                        elif tool_result.get("video_url"):
+                            # Legacy fallback to direct URL
+                            observation_event["video_url"] = tool_result["video_url"]
+
+                    yield observation_event
 
                     log.info("tool_executed", tool_name=plan.action)
 
@@ -1054,9 +1074,8 @@ class ReActAgent:
     ) -> AgentState:
         """Get existing state or create new one.
 
-        For each new message, we reset execution state to ensure
-        fresh processing. Conversation history is preserved in memory,
-        but agent state (steps, tool calls) is reset.
+        If there's an existing state waiting for user input, load it
+        and continue from where we left off. Otherwise create fresh state.
 
         Args:
             user_message: User message
@@ -1067,9 +1086,35 @@ class ReActAgent:
         Returns:
             AgentState
         """
-        # Always create fresh state for new messages
-        # Conversation history is handled by AgentMemory, not AgentState
-        # This prevents issues with concurrent requests and stale state
+        # Check if there's an existing state waiting for user input
+        existing_state = await self._load_state(session_id)
+        if existing_state and existing_state.waiting_for_user_input:
+            logger.info(
+                "resuming_from_waiting_state",
+                session_id=session_id,
+                original_message=existing_state.user_message[:50] if existing_state.user_message else "",
+            )
+            # Update the last step with user's response
+            if existing_state.steps:
+                last_step = existing_state.steps[-1]
+                last_step.observation = f"User selected: {user_message}"
+
+                # If there's a pending action in metadata, update action_input
+                if existing_state.user_input_request:
+                    metadata = existing_state.user_input_request.get("metadata", {})
+                    reason = metadata.get("reason", "")
+                    if ":" in reason:
+                        param_name = reason.split(":")[1]
+                        if last_step.action_input:
+                            last_step.action_input[param_name] = user_message
+
+            # Reset waiting state
+            existing_state.waiting_for_user_input = False
+            existing_state.user_input_request = None
+
+            return existing_state
+
+        # Create fresh state for new messages
         return AgentState(
             session_id=session_id,
             user_id=user_id,

@@ -196,10 +196,12 @@ def create_app() -> FastAPI:
     from app.api.chat import router as chat_router
     from app.api.health import router as health_router
     from app.api.campaign_automation import router as campaign_automation_router
+    from app.api.media import router as media_router
 
     app.include_router(health_router, tags=["Health"])
     app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
     app.include_router(campaign_automation_router, prefix="/api", tags=["Campaign Automation"])
+    app.include_router(media_router, prefix="/api/v1", tags=["Media"])
 
     return app
 

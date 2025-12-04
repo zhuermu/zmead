@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { ChevronDown, ChevronRight, Brain, Wrench, CheckCircle2, XCircle, Sparkles, Loader2 } from 'lucide-react';
 import type { Message, AgentStatus } from '@/hooks/useChat';
+import { GeneratedImageGallery } from './GeneratedImageGallery';
 
 interface MessageBubbleProps {
   message: Message;
@@ -190,6 +191,10 @@ export function MessageBubble({ message, compact = false, isStreaming = false, a
   };
 
   const content = getMessageContent();
+
+  // Get generated images/videos from message
+  const generatedImages = (message as any).generatedImages || [];
+  const generatedVideoUrl = (message as any).generatedVideoUrl;
 
   // Filter meaningful steps for display
   const meaningfulSteps = allSteps.filter(step => {
@@ -456,6 +461,25 @@ export function MessageBubble({ message, compact = false, isStreaming = false, a
               <span className="text-xs">等待回复...</span>
             </div>
           ) : null}
+
+          {/* Generated Images Gallery */}
+          {!isUser && generatedImages.length > 0 && (
+            <GeneratedImageGallery images={generatedImages} />
+          )}
+
+          {/* Generated Video */}
+          {!isUser && generatedVideoUrl && (
+            <div className="my-3">
+              <video
+                src={generatedVideoUrl}
+                controls
+                className="w-full rounded-lg shadow-sm"
+                style={{ maxHeight: '400px' }}
+              >
+                您的浏览器不支持视频播放
+              </video>
+            </div>
+          )}
 
           {/* Timestamp */}
           {!isStreaming && (

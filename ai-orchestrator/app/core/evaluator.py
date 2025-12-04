@@ -120,6 +120,23 @@ class Evaluator:
         "google_search",  # Web search (read-only)
         "get_credit_balance",  # Check balance (read-only)
         "get_reports",  # Fetch reports (read-only)
+        # Creative generation tools - use credits but don't require confirmation
+        # for simple requests since the Planner already selected appropriate parameters
+        "generate_image_tool",  # Image generation
+        "generate_video_tool",  # Video generation
+        "analyze_creative_tool",  # Creative analysis (read-only)
+        "extract_product_info_tool",  # Product info extraction (read-only)
+        # Landing page tools
+        "generate_page_content_tool",  # Content generation
+        "preview_landing_page_tool",  # Preview (read-only)
+        # Market insight tools (read-only)
+        "analyze_competitors_tool",
+        "get_market_trends_tool",
+        "analyze_audience_tool",
+        # Performance tools (read-only)
+        "get_performance_report_tool",
+        "detect_anomaly_tool",
+        "get_optimization_recommendations_tool",
     }
 
     def __init__(
@@ -174,9 +191,12 @@ class Evaluator:
             return EvaluationResult(needs_human_input=False)
 
         # Check if operation is auto-approved (low risk, simple tools)
+        # Auto-approved operations skip ALL checks (including ambiguous parameter detection)
         if self._is_auto_approve_operation(plan.action):
             log.info("auto_approve_operation", operation=plan.action)
             return EvaluationResult(needs_human_input=False)
+
+        # NOTE: Checks below only apply to NON-auto-approved operations
 
         # Check if operation is high risk
         if self._is_high_risk_operation(plan.action):

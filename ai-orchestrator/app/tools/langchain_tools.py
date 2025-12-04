@@ -241,15 +241,17 @@ class DateTimeTool(AgentTool):
         metadata = ToolMetadata(
             name="datetime",
             description=(
-                "Get current date and time, or perform date calculations. "
-                "Useful for time-based queries, scheduling, and date arithmetic."
+                "Get current date/time with weekday, or perform date calculations. "
+                "Returns date AND weekday name. Use add_days to find future/past dates. "
+                "Examples: 'today' returns '2025-12-03 (星期三)', "
+                "'add_days' with days=1 returns tomorrow's date and weekday."
             ),
             category=ToolCategory.LANGCHAIN,
             parameters=[
                 ToolParameter(
                     name="operation",
                     type="string",
-                    description="Operation to perform",
+                    description="Operation: 'now' (current datetime), 'today' (date only), 'add_days' (calculate future/past date), 'date_diff' (days between dates)",
                     required=False,
                     default="now",
                     enum=["now", "today", "date_diff", "add_days"],
@@ -257,7 +259,7 @@ class DateTimeTool(AgentTool):
                 ToolParameter(
                     name="date1",
                     type="string",
-                    description="First date (for date_diff, add_days)",
+                    description="Base date for calculations (optional, defaults to today)",
                     required=False,
                 ),
                 ToolParameter(
@@ -269,16 +271,23 @@ class DateTimeTool(AgentTool):
                 ToolParameter(
                     name="days",
                     type="number",
-                    description="Number of days (for add_days)",
+                    description="Number of days to add (positive for future, negative for past)",
                     required=False,
                 ),
             ],
-            returns="date/time result",
+            returns="date/time result with weekday name (e.g., '2025-12-04 (星期四)')",
             credit_cost=0.0,
-            tags=["datetime", "date", "time", "langchain"],
+            tags=["datetime", "date", "time", "weekday", "langchain"],
         )
 
         super().__init__(metadata)
+
+    def _get_weekday_name(self, dt, chinese: bool = True) -> str:
+        """Get weekday name from datetime."""
+        weekdays_cn = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+        weekdays_en = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        weekday_idx = dt.weekday()
+        return weekdays_cn[weekday_idx] if chinese else weekdays_en[weekday_idx]
 
     async def execute(
         self,
@@ -306,12 +315,16 @@ class DateTimeTool(AgentTool):
 
         try:
             if operation == "now":
-                result = datetime.now().isoformat()
-                message = f"Current date and time: {result}"
+                now = datetime.now()
+                weekday = self._get_weekday_name(now)
+                result = now.isoformat()
+                message = f"Current: {now.strftime('%Y-%m-%d %H:%M:%S')} ({weekday})"
 
             elif operation == "today":
-                result = datetime.now().date().isoformat()
-                message = f"Today's date: {result}"
+                today = datetime.now()
+                weekday = self._get_weekday_name(today)
+                result = today.date().isoformat()
+                message = f"Today: {result} ({weekday})"
 
             elif operation == "date_diff":
                 date1_str = parameters.get("date1")
@@ -335,17 +348,16 @@ class DateTimeTool(AgentTool):
                 date1_str = parameters.get("date1")
                 days = parameters.get("days", 0)
 
+                # If no date1, use today as base
                 if not date1_str:
-                    raise ToolExecutionError(
-                        message="date1 is required for add_days",
-                        tool_name=self.name,
-                        error_code="INVALID_PARAMS",
-                    )
+                    date1 = datetime.now()
+                else:
+                    date1 = datetime.fromisoformat(date1_str)
 
-                date1 = datetime.fromisoformat(date1_str)
                 new_date = date1 + timedelta(days=days)
-                result = new_date.isoformat()
-                message = f"Result: {result}"
+                weekday = self._get_weekday_name(new_date)
+                result = new_date.date().isoformat()
+                message = f"Result: {result} ({weekday})"
 
             else:
                 raise ToolExecutionError(

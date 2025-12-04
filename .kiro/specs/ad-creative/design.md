@@ -11,7 +11,9 @@ Ad Creative 是 AI Orchestrator 的功能模块之一，作为独立的 Python �
 5. **素材管理**：素材库的增删改查和批量操作
 6. **规格适配**：根据目标平台自动调整素材尺寸
 
-该模块通过 MCP 协议与 Web Platform 通信，不直接访问数据库。所有文件存储通过 S3 预签名 URL 完成。
+该模块通过 MCP 协议与 Web Platform 通信，不直接访问数据库。所有文件存储通过云存储完成：
+- **图片**：通过 S3 预签名 URL 上传
+- **视频**：通过 GCS (Google Cloud Storage) 存储，使用 Signed URL 访问
 
 ---
 
@@ -883,6 +885,133 @@ class ImageGenerator:
         - Appealing to target audience
         - Suitable for social media advertising
         """
+```
+
+### 2.1 视频生成实现（Video Generation with GCS）
+
+视频生成使用 Gemini Veo 模型，生成的视频存储在 Google Cloud Storage (GCS) 中，通过 Signed URL 提供安全访问。
+
+```python
+class VideoGenerator:
+    """视频素材生成器"""
+
+    def __init__(self, gemini_client: GeminiClient, gcs_client: GCSClient):
+        self.gemini = gemini_client
+        self.gcs = gcs_client
+
+    async def generate(
+        self,
+        prompt: str,
+        user_id: str,
+        aspect_ratio: str = "9:16"
+    ) -> VideoGenerationResult:
+        """
+        生成视频素材
+
+        流程：
+        1. 调用 Gemini Veo 生成视频
+        2. 上传视频到 GCS
+        3. 返回 GCS object name（不直接返回 signed URL）
+        4. 前端通过 signed URL API 获取可访问的 URL
+
+        Args:
+            prompt: 视频生成提示词
+            user_id: 用户 ID
+            aspect_ratio: 宽高比（9:16 用于 TikTok/Reels）
+
+        Returns:
+            VideoGenerationResult with GCS object name
+        """
+        # 1. 调用 Gemini Veo 生成视频
+        video_data = await self.gemini.generate_video(
+            model="veo-2.0-generate-001",
+            prompt=prompt,
+            config={
+                "aspect_ratio": aspect_ratio,
+                "duration_seconds": 5
+            }
+        )
+
+        # 2. 上传到 GCS
+        object_name = f"videos/{user_id}/{uuid.uuid4()}.mp4"
+        await self.gcs.upload_video(
+            bucket_name=settings.GCS_VIDEO_BUCKET,
+            object_name=object_name,
+            video_data=video_data
+        )
+
+        # 3. 返回 object name，前端通过 API 获取 signed URL
+        return VideoGenerationResult(
+            success=True,
+            video_object_name=object_name,
+            video_bucket=settings.GCS_VIDEO_BUCKET,
+            message="视频生成成功"
+        )
+```
+
+#### GCS Signed URL 机制
+
+视频存储采用 GCS Signed URL 机制，优势：
+- **安全性**：URL 有时效性（默认 1 小时），过期后需重新获取
+- **存储效率**：避免在 localStorage 中存储大量 base64 数据
+- **持久化**：前端只需存储 `videoObjectName`，刷新页面后可重新获取 signed URL
+
+```python
+# ai-orchestrator/app/services/gcs_client.py
+class GCSClient:
+    """Google Cloud Storage 客户端"""
+
+    async def generate_signed_url(
+        self,
+        bucket_name: str,
+        object_name: str,
+        expiration: int = 3600  # 1 hour
+    ) -> str:
+        """
+        生成 GCS Signed URL
+
+        Args:
+            bucket_name: GCS bucket 名称
+            object_name: 对象路径
+            expiration: URL 有效期（秒）
+
+        Returns:
+            Signed URL for video access
+        """
+        blob = self.bucket.blob(object_name)
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(seconds=expiration),
+            method="GET"
+        )
+```
+
+#### 前端视频持久化
+
+前端通过以下机制实现视频在页面刷新后的持久化访问：
+
+1. **消息存储**：`videoObjectName` 存储在消息中，通过 Zustand 持久化到 localStorage
+2. **URL 重获取**：页面加载时，检测有 `videoObjectName` 但无 `generatedVideoUrl` 的消息
+3. **Signed URL API**：调用 `/api/media/signed-url/{objectName}` 获取新的 signed URL
+4. **消息更新**：更新消息的 `generatedVideoUrl` 字段
+
+```typescript
+// frontend/src/hooks/useChat.ts
+// 页面加载时重新获取 signed URLs
+useEffect(() => {
+  const storedMessages = useChatStore.getState().messages;
+  if (storedMessages.length > 0 && messages.length === 0) {
+    const loadedMessages = storedMessages as Message[];
+    setMessages(loadedMessages);
+
+    // Re-fetch signed URLs for messages with videoObjectName
+    loadedMessages.forEach((msg) => {
+      if (msg.videoObjectName && !msg.generatedVideoUrl) {
+        fetchSignedUrl(msg.videoObjectName, msg.id);
+      }
+    });
+  }
+}, [messages.length, fetchSignedUrl]);
 ```
 
 ### 3. 素材评分实现

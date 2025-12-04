@@ -194,8 +194,35 @@ export const useChatStore = create<ChatState>()(
     {
       name: 'chat-storage',
       partialize: (state) => ({
-        messages: state.messages,
-        sessions: state.sessions,
+        // Strip large binary data from messages before persisting to localStorage
+        // to avoid exceeding the ~5MB quota
+        // Keep videoObjectName so we can re-fetch signed URLs on page load
+        messages: state.messages.map((msg) => ({
+          ...msg,
+          // Remove base64 video data URLs (can be several MB)
+          // Keep videoObjectName for re-fetching signed URLs
+          generatedVideoUrl: msg.generatedVideoUrl?.startsWith('data:')
+            ? undefined
+            : msg.generatedVideoUrl,
+          // Remove base64 image data, keep only metadata
+          generatedImages: msg.generatedImages?.map((img) => ({
+            ...img,
+            data_b64: undefined, // Remove the actual image data
+          })),
+        })),
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          messages: session.messages.map((msg) => ({
+            ...msg,
+            generatedVideoUrl: msg.generatedVideoUrl?.startsWith('data:')
+              ? undefined
+              : msg.generatedVideoUrl,
+            generatedImages: msg.generatedImages?.map((img) => ({
+              ...img,
+              data_b64: undefined,
+            })),
+          })),
+        })),
         currentSessionId: state.currentSessionId,
       }),
     }

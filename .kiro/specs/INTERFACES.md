@@ -620,6 +620,55 @@ Web Platform 作为 MCP Server，为 AI Orchestrator 提供以下工具：
 |---------|------|---------|
 | `get_upload_url` | 获取 S3 预签名上传 URL | Ad Creative/Landing Page 上传文件 |
 
+#### 媒体访问 API（Media Access API）
+
+> **重要说明**（2024-12-04 更新）：
+>
+> 视频等大型媒体文件存储在 GCS (Google Cloud Storage)，通过 Signed URL 提供安全、有时效的访问。
+> 前端通过代理 API 获取 Signed URL，避免直接暴露 GCS 凭证。
+
+| API 端点 | 方法 | 描述 | 调用方 |
+|---------|------|------|--------|
+| `/api/media/signed-url/{object_path}` | GET | 获取 GCS Signed URL | Frontend |
+
+##### 获取 Signed URL 端点详情
+
+**请求**：
+```
+GET /api/media/signed-url/{object_path}?expiration=60
+```
+
+**参数**：
+- `object_path`: GCS 对象路径（如 `videos/user_123/abc123.mp4`）
+- `expiration`: URL 有效期（分钟），默认 60
+
+**返回结果**：
+```json
+{
+  "signed_url": "https://storage.googleapis.com/bucket/videos/user_123/abc123.mp4?X-Goog-Algorithm=...",
+  "expires_at": "2024-12-04T11:00:00Z"
+}
+```
+
+**错误响应**：
+```json
+{
+  "error": "Failed to generate signed URL",
+  "status": 404
+}
+```
+
+**使用场景**：
+1. 视频生成后，后端返回 `video_object_name`
+2. 前端调用此 API 获取可访问的 Signed URL
+3. 页面刷新后，重新调用此 API 恢复视频访问
+
+**实现架构**：
+```
+Frontend → /api/media/signed-url/{path} → AI Orchestrator → GCS
+                (Next.js API Route)         (Python)      (Signed URL)
+```
+
 ##### get_upload_url 工具详情
 
 **请求参数**：
@@ -1438,14 +1487,15 @@ Capability: /api/v1/capability/{name}
 
 ---
 
-**文档版本**：v1.2
-**最后更新**：2024-12-01
+**文档版本**：v1.3
+**最后更新**：2024-12-04
 **维护者**：AAE 开发团队
 
 ### 变更历史
 
 | 版本 | 日期 | 变更内容 |
 |------|------|---------|
+| v1.3 | 2024-12-04 | 新增 GCS Signed URL API 用于视频媒体访问 |
 | v1.2 | 2024-12-01 | 数据库统一为 MySQL 8.4，Python 统一为 3.12+ |
 | v1.1 | 2024-11-30 | Credit 管理从 MCP 迁移到系统级 HTTP API |
 | v1.0 | 2024-11-26 | 初始版本 |

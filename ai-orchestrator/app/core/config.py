@@ -68,6 +68,20 @@ class Settings(BaseSettings):
         description="Veo 3.1 Fast for quick video generation",
     )
 
+    # Google Cloud Storage configuration
+    gcs_bucket_name: str = Field(
+        default="zmead-creatives",
+        description="GCS bucket for storing creatives",
+    )
+    gcs_credentials_path: str | None = Field(
+        default=None,
+        description="Path to GCS service account credentials JSON (for signed URLs)",
+    )
+    gcs_signed_url_expiration: int = Field(
+        default=60,
+        description="Signed URL expiration time in minutes",
+    )
+
     # Web Platform integration
     web_platform_url: str = Field(
         default="http://localhost:8000", description="Web Platform backend URL"

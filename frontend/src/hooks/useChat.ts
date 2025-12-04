@@ -6,6 +6,14 @@ import { useAuth } from '@/components/auth/AuthProvider';
 
 const MESSAGE_TIMEOUT = 60000; // 60 seconds
 
+// Generated image data
+export interface GeneratedImage {
+  index: number;
+  format: string;
+  size: number;
+  data_b64: string;
+}
+
 // Message type matching AI SDK format
 export interface Message {
   id: string;
@@ -15,6 +23,12 @@ export interface Message {
   // Agent process info (collapsible, contains thinking + actions + observations)
   // All intermediate process is consolidated here, only final text shows in main content
   processInfo?: string;
+  // Generated images from tool calls
+  generatedImages?: GeneratedImage[];
+  // Generated video URL from tool calls (signed URL or data URL)
+  generatedVideoUrl?: string;
+  // GCS object name for video (used to fetch signed URL)
+  videoObjectName?: string;
 }
 
 // Helper function to extract string content from message
@@ -54,11 +68,22 @@ export interface AgentStatus {
   result?: string;
 }
 
+// User input request option from Human-in-the-Loop
+export interface UserInputOption {
+  value: string;
+  label: string;
+  description?: string;
+  primary?: boolean;
+}
+
 // User input request from Human-in-the-Loop
 export interface UserInputRequest {
   type: 'confirmation' | 'selection' | 'input';
+  question: string;
   message: string;
-  options?: string[];
+  options?: UserInputOption[];
+  defaultValue?: string;
+  metadata?: Record<string, any>;
 }
 
 interface UseChatSSEOptions {
@@ -96,13 +121,53 @@ export function useChat(options: UseChatSSEOptions = {}) {
     return newId;
   }, [user?.id]);
 
-  // Load chat history from store on mount
+  // Fetch signed URL for GCS video object (defined early for use in load effect)
+  const fetchSignedUrl = useCallback(async (objectName: string, messageId: string) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`/api/media/signed-url/${encodeURIComponent(objectName)}`, {
+        method: 'GET',
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!response.ok) {
+        console.error('Failed to fetch signed URL:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      const signedUrl = data.signed_url;
+
+      // Update the message with the signed URL
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === messageId
+            ? { ...msg, generatedVideoUrl: signedUrl }
+            : msg
+        )
+      );
+    } catch (err) {
+      console.error('Error fetching signed URL:', err);
+    }
+  }, []);
+
+  // Load chat history from store on mount and refresh signed URLs
   useEffect(() => {
     const storedMessages = useChatStore.getState().messages;
     if (storedMessages.length > 0 && messages.length === 0) {
-      setMessages(storedMessages as Message[]);
+      const loadedMessages = storedMessages as Message[];
+      setMessages(loadedMessages);
+
+      // Re-fetch signed URLs for messages that have videoObjectName but no valid URL
+      loadedMessages.forEach((msg) => {
+        if (msg.videoObjectName && !msg.generatedVideoUrl) {
+          fetchSignedUrl(msg.videoObjectName, msg.id);
+        }
+      });
     }
-  }, [messages.length]);
+  }, [messages.length, fetchSignedUrl]);
 
   // Sync messages to store
   useEffect(() => {
@@ -305,13 +370,57 @@ export function useChat(options: UseChatSSEOptions = {}) {
                 // Tool result - append to processInfo
                 const resultText = `\n${event.success ? '✅' : '❌'} Result: ${event.result || 'No result'}`;
                 currentProcessInfoRef.current += resultText;
+
+                // Extract generated images/videos from observation
+                const generatedImages = event.images as GeneratedImage[] | undefined;
+                // Video object name for signed URL (stored as pending, resolved later)
+                const videoObjectName = event.video_object_name as string | undefined;
+
+                // Priority: GCS object name > base64 > direct URL
+                let generatedVideoUrl: string | undefined;
+                let pendingVideoObjectName: string | undefined;
+
+                if (videoObjectName) {
+                  // Store object name - will be resolved to signed URL
+                  pendingVideoObjectName = videoObjectName;
+                } else if (event.video_data_b64) {
+                  // Create data URL from base64 video data
+                  const videoFormat = event.video_format || 'mp4';
+                  generatedVideoUrl = `data:video/${videoFormat};base64,${event.video_data_b64}`;
+                } else if (event.video_url) {
+                  generatedVideoUrl = event.video_url as string;
+                }
+
                 setMessages(prev =>
-                  prev.map(msg =>
-                    msg.id === currentMessageIdRef.current
-                      ? { ...msg, processInfo: currentProcessInfoRef.current }
-                      : msg
-                  )
+                  prev.map(msg => {
+                    if (msg.id === currentMessageIdRef.current) {
+                      const updates: Partial<Message> = {
+                        processInfo: currentProcessInfoRef.current,
+                      };
+                      // Append new images to existing ones
+                      if (generatedImages && generatedImages.length > 0) {
+                        updates.generatedImages = [
+                          ...(msg.generatedImages || []),
+                          ...generatedImages,
+                        ];
+                      }
+                      if (generatedVideoUrl) {
+                        updates.generatedVideoUrl = generatedVideoUrl;
+                      }
+                      if (pendingVideoObjectName) {
+                        // Store object name for later resolution
+                        (updates as any).videoObjectName = pendingVideoObjectName;
+                      }
+                      return { ...msg, ...updates };
+                    }
+                    return msg;
+                  })
                 );
+
+                // If we have a video object name, fetch the signed URL
+                if (pendingVideoObjectName) {
+                  fetchSignedUrl(pendingVideoObjectName, currentMessageIdRef.current);
+                }
                 setAgentStatus({
                   type: 'observation',
                   message: event.result || (event.success ? '执行成功' : '执行失败'),
@@ -327,10 +436,15 @@ export function useChat(options: UseChatSSEOptions = {}) {
                 });
               } else if (event.type === 'user_input_request') {
                 // Human-in-the-Loop request
+                // Data structure: { type, data: { type, question, options, ... }, message }
+                const requestData = event.data || {};
                 setUserInputRequest({
-                  type: event.input_type || 'confirmation',
-                  message: event.message || '',
-                  options: event.options,
+                  type: requestData.type || 'selection',
+                  question: requestData.question || event.message || '',
+                  message: event.message || requestData.question || '',
+                  options: requestData.options || [],
+                  defaultValue: requestData.default_value,
+                  metadata: requestData.metadata,
                 });
               } else if (event.type === 'done') {
                 // Stream complete

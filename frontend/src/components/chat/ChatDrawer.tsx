@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { useChatStore } from '@/lib/store';
 import { MessageBubble } from './MessageBubble';
-import type { Message, AgentStatus } from '@/hooks/useChat';
+import type { Message, AgentStatus, UserInputRequest } from '@/hooks/useChat';
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -142,6 +142,8 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     append: sendMessage,
     setMessages,
     agentStatus: hookAgentStatus,
+    userInputRequest,
+    respondToUserInput,
   } = useChat();
 
   // Update agent status from hook
@@ -606,6 +608,48 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
               </div>
             )}
           </div>
+
+          {/* Human-in-the-Loop User Input Dialog */}
+          {userInputRequest && (
+            <div className="px-4 py-3 border-t border-blue-100 bg-blue-50 flex-shrink-0">
+              <div className="mb-2">
+                <p className="text-sm font-medium text-blue-800">{userInputRequest.question}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {userInputRequest.options?.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => respondToUserInput(option.value === '__cancel__' ? '取消操作' : option.label)}
+                    className={`
+                      px-3 py-1.5 text-sm rounded-lg transition-colors
+                      ${option.value === '__cancel__'
+                        ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        : option.value === '__other__'
+                        ? 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+                        : 'bg-blue-600 text-white hover:bg-blue-700'}
+                    `}
+                    title={option.description}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {userInputRequest.options?.some(o => o.value === '__other__') && (
+                <div className="mt-2 flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="输入自定义内容..."
+                    className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                        respondToUserInput(e.currentTarget.value.trim());
+                      }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Attachments Preview */}
           {attachments.length > 0 && (

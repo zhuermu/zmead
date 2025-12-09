@@ -4,9 +4,14 @@ This module provides wrappers for LangChain built-in tools to integrate
 them with the unified tools architecture.
 """
 
+import asyncio
 import structlog
 from typing import Any
 
+from google import genai
+from google.genai import types
+
+from app.core.config import get_settings
 from app.tools.base import (
     AgentTool,
     ToolCategory,
@@ -19,9 +24,11 @@ logger = structlog.get_logger(__name__)
 
 
 class GoogleSearchTool(AgentTool):
-    """Wrapper for LangChain Google Search tool.
+    """Google Search tool using Gemini Grounding with Google Search.
 
-    This tool provides web search capabilities using Google Search API.
+    This tool provides web search capabilities by leveraging Gemini's
+    built-in Google Search grounding feature. It returns real-time
+    search results with source citations.
     """
 
     def __init__(self):
@@ -29,57 +36,65 @@ class GoogleSearchTool(AgentTool):
         metadata = ToolMetadata(
             name="google_search",
             description=(
-                "Search the web using Google. "
-                "Useful for finding current information, competitor data, "
-                "market trends, and general research."
+                "Search the web using Google Search. "
+                "Returns real-time information from the web including "
+                "current news, competitor data, market trends, product info, "
+                "and general research. Results include source URLs."
             ),
             category=ToolCategory.LANGCHAIN,
             parameters=[
                 ToolParameter(
                     name="query",
                     type="string",
-                    description="Search query",
+                    description="Search query - be specific for better results",
                     required=True,
                 ),
                 ToolParameter(
-                    name="num_results",
-                    type="number",
-                    description="Number of results to return (default 5)",
+                    name="language",
+                    type="string",
+                    description="Response language (e.g., 'zh' for Chinese, 'en' for English)",
                     required=False,
-                    default=5,
+                    default="zh",
                 ),
             ],
-            returns="list of search results with titles, URLs, and snippets",
-            credit_cost=0.5,
-            tags=["search", "web", "research", "langchain"],
+            returns="Search results with summaries and source URLs",
+            credit_cost=1.0,
+            tags=["search", "web", "research", "google", "grounding"],
         )
 
         super().__init__(metadata)
 
-        # Lazy import to avoid dependency issues
-        self._search_tool = None
+        # Lazy initialization of Gemini client
+        self._client: genai.Client | None = None
+
+    def _get_client(self) -> genai.Client:
+        """Get or create Gemini client."""
+        if self._client is None:
+            settings = get_settings()
+            self._client = genai.Client(api_key=settings.gemini_api_key)
+        return self._client
 
     async def execute(
         self,
         parameters: dict[str, Any],
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Execute Google search.
+        """Execute Google search using Gemini Grounding.
 
         Args:
             parameters: Tool parameters
             context: Execution context
 
         Returns:
-            Search results
+            Search results with summaries and sources
 
         Raises:
             ToolExecutionError: If search fails
         """
         query = parameters.get("query", "")
-        num_results = parameters.get("num_results", 5)
+        language = parameters.get("language", "zh")
 
-        log = logger.bind(tool=self.name, query=query, num_results=num_results)
+        log = logger.bind(tool=self.name, query=query, language=language)
         log.info("google_search_start")
 
         if not query:
@@ -90,31 +105,81 @@ class GoogleSearchTool(AgentTool):
             )
 
         try:
-            # Initialize search tool if needed
-            if self._search_tool is None:
-                try:
-                    from langchain_community.tools import GoogleSearchRun
-                    from langchain_community.utilities import GoogleSearchAPIWrapper
+            client = self._get_client()
+            settings = get_settings()
 
-                    search = GoogleSearchAPIWrapper()
-                    self._search_tool = GoogleSearchRun(api_wrapper=search)
-                except ImportError:
-                    raise ToolExecutionError(
-                        message="Google Search tool not available. Install langchain-community.",
-                        tool_name=self.name,
-                        error_code="DEPENDENCY_MISSING",
-                    )
+            # Build prompt for search with language instruction
+            lang_instruction = "请用中文回复" if language == "zh" else f"Please respond in {language}"
+            search_prompt = f"""Search the web for: {query}
 
-            # Execute search
-            results = await self._search_tool.arun(query)
+{lang_instruction}
 
-            log.info("google_search_complete")
+Provide a comprehensive summary of the search results, including:
+1. Key findings and facts
+2. Important details and statistics
+3. Source references
+
+Format the response clearly with sections if needed."""
+
+            # Use Gemini with Google Search grounding
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=settings.gemini_model_fast,
+                contents=search_prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    temperature=0.2,
+                ),
+            )
+
+            # Extract search results and grounding metadata
+            result_text = response.text if response.text else ""
+
+            # Extract grounding sources if available
+            sources = []
+            grounding_metadata = None
+
+            if response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, "grounding_metadata") and candidate.grounding_metadata:
+                    grounding_metadata = candidate.grounding_metadata
+
+                    # Extract search entry point if available
+                    if hasattr(grounding_metadata, "search_entry_point"):
+                        entry_point = grounding_metadata.search_entry_point
+                        if hasattr(entry_point, "rendered_content"):
+                            # This contains the rendered HTML with search results
+                            pass
+
+                    # Extract grounding chunks (source citations)
+                    if hasattr(grounding_metadata, "grounding_chunks"):
+                        for chunk in grounding_metadata.grounding_chunks:
+                            if hasattr(chunk, "web") and chunk.web:
+                                sources.append({
+                                    "title": chunk.web.title if hasattr(chunk.web, "title") else "",
+                                    "url": chunk.web.uri if hasattr(chunk.web, "uri") else "",
+                                })
+
+                    # Extract grounding supports (specific citations in text)
+                    if hasattr(grounding_metadata, "grounding_supports"):
+                        for support in grounding_metadata.grounding_supports:
+                            if hasattr(support, "grounding_chunk_indices"):
+                                # These are indices into grounding_chunks
+                                pass
+
+            log.info(
+                "google_search_complete",
+                result_length=len(result_text),
+                sources_count=len(sources),
+            )
 
             return {
                 "success": True,
-                "results": results,
                 "query": query,
-                "message": f"Found search results for: {query}",
+                "summary": result_text,
+                "sources": sources,
+                "sources_count": len(sources),
+                "message": f"搜索完成: {query}" if language == "zh" else f"Search completed: {query}",
             }
 
         except Exception as e:

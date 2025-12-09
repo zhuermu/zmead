@@ -1000,6 +1000,377 @@ Format as JSON."""
             )
 
 
+class ExtractProductImagesTool(AgentTool):
+    """Tool for extracting product images from e-commerce URLs.
+
+    This tool extracts product images from various e-commerce platforms
+    including Shopify, Amazon, and generic websites.
+    """
+
+    def __init__(self):
+        """Initialize the extract product images tool."""
+        metadata = ToolMetadata(
+            name="extract_product_images_tool",
+            description=(
+                "Extract product images from e-commerce URLs. "
+                "Supports Shopify, Amazon, and generic websites. "
+                "Returns a list of product image URLs that can be used for landing pages."
+            ),
+            category=ToolCategory.AGENT_CUSTOM,
+            parameters=[
+                ToolParameter(
+                    name="product_url",
+                    type="string",
+                    description="Product page URL (Shopify, Amazon, or other e-commerce site)",
+                    required=True,
+                ),
+                ToolParameter(
+                    name="max_images",
+                    type="number",
+                    description="Maximum number of images to extract (default: 5)",
+                    required=False,
+                    default=5,
+                ),
+            ],
+            returns="object with list of product image URLs and platform info",
+            credit_cost=1.0,
+            tags=["product", "images", "extraction", "scraping"],
+        )
+
+        super().__init__(metadata)
+
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute product image extraction.
+
+        Args:
+            parameters: Tool parameters
+            context: Execution context
+
+        Returns:
+            List of product image URLs
+
+        Raises:
+            ToolExecutionError: If extraction fails
+        """
+        import httpx
+        import re
+        import json
+        from urllib.parse import urljoin, urlparse
+
+        product_url = parameters.get("product_url")
+        max_images = parameters.get("max_images", 5)
+
+        log = logger.bind(
+            tool=self.name,
+            product_url=product_url,
+            max_images=max_images,
+        )
+        log.info("extract_product_images_start")
+
+        if not product_url:
+            raise ToolExecutionError(
+                message="product_url is required",
+                tool_name=self.name,
+                error_code="INVALID_PARAMS",
+            )
+
+        try:
+            # Detect platform
+            platform = self._detect_platform(product_url)
+            log.info("platform_detected", platform=platform)
+
+            # Fetch page HTML
+            async with httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                },
+            ) as client:
+                response = await client.get(product_url)
+                response.raise_for_status()
+                html = response.text
+
+            # Extract images based on platform
+            if platform == "shopify":
+                images = self._extract_shopify_images(html, product_url, max_images)
+            elif platform == "amazon":
+                images = self._extract_amazon_images(html, product_url, max_images)
+            else:
+                images = self._extract_generic_images(html, product_url, max_images)
+
+            log.info("extract_product_images_complete", image_count=len(images))
+
+            return {
+                "success": True,
+                "images": images,
+                "platform": platform,
+                "count": len(images),
+                "message": f"Extracted {len(images)} product images from {platform}",
+            }
+
+        except httpx.HTTPError as e:
+            log.error("http_error", error=str(e))
+            raise ToolExecutionError(
+                message=f"Failed to fetch URL: {str(e)}",
+                tool_name=self.name,
+                error_code="HTTP_ERROR",
+            )
+
+        except Exception as e:
+            log.error("unexpected_error", error=str(e), exc_info=True)
+            raise ToolExecutionError(
+                message=f"Unexpected error: {str(e)}",
+                tool_name=self.name,
+            )
+
+    def _detect_platform(self, url: str) -> str:
+        """Detect e-commerce platform from URL.
+
+        Args:
+            url: Product URL
+
+        Returns:
+            Platform identifier: 'shopify', 'amazon', or 'generic'
+        """
+        url_lower = url.lower()
+
+        # Shopify detection
+        if any(
+            pattern in url_lower
+            for pattern in [
+                "myshopify.com",
+                ".myshopify.",
+                "/products/",
+                "cdn.shopify.com",
+            ]
+        ):
+            return "shopify"
+
+        # Amazon detection
+        if any(
+            pattern in url_lower
+            for pattern in [
+                "amazon.com",
+                "amazon.cn",
+                "amazon.co.",
+                "amazon.de",
+                "amazon.fr",
+                "amazon.es",
+                "amazon.it",
+                "amzn.to",
+                "amzn.asia",
+            ]
+        ):
+            return "amazon"
+
+        return "generic"
+
+    def _extract_shopify_images(
+        self, html: str, base_url: str, max_images: int
+    ) -> list[dict[str, Any]]:
+        """Extract images from Shopify product page.
+
+        Args:
+            html: Page HTML content
+            base_url: Base URL for resolving relative URLs
+            max_images: Maximum images to extract
+
+        Returns:
+            List of image objects with url and alt
+        """
+        import re
+        import json
+        from urllib.parse import urljoin
+
+        images = []
+        seen_urls = set()
+
+        # Method 1: Extract from JSON-LD structured data
+        json_ld_pattern = r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>'
+        for match in re.finditer(json_ld_pattern, html, re.DOTALL | re.IGNORECASE):
+            try:
+                data = json.loads(match.group(1))
+                if isinstance(data, dict):
+                    # Single product
+                    if data.get("@type") == "Product" and data.get("image"):
+                        img_data = data["image"]
+                        if isinstance(img_data, str):
+                            img_data = [img_data]
+                        elif isinstance(img_data, dict):
+                            img_data = [img_data.get("url", "")]
+                        for img_url in img_data:
+                            if img_url and img_url not in seen_urls:
+                                seen_urls.add(img_url)
+                                images.append({"url": img_url, "alt": data.get("name", "Product")})
+            except json.JSONDecodeError:
+                continue
+
+        # Method 2: Extract from og:image meta tags
+        og_pattern = r'<meta[^>]*property="og:image"[^>]*content="([^"]+)"'
+        for match in re.finditer(og_pattern, html, re.IGNORECASE):
+            img_url = match.group(1)
+            if img_url and img_url not in seen_urls:
+                seen_urls.add(img_url)
+                images.append({"url": img_url, "alt": "Product Image"})
+
+        # Method 3: Extract from product gallery images (common Shopify patterns)
+        gallery_patterns = [
+            r'data-zoom="([^"]+)"',
+            r'data-src="(https://cdn\.shopify\.com/[^"]+)"',
+            r'src="(https://cdn\.shopify\.com/s/files/[^"]+\.(?:jpg|jpeg|png|webp))"',
+            r'"featured_image":"([^"]+)"',
+        ]
+        for pattern in gallery_patterns:
+            for match in re.finditer(pattern, html):
+                img_url = match.group(1).replace("\\u002F", "/")
+                if img_url and img_url not in seen_urls:
+                    # Upgrade to larger image size
+                    img_url = re.sub(r'_\d+x\d*\.', '_1024x.', img_url)
+                    seen_urls.add(img_url)
+                    images.append({"url": img_url, "alt": "Product Image"})
+
+        return images[:max_images]
+
+    def _extract_amazon_images(
+        self, html: str, base_url: str, max_images: int
+    ) -> list[dict[str, Any]]:
+        """Extract images from Amazon product page.
+
+        Args:
+            html: Page HTML content
+            base_url: Base URL for resolving relative URLs
+            max_images: Maximum images to extract
+
+        Returns:
+            List of image objects with url and alt
+        """
+        import re
+        import json
+
+        images = []
+        seen_urls = set()
+
+        # Method 1: Extract from image data JSON
+        image_data_pattern = r"'colorImages':\s*\{[^}]*'initial':\s*(\[[^\]]+\])"
+        match = re.search(image_data_pattern, html)
+        if match:
+            try:
+                # Clean up the JSON string
+                json_str = match.group(1).replace("'", '"')
+                img_array = json.loads(json_str)
+                for img in img_array:
+                    if isinstance(img, dict):
+                        # Get hiRes or large image
+                        img_url = img.get("hiRes") or img.get("large")
+                        if img_url and img_url not in seen_urls:
+                            seen_urls.add(img_url)
+                            images.append({"url": img_url, "alt": "Product Image"})
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        # Method 2: Extract from landing image
+        landing_pattern = r'id="landingImage"[^>]*src="([^"]+)"'
+        match = re.search(landing_pattern, html)
+        if match:
+            img_url = match.group(1)
+            if img_url and img_url not in seen_urls:
+                # Try to get higher resolution
+                img_url = re.sub(r'\._[A-Z]{2}\d+_\.', '._SL1500_.', img_url)
+                seen_urls.add(img_url)
+                images.append({"url": img_url, "alt": "Product Image"})
+
+        # Method 3: Extract from image gallery data
+        gallery_pattern = r'"large":"(https://[^"]+images-amazon\.com[^"]+)"'
+        for match in re.finditer(gallery_pattern, html):
+            img_url = match.group(1)
+            if img_url and img_url not in seen_urls:
+                seen_urls.add(img_url)
+                images.append({"url": img_url, "alt": "Product Image"})
+
+        # Method 4: og:image fallback
+        og_pattern = r'<meta[^>]*property="og:image"[^>]*content="([^"]+)"'
+        match = re.search(og_pattern, html, re.IGNORECASE)
+        if match:
+            img_url = match.group(1)
+            if img_url and img_url not in seen_urls:
+                seen_urls.add(img_url)
+                images.append({"url": img_url, "alt": "Product Image"})
+
+        return images[:max_images]
+
+    def _extract_generic_images(
+        self, html: str, base_url: str, max_images: int
+    ) -> list[dict[str, Any]]:
+        """Extract images from generic e-commerce page.
+
+        Args:
+            html: Page HTML content
+            base_url: Base URL for resolving relative URLs
+            max_images: Maximum images to extract
+
+        Returns:
+            List of image objects with url and alt
+        """
+        import re
+        from urllib.parse import urljoin
+
+        images = []
+        seen_urls = set()
+
+        # Method 1: og:image (most reliable for product pages)
+        og_pattern = r'<meta[^>]*property="og:image"[^>]*content="([^"]+)"'
+        for match in re.finditer(og_pattern, html, re.IGNORECASE):
+            img_url = match.group(1)
+            if img_url:
+                img_url = urljoin(base_url, img_url)
+                if img_url not in seen_urls:
+                    seen_urls.add(img_url)
+                    images.append({"url": img_url, "alt": "Product Image"})
+
+        # Method 2: twitter:image
+        twitter_pattern = r'<meta[^>]*name="twitter:image"[^>]*content="([^"]+)"'
+        for match in re.finditer(twitter_pattern, html, re.IGNORECASE):
+            img_url = match.group(1)
+            if img_url:
+                img_url = urljoin(base_url, img_url)
+                if img_url not in seen_urls:
+                    seen_urls.add(img_url)
+                    images.append({"url": img_url, "alt": "Product Image"})
+
+        # Method 3: Large images from img tags (likely product images)
+        img_pattern = r'<img[^>]*src="([^"]+)"[^>]*>'
+        for match in re.finditer(img_pattern, html, re.IGNORECASE):
+            img_tag = match.group(0)
+            img_url = match.group(1)
+
+            if not img_url:
+                continue
+
+            # Skip small images, icons, logos
+            skip_patterns = ["logo", "icon", "sprite", "button", "pixel", "tracking", "1x1"]
+            if any(pattern in img_url.lower() for pattern in skip_patterns):
+                continue
+
+            # Check for product-related class or id
+            product_indicators = ["product", "gallery", "main", "featured", "hero"]
+            is_product_image = any(ind in img_tag.lower() for ind in product_indicators)
+
+            img_url = urljoin(base_url, img_url)
+            if img_url not in seen_urls and (is_product_image or len(images) < 2):
+                seen_urls.add(img_url)
+                # Try to extract alt text
+                alt_match = re.search(r'alt="([^"]*)"', img_tag, re.IGNORECASE)
+                alt_text = alt_match.group(1) if alt_match else "Product Image"
+                images.append({"url": img_url, "alt": alt_text})
+
+        return images[:max_images]
+
+
 # Factory function to create all creative tools
 def create_creative_tools(
     gemini_client: GeminiClient | None = None,
@@ -1019,4 +1390,5 @@ def create_creative_tools(
         GenerateVideoTool(gemini_client=gemini_client, mcp_client=mcp_client),
         AnalyzeCreativeTool(gemini_client=gemini_client),
         ExtractProductInfoTool(gemini_client=gemini_client),
+        ExtractProductImagesTool(),
     ]

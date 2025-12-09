@@ -1398,6 +1398,27 @@ class ReActAgent:
         if success:
             observation = f"Success: {message}"
 
+            # Add summary if present (e.g., from google_search)
+            if "summary" in result and result["summary"]:
+                summary = result["summary"]
+                # Truncate if too long but keep useful info
+                if len(summary) > 3000:
+                    summary = summary[:3000] + "..."
+                observation += f"\n\nSearch Results:\n{summary}"
+
+            # Add sources if present
+            if "sources" in result and result["sources"]:
+                sources = result["sources"]
+                if sources:
+                    source_list = []
+                    for src in sources[:5]:  # Max 5 sources
+                        title = src.get("title", "")
+                        url = src.get("url", "")
+                        if title or url:
+                            source_list.append(f"- {title}: {url}")
+                    if source_list:
+                        observation += f"\n\nSources:\n" + "\n".join(source_list)
+
             # Add key data points
             if "data" in result:
                 data = result["data"]

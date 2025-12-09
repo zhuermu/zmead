@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChatStore } from '@/lib/store';
 import { useAuth } from '@/components/auth/AuthProvider';
 
-const MESSAGE_TIMEOUT = 60000; // 60 seconds
+const MESSAGE_TIMEOUT = 300000; // 5 minutes - landing page generation can take 2-3 minutes
 
 // Generated image data (supports both GCS object and fallback base64)
 export interface GeneratedImage {
@@ -400,6 +400,17 @@ export function useChat(options: UseChatSSEOptions = {}) {
 
             try {
               const event = JSON.parse(data);
+
+              // Reset timeout on any valid event (we're receiving data)
+              if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+                timeoutRef.current = setTimeout(() => {
+                  console.warn('Message timeout - no response received within timeout period');
+                  setIsTimeout(true);
+                  setIsLoading(false);
+                  closeEventSource();
+                }, MESSAGE_TIMEOUT);
+              }
 
               // Handle different event types
               // All process info (thought, action, observation) goes into processInfo

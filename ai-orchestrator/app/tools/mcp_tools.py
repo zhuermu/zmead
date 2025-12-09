@@ -389,19 +389,45 @@ def create_mcp_tools(mcp_client: MCPClient | None = None) -> list[AgentTool]:
     # Landing Page Tools
     tools.append(
         MCPToolWrapper(
-            tool_name="save_landing_page",
-            description="Save a landing page",
+            tool_name="create_landing_page",
+            description="Create a new landing page with HTML content",
             parameters=[
                 ToolParameter(
-                    name="page_data",
-                    type="object",
-                    description="Landing page content and metadata",
+                    name="name",
+                    type="string",
+                    description="Name/title of the landing page",
                     required=True,
                 ),
+                ToolParameter(
+                    name="product_url",
+                    type="string",
+                    description="URL of the product this landing page is for",
+                    required=True,
+                ),
+                ToolParameter(
+                    name="template",
+                    type="string",
+                    description="Template style (e.g., 'modern', 'bold', 'minimal')",
+                    required=False,
+                    default="modern",
+                ),
+                ToolParameter(
+                    name="language",
+                    type="string",
+                    description="Language code (e.g., 'en', 'zh')",
+                    required=False,
+                    default="zh",
+                ),
+                ToolParameter(
+                    name="html_content",
+                    type="string",
+                    description="Complete HTML content of the landing page",
+                    required=False,
+                ),
             ],
-            returns="object with page_id and url",
+            returns="object with landing page id, url, and status",
             credit_cost=0.0,
-            tags=["landing_page", "storage", "mcp"],
+            tags=["landing_page", "create", "mcp"],
             mcp_client=mcp_client,
         )
     )
@@ -412,8 +438,8 @@ def create_mcp_tools(mcp_client: MCPClient | None = None) -> list[AgentTool]:
             description="Get a landing page by ID",
             parameters=[
                 ToolParameter(
-                    name="page_id",
-                    type="string",
+                    name="landing_page_id",
+                    type="integer",
                     description="Landing page ID",
                     required=True,
                 ),
@@ -421,6 +447,89 @@ def create_mcp_tools(mcp_client: MCPClient | None = None) -> list[AgentTool]:
             returns="object with page details",
             credit_cost=0.0,
             tags=["landing_page", "retrieval", "mcp"],
+            mcp_client=mcp_client,
+        )
+    )
+
+    tools.append(
+        MCPToolWrapper(
+            tool_name="get_landing_pages",
+            description="Get a paginated list of landing pages for the current user",
+            parameters=[
+                ToolParameter(
+                    name="page",
+                    type="integer",
+                    description="Page number (1-indexed)",
+                    required=False,
+                    default=1,
+                ),
+                ToolParameter(
+                    name="page_size",
+                    type="integer",
+                    description="Number of items per page (max 100)",
+                    required=False,
+                    default=20,
+                ),
+                ToolParameter(
+                    name="status",
+                    type="string",
+                    description="Filter by status: draft, published, archived",
+                    required=False,
+                ),
+            ],
+            returns="object with landing pages list and pagination info",
+            credit_cost=0.0,
+            tags=["landing_page", "list", "mcp"],
+            mcp_client=mcp_client,
+        )
+    )
+
+    tools.append(
+        MCPToolWrapper(
+            tool_name="update_landing_page",
+            description="Update an existing landing page",
+            parameters=[
+                ToolParameter(
+                    name="landing_page_id",
+                    type="integer",
+                    description="ID of the landing page to update",
+                    required=True,
+                ),
+                ToolParameter(
+                    name="name",
+                    type="string",
+                    description="New name/title",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="html_content",
+                    type="string",
+                    description="New HTML content",
+                    required=False,
+                ),
+            ],
+            returns="object with updated landing page",
+            credit_cost=0.0,
+            tags=["landing_page", "update", "mcp"],
+            mcp_client=mcp_client,
+        )
+    )
+
+    tools.append(
+        MCPToolWrapper(
+            tool_name="publish_landing_page",
+            description="Publish a landing page to make it publicly accessible",
+            parameters=[
+                ToolParameter(
+                    name="landing_page_id",
+                    type="integer",
+                    description="ID of the landing page to publish",
+                    required=True,
+                ),
+            ],
+            returns="object with published URL and status",
+            credit_cost=0.0,
+            tags=["landing_page", "publish", "mcp"],
             mcp_client=mcp_client,
         )
     )

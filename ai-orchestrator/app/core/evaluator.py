@@ -409,7 +409,7 @@ Respond in JSON format:
 """
 
         try:
-            response = await self.gemini_client.chat(
+            response = await self.gemini_client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
             )
@@ -569,7 +569,7 @@ Keep it concise and clear. Return only the question text.
 """
 
         try:
-            question = await self.gemini_client.chat(
+            question = await self.gemini_client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
             )

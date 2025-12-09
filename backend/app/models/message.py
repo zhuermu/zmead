@@ -40,8 +40,8 @@ class Message(Base):
     # Message metadata (renamed to avoid SQLAlchemy reserved word)
     message_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
     
-    # Agent process info (thinking steps, tool calls, observations)
-    process_info: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Agent process info (thinking steps, tool calls, observations) - JSON type in DB
+    process_info: Mapped[dict | list | str | None] = mapped_column(JSON, nullable=True)
     
     # Generated assets (images, videos, etc.)
     generated_assets: Mapped[dict | None] = mapped_column(JSON, nullable=True)

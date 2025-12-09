@@ -98,6 +98,46 @@ export function ChatInput() {
     }
   };
 
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageItems: DataTransferItem[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        imageItems.push(item);
+      }
+    }
+
+    if (imageItems.length === 0) return;
+
+    // Prevent default paste behavior for images
+    e.preventDefault();
+    setUploadError(null);
+
+    try {
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (file) {
+          // Generate a meaningful filename for pasted images
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const extension = file.type.split('/')[1] || 'png';
+          const pastedFile = new File(
+            [file],
+            `pasted-image-${timestamp}.${extension}`,
+            { type: file.type }
+          );
+
+          const attachment = await uploadFile(pastedFile);
+          setAttachments(prev => [...prev, attachment]);
+        }
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : '粘贴图片上传失败');
+    }
+  };
+
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     handleInputChange(e);
     
@@ -131,9 +171,10 @@ export function ChatInput() {
             value={input}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             onCompositionStart={() => setIsComposing(true)}
             onCompositionEnd={() => setIsComposing(false)}
-            placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
+            placeholder="输入消息... (Enter 发送, Shift+Enter 换行, 可直接粘贴图片)"
             disabled={isLoading}
             rows={1}
             className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed resize-none text-sm"
@@ -190,8 +231,9 @@ export function ChatInput() {
 
       {/* Helper text */}
       <div className="mt-2 text-xs text-gray-500 flex items-center gap-4">
-        <span>💡 提示: Enter 发送, Shift+Enter 换行</span>
+        <span>💡 Enter 发送, Shift+Enter 换行</span>
         <span>📎 支持上传图片、视频、文档</span>
+        <span>📋 可直接粘贴图片</span>
       </div>
     </form>
   );

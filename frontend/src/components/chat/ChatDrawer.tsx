@@ -414,6 +414,49 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     }
   };
 
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageItems: DataTransferItem[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        imageItems.push(item);
+      }
+    }
+
+    if (imageItems.length === 0) return;
+
+    // Prevent default paste behavior for images
+    e.preventDefault();
+
+    try {
+      const files: File[] = [];
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (file) {
+          // Generate a meaningful filename for pasted images
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const extension = file.type.split('/')[1] || 'png';
+          const pastedFile = new File(
+            [file],
+            `pasted-image-${timestamp}.${extension}`,
+            { type: file.type }
+          );
+          files.push(pastedFile);
+        }
+      }
+
+      if (files.length > 0) {
+        await processFiles(files);
+      }
+    } catch (error) {
+      console.error('[ChatDrawer] Paste image failed:', error);
+      alert(`粘贴图片失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+  }, [processFiles]);
+
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setLocalInput(e.target.value);
     const textarea = e.target;
@@ -679,9 +722,10 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                     value={localInput}
                     onChange={handleTextareaChange}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                     onCompositionStart={() => setIsComposing(true)}
                     onCompositionEnd={() => setIsComposing(false)}
-                    placeholder="输入消息... (支持拖拽上传文件)"
+                    placeholder="输入消息... (可粘贴图片或拖拽上传)"
                     disabled={isLoading}
                     rows={1}
                     className="w-full px-4 py-3 bg-gray-100 border-none rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white resize-none text-sm"
@@ -722,7 +766,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
               </div>
             </form>
             <p className="text-xs text-gray-400 text-center mt-2">
-              <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">Esc</kbd> 关闭 · <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">Enter</kbd> 发送 · 拖拽上传文件
+              <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">Esc</kbd> 关闭 · <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">Enter</kbd> 发送 · <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">⌘V</kbd> 粘贴图片 · 拖拽上传
             </p>
           </div>
         </div>

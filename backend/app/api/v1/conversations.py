@@ -15,6 +15,13 @@ from app.models.message import Message
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
+def _clean_json_field(value: Any) -> Any:
+    """Clean JSON field value - convert string 'null' to None."""
+    if value == 'null' or value == 'undefined':
+        return None
+    return value
+
+
 # Request/Response Models
 class MessageCreate(BaseModel):
     """Message creation model."""
@@ -24,7 +31,7 @@ class MessageCreate(BaseModel):
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
     tool_call_id: str | None = Field(None, description="Tool call ID if this is a tool response")
     metadata: dict | None = Field(None, description="Additional metadata")
-    process_info: str | None = Field(None, description="Agent thinking process and steps")
+    process_info: Any | None = Field(None, description="Agent thinking process and steps (JSON)")
     generated_assets: dict | None = Field(None, description="Generated images, videos, etc.")
     attachments: list[dict] | None = Field(None, description="Uploaded file attachments with S3 URLs")
     created_at: datetime | None = Field(None, description="Message timestamp")
@@ -181,12 +188,12 @@ async def create_conversation(
             client_message_id=msg_data.id,
             role=msg_data.role,
             content=msg_data.content,
-            tool_calls=msg_data.tool_calls,
+            tool_calls=_clean_json_field(msg_data.tool_calls),
             tool_call_id=msg_data.tool_call_id,
             message_metadata=msg_data.metadata or {},
-            process_info=msg_data.process_info,
-            generated_assets=msg_data.generated_assets,
-            attachments=msg_data.attachments,
+            process_info=_clean_json_field(msg_data.process_info),
+            generated_assets=_clean_json_field(msg_data.generated_assets),
+            attachments=_clean_json_field(msg_data.attachments),
             created_at=msg_data.created_at or now,
         )
         db.add(message)
@@ -318,12 +325,12 @@ async def update_conversation(
                 client_message_id=msg_data.id,
                 role=msg_data.role,
                 content=msg_data.content,
-                tool_calls=msg_data.tool_calls,
+                tool_calls=_clean_json_field(msg_data.tool_calls),
                 tool_call_id=msg_data.tool_call_id,
                 message_metadata=msg_data.metadata or {},
-                process_info=msg_data.process_info,
-                generated_assets=msg_data.generated_assets,
-                attachments=msg_data.attachments,
+                process_info=_clean_json_field(msg_data.process_info),
+                generated_assets=_clean_json_field(msg_data.generated_assets),
+                attachments=_clean_json_field(msg_data.attachments),
                 created_at=msg_data.created_at or now,
             )
             db.add(message)

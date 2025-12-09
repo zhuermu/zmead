@@ -396,17 +396,24 @@ class GeminiClient:
             # Get the stream generator
             stream = await asyncio.to_thread(_create_stream)
 
+            # Sentinel value to indicate end of stream
+            _STREAM_END = object()
+
             # Iterate through chunks (each next() call may block on network I/O)
+            # Use sentinel pattern instead of catching StopIteration
+            # (StopIteration cannot be raised into asyncio.to_thread)
             def _get_next_chunk():
-                return next(stream)
+                try:
+                    return next(stream)
+                except StopIteration:
+                    return _STREAM_END
 
             while True:
-                try:
-                    chunk = await asyncio.to_thread(_get_next_chunk)
-                    if chunk.text:
-                        yield chunk.text
-                except StopIteration:
+                chunk = await asyncio.to_thread(_get_next_chunk)
+                if chunk is _STREAM_END:
                     break
+                if chunk.text:
+                    yield chunk.text
 
             log.info("chat_completion_stream_complete")
 
@@ -451,16 +458,13 @@ class GeminiClient:
                 # Build parts list starting with text
                 parts = [types.Part.from_text(text=content)]
 
-                # Add file attachments if present (files already uploaded to Gemini Files API)
+                # Add file attachments if present (files uploaded to Gemini Files API)
                 attachments = msg.get("attachments")
                 if attachments:
                     for att in attachments:
-                        # Use geminiFileUri from pre-uploaded files
                         gemini_uri = att.get("geminiFileUri")
                         if gemini_uri:
-                            # Extract mime type from contentType or infer from type
                             mime_type = att.get("contentType", "application/octet-stream")
-
                             # Add file part using File API URI
                             parts.append(types.Part.from_uri(
                                 file_uri=gemini_uri,

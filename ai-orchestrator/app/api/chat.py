@@ -191,41 +191,69 @@ async def chat_stream(
             }
 
             # Check if we need to upload to Gemini (new format without geminiFileUri)
-            if att.gcs_path and not att.geminiFileUri:
-                # New format: download from GCS and upload to Gemini
-                from app.core.config import get_settings
-                settings = get_settings()
-                gcs_uri = f"gs://{settings.gcs_bucket_uploads}/{att.gcs_path}"
-
-                log.info(
-                    "Uploading attachment to Gemini",
-                    filename=att.filename,
-                    gcs_path=att.gcs_path,
-                )
-
-                # Upload to Gemini Files API
-                gemini_result = gemini_files_service.upload_from_gcs(
-                    gcs_uri=gcs_uri,
-                    mime_type=content_type,
-                    display_name=att.filename,
-                )
-
-                if gemini_result:
-                    attachment_info["geminiFileUri"] = gemini_result["uri"]
-                    attachment_info["geminiFileName"] = gemini_result["name"]
+            if not att.geminiFileUri:
+                # Priority 1: Use download_url (signed HTTPS URL) - more reliable
+                if att.download_url:
                     log.info(
-                        "Uploaded to Gemini",
+                        "Uploading attachment to Gemini via download_url",
                         filename=att.filename,
-                        gemini_uri=gemini_result["uri"],
+                        download_url=att.download_url[:100] + "...",
                     )
-                else:
-                    attachment_info["geminiFileUri"] = None
-                    attachment_info["geminiFileName"] = None
-                    log.warning(
-                        "Failed to upload to Gemini",
+
+                    # Download from URL and upload to Gemini Files API
+                    gemini_result = gemini_files_service.upload_from_url(
+                        url=att.download_url,
+                        mime_type=content_type,
+                        display_name=att.filename,
+                    )
+
+                    if gemini_result:
+                        attachment_info["geminiFileUri"] = gemini_result["uri"]
+                        attachment_info["geminiFileName"] = gemini_result["name"]
+                        log.info(
+                            "Uploaded to Gemini via download_url",
+                            filename=att.filename,
+                            gemini_uri=gemini_result["uri"],
+                        )
+                    else:
+                        log.warning(
+                            "Failed to upload to Gemini via download_url",
+                            filename=att.filename,
+                        )
+
+                # Priority 2: Fallback to GCS SDK if download_url not available
+                elif att.gcs_path:
+                    from app.core.config import get_settings
+                    settings = get_settings()
+                    gcs_uri = f"gs://{settings.gcs_bucket_uploads}/{att.gcs_path}"
+
+                    log.info(
+                        "Uploading attachment to Gemini via GCS",
                         filename=att.filename,
+                        gcs_path=att.gcs_path,
+                    )
+
+                    # Upload to Gemini Files API
+                    gemini_result = gemini_files_service.upload_from_gcs(
                         gcs_uri=gcs_uri,
+                        mime_type=content_type,
+                        display_name=att.filename,
                     )
+
+                    if gemini_result:
+                        attachment_info["geminiFileUri"] = gemini_result["uri"]
+                        attachment_info["geminiFileName"] = gemini_result["name"]
+                        log.info(
+                            "Uploaded to Gemini via GCS",
+                            filename=att.filename,
+                            gemini_uri=gemini_result["uri"],
+                        )
+                    else:
+                        log.warning(
+                            "Failed to upload to Gemini via GCS",
+                            filename=att.filename,
+                            gcs_uri=gcs_uri,
+                        )
             elif att.geminiFileUri:
                 # Already has Gemini URI (legacy or pre-uploaded)
                 attachment_info["geminiFileUri"] = att.geminiFileUri

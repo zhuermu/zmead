@@ -452,14 +452,13 @@ class ReActAgent:
             # Process and store attachments with Gemini File URIs
             gemini_attachments = []
             if attachments:
-                # Filter attachments to keep only those with Gemini File URIs
+                # Keep attachments that have Gemini File URI
                 for att in attachments:
-                    # Check if file was already uploaded to Gemini Files API
                     if att.get("geminiFileUri"):
                         gemini_attachments.append({
                             "filename": att.get("filename", "unknown"),
                             "contentType": att.get("contentType", "application/octet-stream"),
-                            "geminiFileUri": att["geminiFileUri"],
+                            "geminiFileUri": att.get("geminiFileUri"),
                             "geminiFileName": att.get("geminiFileName"),
                             "type": att.get("type", "file"),
                         })

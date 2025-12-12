@@ -1,10 +1,16 @@
 """Creative management API endpoints."""
 
+import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.creative import (
+    BucketFileInfo,
+    BucketListResponse,
+    BucketSyncRequest,
+    BucketSyncResponse,
+    BucketSyncResult,
     CreativeCreate,
     CreativeFilter,
     CreativeListResponse,
@@ -17,7 +23,17 @@ from app.schemas.creative import (
 )
 from app.services.creative import CreativeNotFoundError, CreativeService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/creatives", tags=["creatives"])
+
+
+def _add_signed_url(creative, service: CreativeService) -> CreativeResponse:
+    """Create CreativeResponse with signed URL."""
+    response = CreativeResponse.model_validate(creative)
+    # Generate signed URL for secure access (1 hour expiry)
+    response.signed_url = service.generate_signed_url(creative.file_url, expires_in=3600)
+    return response
 
 
 @router.get("", response_model=CreativeListResponse)
@@ -49,7 +65,7 @@ async def list_creatives(
     )
 
     return CreativeListResponse(
-        items=[CreativeResponse.model_validate(c) for c in result["creatives"]],
+        items=[_add_signed_url(c, service) for c in result["creatives"]],
         total=result["total"],
         page=result["page"],
         page_size=result["page_size"],
@@ -77,7 +93,7 @@ async def create_creative(
 
     await db.commit()
 
-    return CreativeResponse.model_validate(creative)
+    return _add_signed_url(creative, service)
 
 
 @router.get("/{creative_id}", response_model=CreativeResponse)
@@ -100,7 +116,7 @@ async def get_creative(
             detail=f"Creative {creative_id} not found",
         )
 
-    return CreativeResponse.model_validate(creative)
+    return _add_signed_url(creative, service)
 
 
 @router.put("/{creative_id}", response_model=CreativeResponse)
@@ -120,7 +136,7 @@ async def update_creative(
             data=data,
         )
         await db.commit()
-        return CreativeResponse.model_validate(creative)
+        return _add_signed_url(creative, service)
     except CreativeNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -199,4 +215,117 @@ async def get_upload_url(
         s3_url=result["s3_url"],
         cdn_url=result["cdn_url"],
         expires_in=result["expires_in"],
+    )
+
+
+@router.get("/bucket/files", response_model=BucketListResponse)
+async def list_bucket_files(
+    db: DbSession,
+    current_user: CurrentUser,
+    file_type: str | None = Query(
+        None,
+        description="Filter by file type prefix: 'image/', 'video/', 'audio/'",
+    ),
+) -> BucketListResponse:
+    """List files in user's uploads bucket that can be synced to creatives.
+
+    Returns files from the GCS uploads bucket that the user has uploaded
+    via AI Agent. Use the sync endpoint to import these files into the
+    creatives database.
+    """
+    service = CreativeService(db)
+
+    # Determine file type filters
+    file_types = None
+    if file_type:
+        file_types = [file_type]
+    else:
+        # Default: all media types
+        file_types = ["image/", "video/", "audio/"]
+
+    # List files from bucket
+    bucket_files = service.list_bucket_files(
+        user_id=current_user.id,
+        file_types=file_types,
+    )
+
+    # Get already synced URLs
+    synced_urls = await service.get_synced_file_urls(current_user.id)
+
+    # Mark synced status
+    files = []
+    for f in bucket_files:
+        files.append(
+            BucketFileInfo(
+                name=f["name"],
+                size=f.get("size", 0),
+                content_type=f.get("content_type"),
+                updated=f.get("updated"),
+                url=f["url"],
+                synced=f["url"] in synced_urls,
+            )
+        )
+
+    logger.info(
+        f"Listed {len(files)} bucket files for user {current_user.id}, "
+        f"{sum(1 for f in files if f.synced)} already synced"
+    )
+
+    return BucketListResponse(
+        files=files,
+        total=len(files),
+        prefix=f"{current_user.id}/",
+    )
+
+
+@router.post("/bucket/sync", response_model=BucketSyncResponse)
+async def sync_bucket_files(
+    db: DbSession,
+    current_user: CurrentUser,
+    data: BucketSyncRequest,
+) -> BucketSyncResponse:
+    """Sync files from uploads bucket to creatives database.
+
+    Import files that were uploaded via AI Agent into the creatives
+    management system. Files must belong to the current user's folder.
+    """
+    service = CreativeService(db)
+
+    results = []
+    synced_count = 0
+    failed_count = 0
+
+    for file_key in data.file_keys:
+        result = await service.sync_file_from_bucket(
+            user_id=current_user.id,
+            file_key=file_key,
+        )
+
+        results.append(
+            BucketSyncResult(
+                file_key=file_key,
+                success=result["success"],
+                creative_id=result.get("creative_id"),
+                error=result.get("error"),
+            )
+        )
+
+        if result["success"]:
+            synced_count += 1
+        else:
+            failed_count += 1
+
+    # Commit all successful syncs
+    if synced_count > 0:
+        await db.commit()
+
+    logger.info(
+        f"Synced {synced_count} files for user {current_user.id}, "
+        f"{failed_count} failed"
+    )
+
+    return BucketSyncResponse(
+        synced_count=synced_count,
+        failed_count=failed_count,
+        results=results,
     )

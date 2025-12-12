@@ -31,7 +31,15 @@ class LandingPage(Base):
     product_url: Mapped[str] = mapped_column(String(1024), nullable=False)
     template: Mapped[str] = mapped_column(String(100), default="modern")
     language: Mapped[str] = mapped_column(String(10), default="en")
+
+    # Draft/Published content separation (双版本模式)
+    # draft_content: 编辑器操作的草稿内容，保存时更新
+    # html_content: 已发布的线上内容，发布时从draft_content复制
+    draft_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     html_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Analytics - GA4 Measurement ID (e.g., G-XXXXXXXXXX)
+    ga_measurement_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Status
     status: Mapped[str] = mapped_column(

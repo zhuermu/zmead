@@ -6,18 +6,20 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
+import api from "@/lib/api";
 
 interface AdAccount {
   id: number;
   platform: string;
-  accountName: string;
+  account_name: string;
   status: string;
 }
 
 interface Creative {
   id: number;
-  cdnUrl: string;
-  fileType: string;
+  cdn_url: string;
+  signed_url?: string;
+  file_type: string;
   score?: number;
 }
 
@@ -73,6 +75,10 @@ export default function NewCampaignPage() {
     landingPageId: null,
   });
 
+  // Separate state for text inputs to allow spaces while typing
+  const [locationsInput, setLocationsInput] = useState("");
+  const [interestsInput, setInterestsInput] = useState("");
+
   useEffect(() => {
     fetchAdAccounts();
     fetchCreatives();
@@ -81,15 +87,11 @@ export default function NewCampaignPage() {
 
   const fetchAdAccounts = async () => {
     try {
-      const response = await fetch("/api/v1/ad-accounts", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setAdAccounts(data.filter((acc: AdAccount) => acc.status === "active"));
-      }
+      const response = await api.get("/ad-accounts");
+      const data = response.data;
+      // Handle both array and paginated response formats
+      const accounts = Array.isArray(data) ? data : (data.items || []);
+      setAdAccounts(accounts.filter((acc: AdAccount) => acc.status === "active"));
     } catch (error) {
       console.error("Error fetching ad accounts:", error);
     }
@@ -97,15 +99,11 @@ export default function NewCampaignPage() {
 
   const fetchCreatives = async () => {
     try {
-      const response = await fetch("/api/v1/creatives?status=active", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
+      const response = await api.get("/creatives", {
+        params: { status: "active", page_size: 100 }
       });
-      if (response.ok) {
-        const data = await response.json();
-        setCreatives(data.creatives || []);
-      }
+      const data = response.data;
+      setCreatives(data.creatives || data.items || []);
     } catch (error) {
       console.error("Error fetching creatives:", error);
     }
@@ -113,15 +111,9 @@ export default function NewCampaignPage() {
 
   const fetchLandingPages = async () => {
     try {
-      const response = await fetch("/api/v1/landing-pages?status=published", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setLandingPages(data.landing_pages || []);
-      }
+      const response = await api.get("/landing-pages", { params: { status: "published" } });
+      const data = response.data;
+      setLandingPages(data.landing_pages || data.items || []);
     } catch (error) {
       console.error("Error fetching landing pages:", error);
     }
@@ -130,34 +122,23 @@ export default function NewCampaignPage() {
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/v1/campaigns", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
-          ad_account_id: formData.adAccountId,
-          name: formData.name,
-          objective: formData.objective,
-          budget: parseFloat(formData.budget),
-          budget_type: formData.budgetType,
-          targeting: formData.targeting,
-          creative_ids: formData.creativeIds,
-          landing_page_id: formData.landingPageId,
-        }),
+      const response = await api.post("/campaigns", {
+        ad_account_id: formData.adAccountId,
+        name: formData.name,
+        objective: formData.objective,
+        budget: parseFloat(formData.budget),
+        budget_type: formData.budgetType,
+        targeting: formData.targeting,
+        creative_ids: formData.creativeIds,
+        landing_page_id: formData.landingPageId,
       });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || "Failed to create campaign");
-      }
-
-      const campaign = await response.json();
+      const campaign = response.data;
       router.push(`/campaigns/${campaign.id}`);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating campaign:", error);
-      alert(error instanceof Error ? error.message : "Failed to create campaign");
+      const message = error.response?.data?.detail || error.message || "Failed to create campaign";
+      alert(message);
     } finally {
       setLoading(false);
     }
@@ -173,6 +154,8 @@ export default function NewCampaignPage() {
         return true; // Targeting is optional
       case 4:
         return formData.creativeIds.length > 0;
+      case 5:
+        return true; // Review step - all validations passed in previous steps
       default:
         return false;
     }
@@ -276,7 +259,7 @@ export default function NewCampaignPage() {
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="font-medium">{account.accountName}</div>
+                        <div className="font-medium">{account.account_name}</div>
                         <div className="text-sm text-gray-600">
                           {account.platform.toUpperCase()}
                         </div>
@@ -426,19 +409,19 @@ export default function NewCampaignPage() {
                   Locations (comma-separated)
                 </label>
                 <Input
-                  value={formData.targeting.locations?.join(", ") || ""}
-                  onChange={(e) =>
+                  value={locationsInput}
+                  onChange={(e) => setLocationsInput(e.target.value)}
+                  onBlur={(e) => {
+                    const locations = e.target.value
+                      .split(",")
+                      .map((l) => l.trim())
+                      .filter(Boolean);
                     setFormData({
                       ...formData,
-                      targeting: {
-                        ...formData.targeting,
-                        locations: e.target.value
-                          .split(",")
-                          .map((l) => l.trim())
-                          .filter(Boolean),
-                      },
-                    })
-                  }
+                      targeting: { ...formData.targeting, locations },
+                    });
+                    setLocationsInput(locations.join(", "));
+                  }}
                   placeholder="United States, Canada, United Kingdom"
                 />
               </div>
@@ -448,19 +431,19 @@ export default function NewCampaignPage() {
                   Interests (comma-separated)
                 </label>
                 <Input
-                  value={formData.targeting.interests?.join(", ") || ""}
-                  onChange={(e) =>
+                  value={interestsInput}
+                  onChange={(e) => setInterestsInput(e.target.value)}
+                  onBlur={(e) => {
+                    const interests = e.target.value
+                      .split(",")
+                      .map((i) => i.trim())
+                      .filter(Boolean);
                     setFormData({
                       ...formData,
-                      targeting: {
-                        ...formData.targeting,
-                        interests: e.target.value
-                          .split(",")
-                          .map((i) => i.trim())
-                          .filter(Boolean),
-                      },
-                    })
-                  }
+                      targeting: { ...formData.targeting, interests },
+                    });
+                    setInterestsInput(interests.join(", "));
+                  }}
                   placeholder="Fashion, Shopping, Technology"
                 />
               </div>
@@ -485,42 +468,54 @@ export default function NewCampaignPage() {
                 </Button>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-4">
-                {creatives.map((creative) => (
-                  <div
-                    key={creative.id}
-                    onClick={() => toggleCreative(creative.id)}
-                    className={`relative border rounded-lg overflow-hidden cursor-pointer transition-all ${
-                      formData.creativeIds.includes(creative.id)
-                        ? "border-blue-600 ring-2 ring-blue-600"
-                        : "border-gray-200 hover:border-gray-300"
-                    }`}
-                  >
-                    {creative.fileType === "image" ? (
-                      <img
-                        src={creative.cdnUrl}
-                        alt="Creative"
-                        className="w-full h-48 object-cover"
-                      />
-                    ) : (
-                      <video
-                        src={creative.cdnUrl}
-                        className="w-full h-48 object-cover"
-                      />
-                    )}
-                    {formData.creativeIds.includes(creative.id) && (
-                      <div className="absolute top-2 right-2 bg-blue-600 text-white rounded-full p-1">
-                        <Check className="w-4 h-4" />
-                      </div>
-                    )}
-                    {creative.score && (
-                      <div className="absolute bottom-2 left-2 bg-black bg-opacity-60 text-white px-2 py-1 rounded text-sm">
-                        Score: {creative.score.toFixed(1)}
-                      </div>
-                    )}
+              <>
+                {formData.creativeIds.length > 0 && (
+                  <div className="mb-4 text-sm text-blue-600">
+                    {formData.creativeIds.length} creative(s) selected
                   </div>
-                ))}
-              </div>
+                )}
+                <div className="max-h-[400px] overflow-y-auto pr-2">
+                  <div className="grid grid-cols-3 gap-4">
+                    {creatives.map((creative) => (
+                      <div
+                        key={creative.id}
+                        onClick={() => toggleCreative(creative.id)}
+                        className={`relative border rounded-lg overflow-hidden cursor-pointer transition-all ${
+                          formData.creativeIds.includes(creative.id)
+                            ? "border-blue-600 ring-2 ring-blue-600"
+                            : "border-gray-200 hover:border-gray-300"
+                        }`}
+                      >
+                        {creative.file_type === "image" ? (
+                          <img
+                            src={creative.signed_url || creative.cdn_url}
+                            alt="Creative"
+                            className="w-full h-48 object-cover"
+                          />
+                        ) : (
+                          <video
+                            src={creative.signed_url || creative.cdn_url}
+                            className="w-full h-48 object-cover"
+                          />
+                        )}
+                        {formData.creativeIds.includes(creative.id) && (
+                          <div className="absolute top-2 right-2 bg-blue-600 text-white rounded-full p-1">
+                            <Check className="w-4 h-4" />
+                          </div>
+                        )}
+                        {creative.score && (
+                          <div className="absolute bottom-2 left-2 bg-black bg-opacity-60 text-white px-2 py-1 rounded text-sm">
+                            Score: {creative.score.toFixed(1)}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-4 text-sm text-gray-500 text-center">
+                  Showing {creatives.length} creative(s)
+                </div>
+              </>
             )}
           </div>
         )}
@@ -537,7 +532,7 @@ export default function NewCampaignPage() {
                 <div className="text-sm text-gray-600">Ad Account</div>
                 <div className="font-medium">
                   {adAccounts.find((a) => a.id === formData.adAccountId)
-                    ?.accountName || "N/A"}
+                    ?.account_name || "N/A"}
                 </div>
               </div>
               <div className="border-b pb-3">

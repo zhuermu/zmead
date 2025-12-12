@@ -11,6 +11,7 @@ import {
   Type,
   Image as ImageIcon,
   Palette,
+  BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -24,7 +25,10 @@ interface LandingPage {
   productUrl: string;
   template: string;
   language: string;
-  html_content?: string;
+  draft_content?: string;  // 草稿内容：编辑器操作的版本
+  html_content?: string;   // 已发布内容：线上版本
+  has_unpublished_changes?: boolean;  // 是否有未发布的更改
+  ga_measurement_id?: string;  // GA4 Measurement ID
   status: string;
 }
 
@@ -44,6 +48,7 @@ export default function LandingPageEditPage() {
   const [htmlContent, setHtmlContent] = useState("");
   const [selectedElement, setSelectedElement] = useState<HTMLElement | null>(null);
   const [themeColor, setThemeColor] = useState("#3b82f6");
+  const [gaMeasurementId, setGaMeasurementId] = useState("");
   
   // Undo/Redo state
   const [history, setHistory] = useState<EditorState[]>([]);
@@ -69,7 +74,10 @@ export default function LandingPageEditPage() {
       setLoading(true);
       const response = await api.get<LandingPage>(`/landing-pages/${landingPageId}`);
       setLandingPage(response.data);
-      setHtmlContent(response.data.html_content || getDefaultTemplate());
+      // 编辑器始终操作 draft_content（草稿版本）
+      setHtmlContent(response.data.draft_content || response.data.html_content || getDefaultTemplate());
+      // 加载 GA4 Measurement ID
+      setGaMeasurementId(response.data.ga_measurement_id || "");
     } catch (error) {
       console.error("Failed to fetch landing page:", error);
       router.push("/landing-pages");
@@ -174,10 +182,17 @@ export default function LandingPageEditPage() {
   const handleSave = async () => {
     if (!landingPage) return;
 
+    // Validate GA Measurement ID format if provided
+    if (gaMeasurementId && !/^G-[A-Z0-9]+$/.test(gaMeasurementId)) {
+      alert("Invalid GA4 Measurement ID format. It should start with 'G-' followed by alphanumeric characters (e.g., G-XXXXXXXXXX)");
+      return;
+    }
+
     try {
       setSaving(true);
       await api.put(`/landing-pages/${landingPageId}`, {
         html_content: htmlContent,
+        ga_measurement_id: gaMeasurementId || null,
       });
       alert("Landing page saved successfully!");
     } catch (error) {
@@ -214,17 +229,17 @@ export default function LandingPageEditPage() {
     if (!file) return;
 
     try {
-      // Get presigned URL
-      const uploadResponse = await api.post("/creatives/upload-url", {
-        file_name: file.name,
-        file_type: file.type,
-        file_size: file.size,
+      // Get presigned URL for landing page asset (uploads to public bucket)
+      const uploadResponse = await api.post(`/landing-pages/${landingPageId}/assets/upload-url`, {
+        filename: file.name,
+        content_type: file.type,
+        size: file.size,
       });
 
-      const { upload_url, cdn_url } = uploadResponse.data;
+      const { upload_url: uploadUrl, public_url: cdnUrl } = uploadResponse.data;
 
-      // Upload to S3
-      await fetch(upload_url, {
+      // Upload to GCS
+      await fetch(uploadUrl, {
         method: "PUT",
         body: file,
         headers: {
@@ -234,17 +249,23 @@ export default function LandingPageEditPage() {
 
       // Update selected image element
       if (selectedElement && selectedElement.tagName === "IMG") {
-        const updatedHtml = htmlContent.replace(
-          selectedElement.outerHTML,
-          selectedElement.outerHTML.replace(/src="[^"]*"/, `src="${cdn_url}"`)
-        );
-        setHtmlContent(updatedHtml);
-        addToHistory(updatedHtml);
+        const iframe = iframeRef.current;
+        if (iframe && iframe.contentDocument) {
+          // Update src in the iframe DOM
+          (selectedElement as HTMLImageElement).src = cdnUrl;
+          // Get updated HTML
+          const updatedHtml = "<!DOCTYPE html>\n" + iframe.contentDocument.documentElement.outerHTML;
+          setHtmlContent(updatedHtml);
+          addToHistory(updatedHtml);
+        }
       }
     } catch (error) {
       console.error("Failed to upload image:", error);
       alert("Failed to upload image. Please try again.");
     }
+
+    // Reset file input
+    event.target.value = "";
   };
 
   const setupIframeInteraction = () => {
@@ -253,44 +274,53 @@ export default function LandingPageEditPage() {
 
     const doc = iframe.contentDocument;
 
-    // Add click handlers to editable elements
-    const editableElements = doc.querySelectorAll("[data-editable]");
-    editableElements.forEach((element) => {
-      (element as HTMLElement).style.cursor = "pointer";
-      (element as HTMLElement).style.outline = "2px dashed transparent";
-      (element as HTMLElement).style.transition = "outline 0.2s";
+    // Make all text elements and images editable
+    const editableSelectors = "h1, h2, h3, h4, h5, h6, p, span, a, li, button, img, [data-editable]";
+    const editableElements = doc.querySelectorAll(editableSelectors);
 
-      element.addEventListener("mouseenter", () => {
-        (element as HTMLElement).style.outline = "2px dashed #3b82f6";
+    editableElements.forEach((element) => {
+      const el = element as HTMLElement;
+
+      // Skip elements that are just containers (have child elements that are also editable)
+      if (el.tagName !== "IMG" && el.children.length > 0) {
+        const hasEditableChildren = el.querySelector(editableSelectors);
+        if (hasEditableChildren) return;
+      }
+
+      el.style.cursor = "pointer";
+      el.style.outline = "2px dashed transparent";
+      el.style.transition = "outline 0.2s";
+
+      el.addEventListener("mouseenter", () => {
+        el.style.outline = "2px dashed #3b82f6";
       });
 
-      element.addEventListener("mouseleave", () => {
-        if (element !== selectedElement) {
-          (element as HTMLElement).style.outline = "2px dashed transparent";
+      el.addEventListener("mouseleave", () => {
+        if (el !== selectedElement) {
+          el.style.outline = "2px dashed transparent";
         }
       });
 
-      element.addEventListener("click", (e) => {
+      el.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        setSelectedElement(element as HTMLElement);
-        (element as HTMLElement).style.outline = "2px solid #3b82f6";
-
-        // Handle text editing
-        if (element.getAttribute("data-editable") === "text") {
-          const currentText = element.textContent || "";
-          const newText = prompt("Edit text:", currentText);
-          if (newText !== null && newText !== currentText) {
-            element.textContent = newText;
-            const updatedHtml = doc.documentElement.outerHTML;
-            setHtmlContent(updatedHtml);
-            addToHistory(updatedHtml);
-          }
-        }
+        setSelectedElement(el);
+        el.style.outline = "2px solid #3b82f6";
 
         // Handle image editing
-        if (element.getAttribute("data-editable") === "image") {
+        if (el.tagName === "IMG") {
           fileInputRef.current?.click();
+          return;
+        }
+
+        // Handle text editing
+        const currentText = el.textContent || "";
+        const newText = prompt("Edit text:", currentText);
+        if (newText !== null && newText !== currentText) {
+          el.textContent = newText;
+          const updatedHtml = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
+          setHtmlContent(updatedHtml);
+          addToHistory(updatedHtml);
         }
       });
     });
@@ -305,10 +335,10 @@ export default function LandingPageEditPage() {
         doc.write(htmlContent);
         doc.close();
 
-        // Setup interaction after content loads
-        iframe.onload = () => {
+        // Setup interaction after a small delay to ensure DOM is ready
+        setTimeout(() => {
           setupIframeInteraction();
-        };
+        }, 100);
       }
     }
   }, [htmlContent]);
@@ -431,6 +461,37 @@ export default function LandingPageEditPage() {
                 placeholder="#3b82f6"
               />
             </div>
+          </Card>
+
+          {/* Analytics Settings */}
+          <Card className="p-4 mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <BarChart3 className="w-4 h-4" />
+              <h3 className="font-semibold text-sm">Analytics</h3>
+            </div>
+            <p className="text-xs text-gray-600 mb-3">
+              Connect Google Analytics 4 to track page views and conversions.
+            </p>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-gray-700">
+                GA4 Measurement ID
+              </label>
+              <Input
+                type="text"
+                value={gaMeasurementId}
+                onChange={(e) => setGaMeasurementId(e.target.value.toUpperCase())}
+                placeholder="G-XXXXXXXXXX"
+                className="text-sm"
+              />
+              <p className="text-xs text-gray-500">
+                Find this in Google Analytics → Admin → Data Streams
+              </p>
+            </div>
+            {gaMeasurementId && (
+              <div className="mt-3 p-2 bg-green-50 rounded text-xs text-green-700">
+                GA4 tracking will be added when you publish.
+              </div>
+            )}
           </Card>
 
           {/* History Info */}

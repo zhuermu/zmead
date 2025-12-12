@@ -8,8 +8,9 @@ import { CreativeCard } from '@/components/creatives/CreativeCard';
 import { CreativeFilters } from '@/components/creatives/CreativeFilters';
 import { CreativeUpload } from '@/components/creatives/CreativeUpload';
 import { CreativeDetailModal } from '@/components/creatives/CreativeDetailModal';
+import { BucketSyncModal } from '@/components/creatives/BucketSyncModal';
 import { Button } from '@/components/ui/button';
-import { Grid3x3, List, Plus } from 'lucide-react';
+import { Grid3x3, List, Plus, Cloud } from 'lucide-react';
 
 type ViewMode = 'grid' | 'list';
 
@@ -21,6 +22,29 @@ interface FilterState {
   search?: string;
 }
 
+// Helper function to convert snake_case to camelCase
+const snakeToCamel = (str: string): string =>
+  str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+// Convert object keys from snake_case to camelCase
+const convertToCamelCase = <T extends Record<string, unknown>>(obj: T): T => {
+  if (Array.isArray(obj)) {
+    return obj.map(convertToCamelCase) as unknown as T;
+  }
+  if (obj !== null && typeof obj === 'object') {
+    return Object.keys(obj).reduce((result, key) => {
+      const camelKey = snakeToCamel(key);
+      const value = obj[key];
+      (result as Record<string, unknown>)[camelKey] =
+        value !== null && typeof value === 'object'
+          ? convertToCamelCase(value as Record<string, unknown>)
+          : value;
+      return result;
+    }, {} as T);
+  }
+  return obj;
+};
+
 export default function CreativesPage() {
   const [creatives, setCreatives] = useState<Creative[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -30,6 +54,7 @@ export default function CreativesPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showUpload, setShowUpload] = useState(false);
+  const [showBucketSync, setShowBucketSync] = useState(false);
   const [selectedCreative, setSelectedCreative] = useState<Creative | null>(null);
 
   useEffect(() => {
@@ -46,9 +71,11 @@ export default function CreativesPage() {
         ...filters,
       });
 
-      const response = await api.get<PaginatedResponse<Creative>>(`/creatives?${params}`);
-      setCreatives(response.data.items);
-      setTotal(response.data.total);
+      const response = await api.get(`/creatives?${params}`);
+      // Convert snake_case API response to camelCase for frontend
+      const data = convertToCamelCase(response.data) as PaginatedResponse<Creative>;
+      setCreatives(data.items);
+      setTotal(data.total);
     } catch (error) {
       console.error('Failed to fetch creatives:', error);
     } finally {
@@ -75,6 +102,11 @@ export default function CreativesPage() {
     fetchCreatives(); // Refresh list
   };
 
+  const handleSyncComplete = () => {
+    setShowBucketSync(false);
+    fetchCreatives(); // Refresh list
+  };
+
   const totalPages = Math.ceil(total / pageSize);
 
   return (
@@ -88,10 +120,16 @@ export default function CreativesPage() {
               Manage your ad creatives and assets
             </p>
           </div>
-          <Button onClick={() => setShowUpload(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Upload Creative
-          </Button>
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setShowBucketSync(true)}>
+              <Cloud className="w-4 h-4 mr-2" />
+              Sync from Cloud
+            </Button>
+            <Button onClick={() => setShowUpload(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Upload Creative
+            </Button>
+          </div>
         </div>
 
         {/* Filters and View Toggle */}
@@ -190,6 +228,14 @@ export default function CreativesPage() {
         <CreativeUpload
           onClose={() => setShowUpload(false)}
           onComplete={handleUploadComplete}
+        />
+      )}
+
+      {/* Bucket Sync Modal */}
+      {showBucketSync && (
+        <BucketSyncModal
+          onClose={() => setShowBucketSync(false)}
+          onComplete={handleSyncComplete}
         />
       )}
 

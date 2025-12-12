@@ -55,8 +55,9 @@ def is_gcs_available() -> bool:
 class GCSStorage:
     """Google Cloud Storage utility class with lazy initialization."""
 
-    def __init__(self, bucket_name: str) -> None:
+    def __init__(self, bucket_name: str, cdn_domain: str | None = None) -> None:
         self.bucket_name = bucket_name
+        self.cdn_domain = cdn_domain  # Custom CDN domain for this storage
         self._client = None
         self._bucket = None
 
@@ -141,8 +142,10 @@ class GCSStorage:
 
     def get_cdn_url(self, key: str) -> str:
         """Get CDN URL for a file."""
-        if settings.gcs_cdn_domain:
-            return f"https://{settings.gcs_cdn_domain}/{key}"
+        # Use instance-specific CDN domain first, then global setting
+        cdn_domain = self.cdn_domain or settings.gcs_cdn_domain
+        if cdn_domain:
+            return f"https://{cdn_domain}/{key}"
         # Default to storage.googleapis.com URL
         return f"https://storage.googleapis.com/{self.bucket_name}/{key}"
 
@@ -165,11 +168,109 @@ class GCSStorage:
         blob.make_public()
         return blob.public_url
 
+    def list_files(
+        self,
+        prefix: str | None = None,
+        max_results: int | None = None,
+    ) -> list[dict]:
+        """List files in the bucket with optional prefix filter.
+
+        Args:
+            prefix: Filter files by prefix (e.g., 'users/123/')
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of file info dicts with keys: name, size, content_type, updated, url
+        """
+        if not self._check_available():
+            return []
+
+        try:
+            blobs = self.client.list_blobs(
+                self.bucket_name,
+                prefix=prefix,
+                max_results=max_results,
+            )
+
+            files = []
+            for blob in blobs:
+                # Skip "directory" markers (blobs ending with /)
+                if blob.name.endswith("/"):
+                    continue
+
+                files.append({
+                    "name": blob.name,
+                    "size": blob.size,
+                    "content_type": blob.content_type,
+                    "updated": blob.updated.isoformat() if blob.updated else None,
+                    "url": self.get_public_url(blob.name),
+                })
+
+            return files
+        except Exception as e:
+            logger.warning(f"Failed to list files in {self.bucket_name}: {e}")
+            return []
+
+    def get_file_info(self, key: str) -> dict | None:
+        """Get file metadata.
+
+        Args:
+            key: File key/path in bucket
+
+        Returns:
+            File info dict or None if not found
+        """
+        if not self._check_available():
+            return None
+
+        try:
+            blob = self.bucket.blob(key)
+            if not blob.exists():
+                return None
+
+            blob.reload()  # Load metadata
+            return {
+                "name": blob.name,
+                "size": blob.size,
+                "content_type": blob.content_type,
+                "updated": blob.updated.isoformat() if blob.updated else None,
+                "url": self.get_public_url(blob.name),
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get file info for {key}: {e}")
+            return None
+
+    def download_file(self, key: str) -> bytes | None:
+        """Download file content from GCS.
+
+        Args:
+            key: File key/path in bucket
+
+        Returns:
+            File content as bytes or None if not found
+        """
+        if not self._check_available():
+            return None
+
+        try:
+            blob = self.bucket.blob(key)
+            if not blob.exists():
+                return None
+
+            return blob.download_as_bytes()
+        except Exception as e:
+            logger.warning(f"Failed to download file {key}: {e}")
+            return None
+
 
 # Pre-configured storage instances
 creatives_storage = GCSStorage(settings.gcs_bucket_creatives)
-landing_pages_storage = GCSStorage(settings.gcs_bucket_landing_pages)
+landing_pages_storage = GCSStorage(
+    settings.gcs_bucket_landing_pages,
+    cdn_domain=settings.gcs_landing_pages_cdn_domain or None,
+)
 exports_storage = GCSStorage(settings.gcs_bucket_exports)
+uploads_storage = GCSStorage(settings.gcs_bucket_uploads)  # User uploads bucket
 
 
 def get_presigned_upload_url(key: str, expires_in: int = 3600) -> str:

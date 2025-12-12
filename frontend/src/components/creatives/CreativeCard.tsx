@@ -13,6 +13,9 @@ interface CreativeCardProps {
 }
 
 export function CreativeCard({ creative, viewMode, onClick, onDelete }: CreativeCardProps) {
+  // Use signed URL for secure access, fallback to cdnUrl
+  const imageUrl = creative.signedUrl || creative.cdnUrl;
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -38,10 +41,11 @@ export function CreativeCard({ creative, viewMode, onClick, onDelete }: Creative
           >
             {creative.fileType === 'image' ? (
               <Image
-                src={creative.cdnUrl}
+                src={imageUrl}
                 alt="Creative"
                 fill
                 className="object-cover"
+                unoptimized
               />
             ) : (
               <div className="flex items-center justify-center h-full">
@@ -105,17 +109,18 @@ export function CreativeCard({ creative, viewMode, onClick, onDelete }: Creative
       >
         {creative.fileType === 'image' ? (
           <Image
-            src={creative.cdnUrl}
+            src={imageUrl}
             alt="Creative"
             fill
             className="object-cover"
+            unoptimized
           />
         ) : (
           <div className="flex items-center justify-center h-full">
             <Video className="w-12 h-12 text-gray-400" />
           </div>
         )}
-        
+
         {/* Type Badge */}
         <div className="absolute top-2 left-2">
           <Badge variant={creative.fileType === 'image' ? 'default' : 'secondary'}>

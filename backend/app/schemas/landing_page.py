@@ -32,6 +32,7 @@ class LandingPageUpdate(BaseModel):
     template: str | None = Field(None, max_length=100)
     language: str | None = Field(None, max_length=10)
     html_content: str | None = None
+    ga_measurement_id: str | None = Field(None, max_length=20, pattern=r"^G-[A-Z0-9]+$")
 
 
 class LandingPageResponse(BaseModel):
@@ -41,17 +42,53 @@ class LandingPageResponse(BaseModel):
     user_id: int
     name: str
     url: str
+    signed_url: str | None = None  # Signed URL for secure access (1 hour expiry)
     s3_key: str
     product_url: str
     template: str
     language: str
+    # 草稿内容：编辑器始终操作这个字段
+    draft_content: str | None = None
+    # 已发布内容：发布后才会有值，线上显示的内容
     html_content: str | None = None
+    # 是否有未发布的更改
+    has_unpublished_changes: bool = False
+    # GA4 Measurement ID for analytics
+    ga_measurement_id: str | None = None
     status: str
     created_at: datetime
     updated_at: datetime | None = None
     published_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm_with_changes(cls, obj) -> "LandingPageResponse":
+        """Create response from ORM object with has_unpublished_changes computed."""
+        data = {
+            "id": obj.id,
+            "user_id": obj.user_id,
+            "name": obj.name,
+            "url": obj.url,
+            "s3_key": obj.s3_key,
+            "product_url": obj.product_url,
+            "template": obj.template,
+            "language": obj.language,
+            "draft_content": obj.draft_content,
+            "html_content": obj.html_content,
+            "ga_measurement_id": obj.ga_measurement_id,
+            "status": obj.status,
+            "created_at": obj.created_at,
+            "updated_at": obj.updated_at,
+            "published_at": obj.published_at,
+            # 计算是否有未发布的更改：草稿内容与已发布内容不同
+            "has_unpublished_changes": (
+                obj.draft_content is not None
+                and obj.html_content is not None
+                and obj.draft_content != obj.html_content
+            ),
+        }
+        return cls(**data)
 
 
 class LandingPageListResponse(BaseModel):

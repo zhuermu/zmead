@@ -8,6 +8,15 @@ import { AlertCircle, Check, CreditCard, Sparkles } from 'lucide-react';
 import api from '@/lib/api';
 import { useRouter } from 'next/navigation';
 
+interface CreditPackageAPI {
+  id: string;
+  name: string;
+  price_cents: number;
+  credits: number;
+  discount_percent: number;
+  description: string;
+}
+
 interface CreditPackage {
   id: string;
   name: string;
@@ -17,6 +26,7 @@ interface CreditPackage {
   savings: number;
   unitPrice: number;
   popular?: boolean;
+  description: string;
 }
 
 export default function RechargePage() {
@@ -33,8 +43,30 @@ export default function RechargePage() {
   const fetchPackages = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/credits/packages');
-      setPackages(response.data);
+      const response = await api.get<CreditPackageAPI[]>('/credits/packages');
+
+      // Transform API response to frontend format
+      const baseUnitPrice = 0.01; // Base price per credit (¥0.01)
+      const transformedPackages: CreditPackage[] = response.data.map((pkg, index) => {
+        const price = pkg.price_cents / 100; // Convert cents to yuan
+        const unitPrice = price / pkg.credits;
+        const basePrice = pkg.credits * baseUnitPrice;
+        const savings = basePrice - price;
+
+        return {
+          id: pkg.id,
+          name: pkg.name,
+          price,
+          credits: pkg.credits,
+          discount: pkg.discount_percent,
+          savings: savings > 0 ? savings : 0,
+          unitPrice,
+          popular: index === 1, // Mark second package as popular
+          description: pkg.description,
+        };
+      });
+
+      setPackages(transformedPackages);
       setError(null);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load credit packages');

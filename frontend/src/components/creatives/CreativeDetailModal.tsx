@@ -31,6 +31,9 @@ export function CreativeDetailModal({
   onUpdate,
   onDelete,
 }: CreativeDetailModalProps) {
+  // Use signed URL for secure access, fallback to cdnUrl
+  const imageUrl = creative.signedUrl || creative.cdnUrl;
+
   const [isEditing, setIsEditing] = useState(false);
   const [editedTags, setEditedTags] = useState<string[]>(creative.tags);
   const [editedProductUrl, setEditedProductUrl] = useState(creative.productUrl || '');
@@ -100,7 +103,7 @@ export function CreativeDetailModal({
   };
 
   const handleDownload = () => {
-    window.open(creative.cdnUrl, '_blank');
+    window.open(imageUrl, '_blank');
   };
 
   return (
@@ -121,10 +124,11 @@ export function CreativeDetailModal({
               <div className="relative w-full aspect-square bg-gray-100 rounded-lg overflow-hidden">
                 {creative.fileType === 'image' ? (
                   <Image
-                    src={creative.cdnUrl}
+                    src={imageUrl}
                     alt="Creative"
                     fill
                     className="object-contain"
+                    unoptimized
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full">

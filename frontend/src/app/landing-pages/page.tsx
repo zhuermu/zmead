@@ -6,7 +6,13 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Plus, Search, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import api from "@/lib/api";
@@ -129,24 +135,28 @@ export default function LandingPagesPage() {
           />
         </div>
 
-        <Select
-          value={statusFilter}
-          onValueChange={setStatusFilter}
-        >
-          <option value="all">All Status</option>
-          <option value="draft">Draft</option>
-          <option value="published">Published</option>
-          <option value="archived">Archived</option>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="All Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="draft">Draft</SelectItem>
+            <SelectItem value="published">Published</SelectItem>
+            <SelectItem value="archived">Archived</SelectItem>
+          </SelectContent>
         </Select>
 
-        <Select
-          value={templateFilter}
-          onValueChange={setTemplateFilter}
-        >
-          <option value="all">All Templates</option>
-          <option value="modern">Modern</option>
-          <option value="classic">Classic</option>
-          <option value="minimal">Minimal</option>
+        <Select value={templateFilter} onValueChange={setTemplateFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="All Templates" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Templates</SelectItem>
+            <SelectItem value="modern">Modern</SelectItem>
+            <SelectItem value="classic">Classic</SelectItem>
+            <SelectItem value="minimal">Minimal</SelectItem>
+          </SelectContent>
         </Select>
       </div>
 

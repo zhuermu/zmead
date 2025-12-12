@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.storage import creatives_storage
+from app.core.storage import creatives_storage, uploads_storage
 from app.models.creative import Creative
 from app.schemas.creative import (
     CreativeCreate,
@@ -30,6 +30,45 @@ class CreativeService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    def generate_signed_url(self, file_url: str, expires_in: int = 3600) -> str | None:
+        """Generate a signed download URL for a creative file.
+
+        Args:
+            file_url: The file URL (can be gs:// or https://storage.googleapis.com/ format)
+            expires_in: URL expiration time in seconds (default 1 hour)
+
+        Returns:
+            Signed URL or None if unable to generate
+        """
+        try:
+            # Extract file key from URL
+            file_key = None
+
+            if file_url.startswith("gs://"):
+                # Format: gs://bucket/key
+                parts = file_url.replace("gs://", "").split("/", 1)
+                if len(parts) > 1:
+                    file_key = parts[1]
+            elif "storage.googleapis.com/" in file_url:
+                # Format: https://storage.googleapis.com/bucket/key
+                parts = file_url.split("storage.googleapis.com/", 1)
+                if len(parts) > 1:
+                    # Remove bucket name to get key
+                    path_parts = parts[1].split("/", 1)
+                    if len(path_parts) > 1:
+                        file_key = path_parts[1]
+
+            if not file_key:
+                return None
+
+            # Generate signed URL using uploads_storage (where user files are stored)
+            return uploads_storage.generate_presigned_download_url(
+                key=file_key,
+                expires_in=expires_in,
+            )
+        except Exception:
+            return None
 
     async def create(
         self,
@@ -315,3 +354,115 @@ class CreativeService:
             .where(Creative.status == CreativeStatus.ACTIVE.value)
         )
         return list(result.scalars().all())
+
+    def list_bucket_files(
+        self,
+        user_id: int,
+        file_types: list[str] | None = None,
+    ) -> list[dict]:
+        """List files in user's uploads bucket.
+
+        Args:
+            user_id: User ID
+            file_types: Optional list of file type prefixes to filter (e.g., ['image/', 'video/'])
+
+        Returns:
+            List of file info dicts
+        """
+        # User uploads are stored at: {user_id}/chat-attachments/...
+        prefix = f"{user_id}/"
+        files = uploads_storage.list_files(prefix=prefix)
+
+        # Filter by file type if specified
+        if file_types:
+            files = [
+                f for f in files
+                if any(
+                    f.get("content_type", "").startswith(ft)
+                    for ft in file_types
+                )
+            ]
+
+        return files
+
+    async def get_synced_file_urls(self, user_id: int) -> set[str]:
+        """Get set of file URLs that are already synced to database.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Set of file URLs
+        """
+        result = await self.db.execute(
+            select(Creative.file_url)
+            .where(Creative.user_id == user_id)
+            .where(Creative.status == CreativeStatus.ACTIVE.value)
+        )
+        return {row[0] for row in result.fetchall()}
+
+    async def sync_file_from_bucket(
+        self,
+        user_id: int,
+        file_key: str,
+    ) -> dict:
+        """Sync a single file from bucket to creatives database.
+
+        Args:
+            user_id: User ID
+            file_key: GCS file key
+
+        Returns:
+            Dict with success status and creative_id or error
+        """
+        try:
+            # Get file info from bucket
+            file_info = uploads_storage.get_file_info(file_key)
+
+            if not file_info:
+                return {"success": False, "error": "File not found in bucket"}
+
+            # Validate file belongs to user (format: {user_id}/chat-attachments/...)
+            if not file_key.startswith(f"{user_id}/"):
+                return {"success": False, "error": "File does not belong to user"}
+
+            # Check if already synced
+            file_url = file_info["url"]
+            synced_urls = await self.get_synced_file_urls(user_id)
+            if file_url in synced_urls:
+                return {"success": False, "error": "File already synced"}
+
+            # Determine file type from content_type
+            content_type = file_info.get("content_type", "")
+            if content_type.startswith("image/"):
+                file_type = "image"
+            elif content_type.startswith("video/"):
+                file_type = "video"
+            elif content_type.startswith("audio/"):
+                file_type = "audio"
+            else:
+                file_type = "image"  # Default to image
+
+            # Extract filename from key for name
+            filename = file_key.split("/")[-1] if "/" in file_key else file_key
+
+            # Create creative record
+            creative = Creative(
+                user_id=user_id,
+                file_url=file_url,
+                cdn_url=file_url,  # Use same URL, or generate CDN URL
+                file_type=file_type,
+                file_size=file_info.get("size", 0),
+                name=filename,
+                status=CreativeStatus.ACTIVE.value,
+                tags=["synced", "ai-generated"],
+            )
+
+            self.db.add(creative)
+            await self.db.flush()
+            await self.db.refresh(creative)
+
+            return {"success": True, "creative_id": creative.id}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}

@@ -35,14 +35,45 @@ export interface Creative {
   id: number;
   fileUrl: string;
   cdnUrl: string;
+  signedUrl?: string;  // Signed URL for secure access (1 hour expiry)
   fileType: 'image' | 'video';
   fileSize: number;
+  name?: string;
   productUrl?: string;
   style?: string;
   score?: number;
   tags: string[];
   status: 'active' | 'deleted';
   createdAt: string;
+}
+
+// Bucket file types (for syncing from GCS)
+export interface BucketFile {
+  name: string;
+  size: number;
+  contentType?: string;
+  updated?: string;
+  url: string;
+  synced: boolean;
+}
+
+export interface BucketListResponse {
+  files: BucketFile[];
+  total: number;
+  prefix?: string;
+}
+
+export interface BucketSyncResult {
+  fileKey: string;
+  success: boolean;
+  creativeId?: number;
+  error?: string;
+}
+
+export interface BucketSyncResponse {
+  syncedCount: number;
+  failedCount: number;
+  results: BucketSyncResult[];
 }
 
 // Campaign types

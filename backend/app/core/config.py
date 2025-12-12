@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     gcs_bucket_exports: str = "aae-exports"
     gcs_bucket_uploads: str = "aae-user-uploads"  # All file uploads (permanent storage)
     gcs_cdn_domain: str = Field(default="")  # Custom domain or Cloud CDN domain
+    gcs_landing_pages_cdn_domain: str = Field(default="")  # CDN domain for landing pages
 
     @field_validator("gcs_cdn_domain", mode="before")
     @classmethod

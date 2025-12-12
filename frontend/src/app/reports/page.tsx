@@ -65,19 +65,39 @@ export default function ReportsPage() {
 
         // Fetch summary metrics
         const summaryResponse = await api.get('/reports/summary', { params });
-        setMetrics(summaryResponse.data);
+        // Transform backend field names to frontend format
+        const apiData = summaryResponse.data;
+        const transformedMetrics: MetricsSummary = {
+          spend: parseFloat(apiData.total_spend) || 0,
+          impressions: apiData.total_impressions || 0,
+          clicks: apiData.total_clicks || 0,
+          conversions: apiData.total_conversions || 0,
+          revenue: parseFloat(apiData.total_revenue) || 0,
+          ctr: apiData.avg_ctr || 0,
+          cpc: parseFloat(apiData.avg_cpc) || 0,
+          cpa: parseFloat(apiData.avg_cpa) || 0,
+          roas: apiData.avg_roas || 0,
+        };
+        setMetrics(transformedMetrics);
 
-        // Fetch trend data
-        const trendResponse = await api.get('/reports/trends', { params });
-        setTrendData(trendResponse.data || []);
+        // Fetch trend data (backend uses singular 'trend')
+        try {
+          const trendResponse = await api.get('/reports/trend', { params });
+          setTrendData(trendResponse.data?.data || []);
+        } catch {
+          setTrendData([]);
+        }
 
-        // Fetch spend by campaign
-        const spendResponse = await api.get('/reports/spend-by-campaign', { params });
-        setSpendByCampaign(spendResponse.data || []);
+        // Skip spend-by-campaign as it's not implemented in backend
+        setSpendByCampaign([]);
 
         // Fetch hierarchical metrics data
-        const metricsResponse = await api.get('/reports/metrics', { params });
-        setMetricsTableData(metricsResponse.data || []);
+        try {
+          const metricsResponse = await api.get('/reports/metrics', { params });
+          setMetricsTableData(metricsResponse.data?.items || []);
+        } catch {
+          setMetricsTableData([]);
+        }
       } catch (error) {
         console.error('Failed to fetch data:', error);
       } finally {
@@ -257,7 +277,7 @@ export default function ReportsPage() {
               <DollarSign className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(metrics.cpc)}</div>
+              <div className="text-2xl font-bold">{formatCurrency(metrics.cpc || 0)}</div>
               <div className="flex items-center text-sm text-gray-600 mt-1">
                 <span>Cost per click</span>
               </div>
@@ -270,7 +290,7 @@ export default function ReportsPage() {
               <TrendingUp className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(metrics.revenue)}</div>
+              <div className="text-2xl font-bold">{formatCurrency(metrics.revenue || 0)}</div>
               <div className="flex items-center text-sm text-gray-600 mt-1">
                 <span>Total revenue</span>
               </div>

@@ -48,3 +48,4 @@ htmlcov/
 *.bak
 *.tmp
 custom-unison-*.json
+client_secret_*.json

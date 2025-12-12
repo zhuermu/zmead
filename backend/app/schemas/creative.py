@@ -51,6 +51,7 @@ class CreativeResponse(BaseModel):
     user_id: int
     file_url: str
     cdn_url: str
+    signed_url: str | None = None  # Signed URL for secure access
     file_type: str
     file_size: int
     name: str | None = None
@@ -101,3 +102,50 @@ class PresignedUploadUrlResponse(BaseModel):
     s3_url: str
     cdn_url: str
     expires_in: int = 3600
+
+
+class BucketFileInfo(BaseModel):
+    """Information about a file in GCS bucket."""
+
+    name: str
+    size: int
+    content_type: str | None = None
+    updated: str | None = None
+    url: str
+    synced: bool = False  # Whether this file is already in the database
+
+
+class BucketSyncRequest(BaseModel):
+    """Request to sync files from bucket to database."""
+
+    file_keys: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="List of file keys to sync (max 50)",
+    )
+
+
+class BucketSyncResult(BaseModel):
+    """Result of syncing a single file."""
+
+    file_key: str
+    success: bool
+    creative_id: int | None = None
+    error: str | None = None
+
+
+class BucketSyncResponse(BaseModel):
+    """Response from bucket sync operation."""
+
+    synced_count: int
+    failed_count: int
+    results: list[BucketSyncResult]
+
+
+class BucketListResponse(BaseModel):
+    """Response for listing files in bucket."""
+
+    files: list[BucketFileInfo]
+    total: int
+    prefix: str | None = None

@@ -91,7 +91,14 @@
       "Bash(alembic revision:*)",
       "mcp__playwright__browser_handle_dialog",
       "mcp__playwright__browser_fill_form",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(alembic current:*)",
+      "Bash(alembic heads:*)",
+      "Bash(alembic upgrade:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(npm install:*)",
+      "Bash(TZ=UTC date:*)",
+      "Bash(python test_google_accounts.py:*)"
     ],
     "deny": [],
     "ask": []

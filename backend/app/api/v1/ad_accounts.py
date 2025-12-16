@@ -8,7 +8,11 @@ from app.schemas.ad_account import (
     AdAccountListResponse,
     AdAccountResponse,
     AdAccountUpdate,
+    AvailableAdAccount,
+    OAuthAvailableAccountsRequest,
+    OAuthAvailableAccountsResponse,
     OAuthBindCallbackRequest,
+    OAuthSelectAccountsRequest,
 )
 from app.services.ad_account import AdAccountService
 
@@ -137,15 +141,81 @@ async def refresh_ad_account_token(
     }
 
 
+@router.post("/oauth/available-accounts", response_model=OAuthAvailableAccountsResponse)
+async def get_oauth_available_accounts(
+    data: OAuthAvailableAccountsRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> OAuthAvailableAccountsResponse:
+    """Get list of available accounts from OAuth without binding them yet."""
+    service = AdAccountService(db)
+
+    try:
+        accounts, session_token = await service.get_oauth_available_accounts(
+            user_id=current_user.id,
+            platform=data.platform,
+            code=data.code,
+            redirect_uri=data.redirect_uri or "http://localhost:3000/ad-accounts/callback",
+        )
+
+        available_accounts = [
+            AvailableAdAccount(
+                id=acc["id"],
+                name=acc["name"],
+                currency=acc.get("currency"),
+                timezone=acc.get("timezone"),
+                is_manager=acc.get("is_manager", False),
+                manager_id=acc.get("manager_id"),
+            )
+            for acc in accounts
+        ]
+
+        return OAuthAvailableAccountsResponse(
+            accounts=available_accounts,
+            total=len(available_accounts),
+            session_token=session_token,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to get available accounts: {str(e)}",
+        )
+
+
+@router.post("/oauth/bind-selected", response_model=AdAccountListResponse, status_code=status.HTTP_201_CREATED)
+async def bind_selected_oauth_accounts(
+    data: OAuthSelectAccountsRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> AdAccountListResponse:
+    """Bind selected accounts after user chooses which ones to connect."""
+    service = AdAccountService(db)
+
+    try:
+        bound_accounts = await service.bind_selected_oauth_accounts(
+            user_id=current_user.id,
+            platform=data.platform,
+            session_token=data.session_token,
+            selected_account_ids=data.selected_account_ids,
+        )
+        await db.commit()
+        return AdAccountListResponse(items=bound_accounts, total=len(bound_accounts))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to bind selected accounts: {str(e)}",
+        )
+
+
 @router.post("/oauth/callback", response_model=AdAccountResponse, status_code=status.HTTP_201_CREATED)
 async def oauth_callback(
     data: OAuthBindCallbackRequest,
     current_user: CurrentUser,
     db: DbSession,
 ) -> AdAccountResponse:
-    """Handle OAuth callback and bind ad account."""
+    """Handle OAuth callback and bind ad account (legacy endpoint - binds all accounts)."""
     service = AdAccountService(db)
-    
+
     # Exchange OAuth code for access token
     # This is a simplified version - in production, you'd call the actual OAuth provider
     try:

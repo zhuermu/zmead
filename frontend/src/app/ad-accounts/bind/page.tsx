@@ -69,7 +69,7 @@ export default function BindAdAccountPage() {
       const oauthUrls: Record<Platform, string> = {
         meta: `https://www.facebook.com/v18.0/dialog/oauth?client_id=${process.env.NEXT_PUBLIC_META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${selectedPlatform}&scope=ads_management,ads_read`,
         tiktok: `https://business-api.tiktok.com/portal/auth?app_id=${process.env.NEXT_PUBLIC_TIKTOK_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${selectedPlatform}`,
-        google: `https://accounts.google.com/o/oauth2/v2/auth?client_id=${process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${selectedPlatform}&scope=https://www.googleapis.com/auth/adwords&response_type=code&access_type=offline`,
+        google: `https://accounts.google.com/o/oauth2/v2/auth?client_id=${process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${selectedPlatform}&scope=https://www.googleapis.com/auth/adwords&response_type=code&access_type=offline&prompt=consent`,
       };
 
       // Redirect to OAuth provider

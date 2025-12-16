@@ -73,22 +73,22 @@ class CampaignResponse(BaseModel):
     """Campaign response schema."""
 
     id: int
-    user_id: int
-    ad_account_id: int
+    user_id: int = Field(..., serialization_alias="userId")
+    ad_account_id: int = Field(..., serialization_alias="adAccountId")
     platform: str
-    platform_campaign_id: str | None = None
+    platform_campaign_id: str | None = Field(None, serialization_alias="platformCampaignId")
     name: str
     objective: str
     status: str
     budget: Decimal
-    budget_type: str
+    budget_type: str = Field(..., serialization_alias="budgetType")
     targeting: dict = {}
-    creative_ids: list[int] = []
-    landing_page_id: int | None = None
-    created_at: datetime
-    updated_at: datetime | None = None
+    creative_ids: list[int] = Field(default_factory=list, serialization_alias="creativeIds")
+    landing_page_id: int | None = Field(None, serialization_alias="landingPageId")
+    created_at: datetime = Field(..., serialization_alias="createdAt")
+    updated_at: datetime | None = Field(None, serialization_alias="updatedAt")
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class CampaignListResponse(BaseModel):

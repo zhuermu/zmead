@@ -39,6 +39,8 @@ class AdAccountService:
             account_name=ad_account.account_name,
             status=ad_account.status,
             is_active=ad_account.is_active,
+            is_manager=ad_account.is_manager,
+            manager_account_id=ad_account.manager_account_id,
             token_expires_at=ad_account.token_expires_at,
             created_at=ad_account.created_at,
             updated_at=ad_account.updated_at,
@@ -66,6 +68,9 @@ class AdAccountService:
             existing.token_expires_at = data.token_expires_at
             existing.status = "active"
             existing.account_name = data.account_name
+            existing.is_manager = data.is_manager
+            existing.manager_account_id = data.manager_account_id
+            existing.last_synced_at = datetime.now(UTC)
             await self.db.flush()
             await self.db.refresh(existing)
             return self._to_response(existing)
@@ -83,49 +88,178 @@ class AdAccountService:
             token_expires_at=data.token_expires_at,
             status="active",
             is_active=False,
+            is_manager=data.is_manager,
+            manager_account_id=data.manager_account_id,
+            last_synced_at=datetime.now(UTC),
         )
         self.db.add(ad_account)
         await self.db.flush()
         await self.db.refresh(ad_account)
         return self._to_response(ad_account)
 
+    async def get_oauth_available_accounts(
+        self, user_id: int, platform: str, code: str, redirect_uri: str | None = None
+    ) -> tuple[list[dict], str]:
+        """
+        Get available accounts from OAuth provider without binding them.
+
+        Returns tuple of (account list, session_token).
+        Session token is used to retrieve cached token data when binding.
+        """
+        import secrets
+        import json
+        from app.core.redis import get_redis
+        from app.services.google_ads_client import get_google_ads_client
+
+        if platform != "google":
+            raise ValueError(f"Platform '{platform}' is not supported yet.")
+
+        google_ads_client = get_google_ads_client()
+
+        if not redirect_uri:
+            redirect_uri = "http://localhost:3000/ad-accounts/callback"
+
+        # Exchange code for tokens
+        token_data = await google_ads_client.exchange_code_for_tokens(code, redirect_uri)
+
+        # Get list of accessible accounts
+        accounts = await google_ads_client.get_accessible_accounts(
+            access_token=token_data["access_token"],
+            refresh_token=token_data["refresh_token"]
+        )
+
+        # Generate session token and cache the OAuth data
+        session_token = secrets.token_urlsafe(32)
+        redis_client = await get_redis()
+
+        # Store token data and accounts in Redis with 10 minute expiry
+        cache_key = f"oauth_session:{session_token}"
+        cache_data = {
+            "user_id": user_id,
+            "platform": platform,
+            "token_data": token_data,
+            "accounts": accounts,
+        }
+        await redis_client.setex(
+            cache_key,
+            600,  # 10 minutes
+            json.dumps(cache_data, default=str)
+        )
+
+        return accounts, session_token
+
+    async def bind_selected_oauth_accounts(
+        self, user_id: int, platform: str, session_token: str, selected_account_ids: list[str]
+    ) -> list[AdAccountResponse]:
+        """
+        Bind only selected accounts after user chooses which ones to connect.
+        Uses session_token to retrieve cached OAuth data from Redis.
+        """
+        import json
+        from app.core.redis import get_redis
+        from app.schemas.ad_account import AdPlatform
+
+        if platform != "google":
+            raise ValueError(f"Platform '{platform}' is not supported yet.")
+
+        # Retrieve cached OAuth data from Redis
+        redis_client = await get_redis()
+        cache_key = f"oauth_session:{session_token}"
+        cached_data_str = await redis_client.get(cache_key)
+
+        if not cached_data_str:
+            raise ValueError("OAuth session expired or invalid. Please try connecting again.")
+
+        cached_data = json.loads(cached_data_str)
+
+        # Verify user_id matches
+        if cached_data["user_id"] != user_id:
+            raise ValueError("Invalid session token")
+
+        token_data = cached_data["token_data"]
+        all_accounts = cached_data["accounts"]
+
+        # Filter to only selected accounts
+        selected_accounts = [
+            acc for acc in all_accounts
+            if acc["id"] in selected_account_ids
+        ]
+
+        if not selected_accounts:
+            raise ValueError("No valid accounts selected")
+
+        # Bind selected accounts
+        bound_accounts = []
+        for account_info in selected_accounts:
+            account_data = AdAccountCreate(
+                platform=AdPlatform(platform),
+                platform_account_id=account_info["id"],
+                account_name=account_info["name"],
+                access_token=token_data["access_token"],
+                refresh_token=token_data["refresh_token"],
+                token_expires_at=token_data["expires_at"],
+                is_manager=account_info.get("is_manager", False),
+                manager_account_id=account_info.get("manager_id"),
+            )
+            bound_account = await self.bind_ad_account(user_id, account_data)
+            bound_accounts.append(bound_account)
+
+        # Delete the session token after use
+        await redis_client.delete(cache_key)
+
+        return bound_accounts
+
     async def bind_ad_account_from_oauth(
-        self, user_id: int, platform: str, code: str, state: str | None = None
+        self, user_id: int, platform: str, code: str, state: str | None = None, redirect_uri: str | None = None
     ) -> AdAccountResponse:
         """
         Bind ad account from OAuth callback.
-        
-        This is a simplified implementation for MVP.
-        In production, this would:
-        1. Exchange the OAuth code for access/refresh tokens
-        2. Fetch account details from the platform API
-        3. Store the encrypted tokens
+
+        Exchanges OAuth code for tokens and fetches account details from the platform API.
         """
-        from datetime import timedelta
-        
-        # Simulate OAuth token exchange
-        # In production, call the actual platform OAuth endpoints
-        mock_access_token = f"mock_access_token_{platform}_{code[:10]}"
-        mock_refresh_token = f"mock_refresh_token_{platform}_{code[:10]}"
-        mock_account_id = f"{platform}_account_{user_id}"
-        mock_account_name = f"{platform.upper()} Ad Account"
-        
-        # Token expires in 60 days
-        expires_at = datetime.now(UTC) + timedelta(days=60)
-        
-        # Create account data
         from app.schemas.ad_account import AdAccountCreate, AdPlatform
-        
-        account_data = AdAccountCreate(
-            platform=AdPlatform(platform),
-            platform_account_id=mock_account_id,
-            account_name=mock_account_name,
-            access_token=mock_access_token,
-            refresh_token=mock_refresh_token,
-            token_expires_at=expires_at,
+        from app.services.google_ads_client import get_google_ads_client
+
+        # Only Google Ads is supported for now
+        if platform != "google":
+            raise ValueError(f"Platform '{platform}' is not supported yet. Only 'google' is currently supported.")
+
+        # Get Google Ads client
+        google_ads_client = get_google_ads_client()
+
+        # Exchange OAuth code for tokens
+        if not redirect_uri:
+            redirect_uri = "http://localhost:3000/ad-accounts/callback"
+
+        token_data = await google_ads_client.exchange_code_for_tokens(code, redirect_uri)
+
+        # Get list of accessible accounts
+        accounts = await google_ads_client.get_accessible_accounts(
+            access_token=token_data["access_token"],
+            refresh_token=token_data["refresh_token"]
         )
-        
-        return await self.bind_ad_account(user_id, account_data)
+
+        if not accounts:
+            raise ValueError("No Google Ads accounts found. Please make sure you have at least one Google Ads account.")
+
+        # Bind all accessible accounts
+        bound_accounts = []
+        for account_info in accounts:
+            account_data = AdAccountCreate(
+                platform=AdPlatform(platform),
+                platform_account_id=account_info["id"],
+                account_name=account_info["name"],
+                access_token=token_data["access_token"],
+                refresh_token=token_data["refresh_token"],
+                token_expires_at=token_data["expires_at"],
+                is_manager=account_info.get("is_manager", False),
+                manager_account_id=account_info.get("manager_id"),
+            )
+            bound_account = await self.bind_ad_account(user_id, account_data)
+            bound_accounts.append(bound_account)
+
+        # Return the first bound account as the primary response
+        return bound_accounts[0]
 
 
     async def list_ad_accounts(self, user_id: int) -> list[AdAccountResponse]:

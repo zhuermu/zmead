@@ -29,6 +29,10 @@ class AdAccount(Base):
     platform_account_id: Mapped[str] = mapped_column(String(255), nullable=False)
     account_name: Mapped[str] = mapped_column(String(255), nullable=False)
 
+    # Manager account info (for Google Ads MCC)
+    is_manager: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    manager_account_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # OAuth tokens (encrypted)
     access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     refresh_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)

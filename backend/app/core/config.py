@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     google_client_secret: str = Field(default="")
     google_redirect_uri: str = "http://localhost:3000/api/auth/callback/google"
 
+    # Google Ads API
+    google_ads_developer_token: str = Field(default="")
+    google_ads_login_customer_id: str = Field(default="")  # Optional MCC account ID
+
     # OAuth - Facebook
     facebook_client_id: str = Field(default="")
     facebook_client_secret: str = Field(default="")

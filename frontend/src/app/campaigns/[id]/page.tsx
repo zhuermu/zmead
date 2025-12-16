@@ -20,6 +20,7 @@ interface Campaign {
   name: string;
   platform: string;
   platformCampaignId?: string;
+  adAccountId: number;
   status: "draft" | "active" | "paused" | "deleted";
   budget: number;
   budgetType: "daily" | "lifetime";
@@ -29,6 +30,14 @@ interface Campaign {
   landingPageId?: number;
   createdAt: string;
   updatedAt?: string;
+}
+
+interface AdAccount {
+  id: number;
+  platformAccountId: string;
+  accountName: string;
+  platform: string;
+  isManager: boolean;
 }
 
 interface Creative {
@@ -65,6 +74,7 @@ export default function CampaignDetailPage() {
   const campaignId = params.id as string;
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [adAccount, setAdAccount] = useState<AdAccount | null>(null);
   const [creatives, setCreatives] = useState<Creative[]>([]);
   const [landingPage, setLandingPage] = useState<LandingPage | null>(null);
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
@@ -89,6 +99,22 @@ export default function CampaignDetailPage() {
 
       const campaignData: Campaign = await campaignResponse.json();
       setCampaign(campaignData);
+
+      // Fetch ad account info
+      if (campaignData.adAccountId) {
+        const adAccountResponse = await fetch(
+          `/api/v1/ad-accounts/${campaignData.adAccountId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+          }
+        );
+        if (adAccountResponse.ok) {
+          const adAccountData = await adAccountResponse.json();
+          setAdAccount(adAccountData);
+        }
+      }
 
       // Fetch associated creatives
       if (campaignData.creativeIds.length > 0) {
@@ -286,6 +312,11 @@ export default function CampaignDetailPage() {
             <p className="text-gray-600">
               {campaign.objective} • {campaign.platform.toUpperCase()}
             </p>
+            {adAccount && (
+              <p className="text-sm text-gray-500 mt-1">
+                Ad Account: {adAccount.accountName} • ID: {adAccount.platformAccountId}
+              </p>
+            )}
           </div>
 
           <div className="flex gap-2">
@@ -338,39 +369,39 @@ export default function CampaignDetailPage() {
           <Card className="p-4">
             <div className="text-sm text-gray-600 mb-1">Spend</div>
             <div className="text-2xl font-bold">
-              {formatCurrency(metrics.spend)}
+              {formatCurrency(metrics.spend ?? 0)}
             </div>
           </Card>
           <Card className="p-4">
             <div className="text-sm text-gray-600 mb-1">Impressions</div>
             <div className="text-2xl font-bold">
-              {formatNumber(metrics.impressions)}
+              {formatNumber(metrics.impressions ?? 0)}
             </div>
           </Card>
           <Card className="p-4">
             <div className="text-sm text-gray-600 mb-1">Clicks</div>
             <div className="text-2xl font-bold">
-              {formatNumber(metrics.clicks)}
+              {formatNumber(metrics.clicks ?? 0)}
             </div>
             <div className="text-sm text-gray-500">
-              CTR: {(metrics.ctr * 100).toFixed(2)}%
+              CTR: {((metrics.ctr ?? 0) * 100).toFixed(2)}%
             </div>
           </Card>
           <Card className="p-4">
             <div className="text-sm text-gray-600 mb-1">ROAS</div>
             <div
               className={`text-2xl font-bold ${
-                metrics.roas >= 2
+                (metrics.roas ?? 0) >= 2
                   ? "text-green-600"
-                  : metrics.roas >= 1
+                  : (metrics.roas ?? 0) >= 1
                   ? "text-yellow-600"
                   : "text-red-600"
               }`}
             >
-              {metrics.roas.toFixed(2)}x
+              {(metrics.roas ?? 0).toFixed(2)}x
             </div>
             <div className="text-sm text-gray-500">
-              Revenue: {formatCurrency(metrics.revenue)}
+              Revenue: {formatCurrency(metrics.revenue ?? 0)}
             </div>
           </Card>
         </div>
@@ -381,6 +412,15 @@ export default function CampaignDetailPage() {
         <Card className="p-6">
           <h2 className="text-xl font-semibold mb-4">Configuration</h2>
           <div className="space-y-4">
+            {adAccount && (
+              <div>
+                <div className="text-sm text-gray-600">Ad Account</div>
+                <div className="font-medium">{adAccount.accountName}</div>
+                <div className="text-sm text-gray-500">
+                  {adAccount.platform.toUpperCase()} • ID: {adAccount.platformAccountId}
+                </div>
+              </div>
+            )}
             <div>
               <div className="text-sm text-gray-600">Budget</div>
               <div className="font-medium">

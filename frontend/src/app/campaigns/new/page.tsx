@@ -11,8 +11,11 @@ import api from "@/lib/api";
 interface AdAccount {
   id: number;
   platform: string;
-  account_name: string;
+  platformAccountId: string;
+  accountName: string;
   status: string;
+  isManager?: boolean;
+  managerAccountId?: string;
 }
 
 interface Creative {
@@ -259,9 +262,9 @@ export default function NewCampaignPage() {
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="font-medium">{account.account_name}</div>
+                        <div className="font-medium">{account.accountName}</div>
                         <div className="text-sm text-gray-600">
-                          {account.platform.toUpperCase()}
+                          {account.platform.toUpperCase()} • ID: {account.platformAccountId}
                         </div>
                       </div>
                       {formData.adAccountId === account.id && (
@@ -532,7 +535,12 @@ export default function NewCampaignPage() {
                 <div className="text-sm text-gray-600">Ad Account</div>
                 <div className="font-medium">
                   {adAccounts.find((a) => a.id === formData.adAccountId)
-                    ?.account_name || "N/A"}
+                    ?.accountName || "N/A"}
+                </div>
+                <div className="text-sm text-gray-500">
+                  {adAccounts.find((a) => a.id === formData.adAccountId)
+                    ?.platform.toUpperCase()} • ID: {adAccounts.find((a) => a.id === formData.adAccountId)
+                    ?.platformAccountId}
                 </div>
               </div>
               <div className="border-b pb-3">

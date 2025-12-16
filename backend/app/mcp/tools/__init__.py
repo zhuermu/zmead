@@ -9,6 +9,7 @@ This module contains all MCP tool implementations organized by category:
 - notification: Notification tools
 - ad_account: Ad account tools
 - conversation: Conversation management tools
+- google_ads_campaign: Google Ads API campaign tools
 """
 
 # Import all tool modules to register them with the registry
@@ -18,6 +19,7 @@ from app.mcp.tools import (
     conversation,
     creative,
     credit,
+    google_ads_campaign,
     landing_page,
     notification,
     report,

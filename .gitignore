@@ -49,3 +49,7 @@ htmlcov/
 *.tmp
 custom-unison-*.json
 client_secret_*.json
+
+# Test and debug scripts
+test_*.py
+debug_*.py

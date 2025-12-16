@@ -90,7 +90,8 @@
       "Bash(gcloud storage buckets:*)",
       "Bash(alembic revision:*)",
       "mcp__playwright__browser_handle_dialog",
-      "mcp__playwright__browser_fill_form"
+      "mcp__playwright__browser_fill_form",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

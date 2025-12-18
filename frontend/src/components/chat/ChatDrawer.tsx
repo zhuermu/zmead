@@ -131,6 +131,8 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     confirmDeleteSession,
     cancelDeleteSession,
     updateSessionMessages,
+    draftInput,
+    setDraftInput,
   } = useChatStore();
 
   const { 
@@ -143,7 +145,6 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isComposing, setIsComposing] = useState(false);
-  const [localInput, setLocalInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
@@ -285,10 +286,10 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     const newSessionId = createSession();
     createConversation(newSessionId);
     setMessages([]);
-    setLocalInput('');
+    setDraftInput('');
     setAttachments([]);
     clearAllProgress();
-  }, [createSession, createConversation, setMessages, clearAllProgress]);
+  }, [createSession, createConversation, setMessages, setDraftInput, clearAllProgress]);
 
   const handleSelectSession = useCallback((sessionId: string) => {
     selectSession(sessionId);
@@ -391,13 +392,13 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if ((!localInput.trim() && attachments.length === 0) || isLoading || isComposing) return;
+    if ((!draftInput.trim() && attachments.length === 0) || isLoading || isComposing) return;
 
-    const messageContent = localInput;
+    const messageContent = draftInput;
     const messageAttachments = attachments;
 
     // Clear input and attachments
-    setLocalInput('');
+    setDraftInput('');
     setAttachments([]);
     clearAllProgress();
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -458,7 +459,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   }, [processFiles]);
 
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setLocalInput(e.target.value);
+    setDraftInput(e.target.value);
     const textarea = e.target;
     textarea.style.height = 'auto';
     textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
@@ -582,7 +583,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                   {['生成广告素材', '查看投放数据', '优化建议'].map((suggestion) => (
                     <button
                       key={suggestion}
-                      onClick={() => { setLocalInput(suggestion); textareaRef.current?.focus(); }}
+                      onClick={() => { setDraftInput(suggestion); textareaRef.current?.focus(); }}
                       className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm rounded-full transition-colors"
                     >
                       {suggestion}
@@ -619,38 +620,163 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
 
           {/* Human-in-the-Loop User Input Dialog */}
           {userInputRequest && (
-            <div className="px-4 py-3 border-t border-blue-100 bg-blue-50 flex-shrink-0">
-              <div className="mb-2">
-                <p className="text-sm font-medium text-blue-800">{userInputRequest.question}</p>
+            <div className="px-4 py-4 border-t border-amber-200 bg-gradient-to-b from-amber-50 to-amber-100/50 flex-shrink-0 animate-in slide-in-from-bottom-2 duration-300">
+              {/* Header with icon */}
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-10 h-10 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm">
+                  {userInputRequest.type === 'confirmation' ? (
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  ) : userInputRequest.type === 'selection' ? (
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-amber-900 mb-1">
+                    {userInputRequest.type === 'confirmation' ? '⚠️ 需要您的确认' :
+                     userInputRequest.type === 'selection' ? '请选择操作' :
+                     '请输入信息'}
+                  </p>
+                  <p className="text-sm text-amber-800">{userInputRequest.question}</p>
+                  {userInputRequest.message && userInputRequest.message !== userInputRequest.question && (
+                    <p className="text-xs text-amber-700 mt-1 opacity-90">{userInputRequest.message}</p>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {userInputRequest.options?.map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => respondToUserInput(option.value === '__cancel__' ? '取消操作' : option.label)}
-                    className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
-                      option.value === '__cancel__' ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        : option.value === '__other__' ? 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                        : 'bg-blue-600 text-white hover:bg-blue-700'
-                    }`}
-                    title={option.description}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-              {userInputRequest.options?.some(o => o.value === '__other__') && (
-                <div className="mt-2 flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="输入自定义内容..."
-                    className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                        respondToUserInput(e.currentTarget.value.trim());
-                      }
-                    }}
-                  />
+
+              {/* Input field for 'input' type */}
+              {userInputRequest.type === 'input' ? (
+                <div className="space-y-2">
+                  <div className="p-3 bg-white rounded-lg border border-blue-200">
+                    <input
+                      type="text"
+                      placeholder={userInputRequest.metadata?.placeholder || userInputRequest.defaultValue || "请输入..."}
+                      defaultValue={userInputRequest.defaultValue}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-2"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                          respondToUserInput(e.currentTarget.value.trim());
+                          e.currentTarget.value = '';
+                        }
+                      }}
+                      id="hitl-input-field"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          const input = document.getElementById('hitl-input-field') as HTMLInputElement;
+                          if (input?.value.trim()) {
+                            respondToUserInput(input.value.trim());
+                            input.value = '';
+                          }
+                        }}
+                        className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all"
+                      >
+                        ✅ 提交
+                      </button>
+                      <button
+                        onClick={() => respondToUserInput('取消操作')}
+                        className="flex-1 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-all"
+                      >
+                        ❌ 取消
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                // Options for 'confirmation' and 'selection' types
+                <div className="space-y-2">
+                  {userInputRequest.options?.map((option) => {
+                    const isCancel = option.value === '__cancel__';
+                    const isOther = option.value === '__other__';
+                    const isPrimary = option.primary || (!isCancel && !isOther);
+
+                    return (
+                      <button
+                        key={option.value}
+                        onClick={() => respondToUserInput(isCancel ? '取消操作' : option.label)}
+                        className={`w-full px-4 py-3 text-left rounded-lg transition-all shadow-sm hover:shadow-md group ${
+                          isCancel
+                            ? 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400'
+                            : isOther
+                              ? 'bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 hover:border-blue-400'
+                              : isPrimary
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'
+                                : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              {isPrimary && !isCancel && !isOther && (
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                              {isCancel && (
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              )}
+                              <span className="font-medium">{option.label}</span>
+                            </div>
+                            {option.description && (
+                              <p className={`text-xs mt-1 ${isPrimary && !isCancel && !isOther ? 'text-blue-100' : 'text-gray-600'}`}>
+                                {option.description}
+                              </p>
+                            )}
+                          </div>
+                          {!isCancel && (
+                            <svg className={`w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity ${isPrimary && !isOther ? 'text-white' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+
+                  {/* Custom input for "Other" option */}
+                  {userInputRequest.options?.some(o => o.value === '__other__') && (
+                    <div className="mt-3 p-3 bg-white rounded-lg border border-blue-200">
+                      <label className="block text-xs font-medium text-gray-700 mb-2">
+                        或输入自定义内容:
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder={userInputRequest.defaultValue || "输入自定义内容..."}
+                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                              respondToUserInput(e.currentTarget.value.trim());
+                              e.currentTarget.value = '';
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={(e) => {
+                            const input = e.currentTarget.previousElementSibling as HTMLInputElement;
+                            if (input.value.trim()) {
+                              respondToUserInput(input.value.trim());
+                              input.value = '';
+                            }
+                          }}
+                          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          发送
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -719,7 +845,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 <div className="flex-1 relative">
                   <textarea
                     ref={textareaRef}
-                    value={localInput}
+                    value={draftInput}
                     onChange={handleTextareaChange}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
@@ -755,7 +881,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                 ) : (
                   <button
                     type="submit"
-                    disabled={(!localInput.trim() && attachments.length === 0) || isComposing}
+                    disabled={(!draftInput.trim() && attachments.length === 0) || isComposing}
                     className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -30,7 +30,7 @@ from app.core.evaluator import Evaluator
 from app.core.human_in_loop import HumanInLoopHandler, UserInputResponse
 from app.core.i18n import get_message
 from app.core.memory import AgentMemory
-from app.core.planner import Planner
+from app.core.planner import PlanAction, Planner
 from app.core.redis_client import get_redis
 from app.services.gemini_client import GeminiClient, GeminiError
 from app.tools.base import AgentTool, ToolExecutionError
@@ -589,17 +589,10 @@ class ReActAgent:
             state.waiting_for_user_input = False
             state.user_input_request = None
 
-            # Add user input as observation to last step
+            # Process user input and update last step
+            user_confirmed_action = False
             if state.steps:
                 last_step = state.steps[-1]
-                
-                # Format observation based on response type
-                if user_response.selected_option:
-                    observation = f"User selected: {user_response.selected_option['label']} ({user_response.value})"
-                else:
-                    observation = f"User input: {user_response.value}"
-                
-                last_step.observation = observation
 
                 # If user confirmed, update action_input with confirmed values
                 if original_request.metadata and "suggested_action" in original_request.metadata:
@@ -608,6 +601,15 @@ class ReActAgent:
                         # User confirmed, use suggested action
                         last_step.action = suggested_action.get("action")
                         last_step.action_input = suggested_action.get("parameters")
+                        user_confirmed_action = True
+                        # DON'T set observation yet - let the action execute first
+                        log.info(
+                            "user_confirmed_action",
+                            action=last_step.action,
+                            action_input=str(last_step.action_input)[:200] if last_step.action_input else None,
+                            observation=last_step.observation,
+                            step_number=last_step.step_number,
+                        )
                     else:
                         # User provided custom value, update action_input
                         if last_step.action_input:
@@ -617,6 +619,15 @@ class ReActAgent:
                                 param_name = reason.split(":")[1]
                                 last_step.action_input[param_name] = user_response.value
 
+                # Only set observation if user didn't confirm an action to execute
+                # (for confirmed actions, observation will be set after execution)
+                if not user_confirmed_action:
+                    if user_response.selected_option:
+                        observation = f"User selected: {user_response.selected_option['label']} ({user_response.value})"
+                    else:
+                        observation = f"User input: {user_response.value}"
+                    last_step.observation = observation
+
             # Add user input to conversation history
             await self.memory.add_message(
                 session_id=session_id,
@@ -624,6 +635,17 @@ class ReActAgent:
                 content=str(user_response.value),
                 metadata={"type": "user_input_response"},
             )
+
+            # Debug: Log state before continuing ReAct loop
+            if state.steps:
+                last_step_before_loop = state.steps[-1]
+                log.info(
+                    "debug_before_react_loop",
+                    step_number=last_step_before_loop.step_number,
+                    action=last_step_before_loop.action,
+                    has_action_input=last_step_before_loop.action_input is not None,
+                    has_observation=last_step_before_loop.observation is not None,
+                )
 
             # Continue ReAct loop
             response = await self._react_loop(state, None)
@@ -670,94 +692,152 @@ class ReActAgent:
             state.status = AgentStatus.THINKING
 
             log.info("react_step_start", step=state.current_step)
+            log.info("DEBUG_MARKER_AFTER_REACT_STEP_START")  # Marker to verify code execution
 
             try:
-                # Plan next action using Planner
-                execution_history = [
-                    {
-                        "thought": step.thought,
-                        "action": step.action,
-                        "action_input": step.action_input,
-                        "observation": step.observation,
-                    }
-                    for step in state.steps
-                ]
-
-                plan = await self.planner.plan_next_action(
-                    user_message=state.user_message,
-                    available_tools=loaded_tools,
-                    execution_history=execution_history,
-                    user_id=state.user_id,
-                )
-
-                # Create step with plan
-                step = AgentStep(
-                    step_number=state.current_step,
-                    thought=plan.thought,
-                    action=plan.action,
-                    action_input=plan.action_input,
-                )
-
-                state.steps.append(step)
-
+                # Debug logging to diagnose confirmed action check
                 log.info(
-                    "plan_generated",
-                    step=state.current_step,
-                    has_action=plan.action is not None,
-                    is_complete=plan.is_complete,
+                    "debug_state_check",
+                    has_steps=bool(state.steps),
+                    steps_count=len(state.steps) if state.steps else 0,
                 )
 
-                # Check if task is complete
-                if plan.is_complete:
-                    state.status = AgentStatus.COMPLETED
-                    state.final_response = plan.final_answer or "Task completed successfully"
-                    break
-
-                # If no action, something went wrong
-                if not plan.action:
-                    state.status = AgentStatus.COMPLETED
-                    state.final_response = plan.thought
-                    break
-
-                # Evaluate if human input is needed
-                evaluation = await self.evaluator.evaluate_plan(
-                    plan=plan,
-                    user_message=state.user_message,
-                    execution_history=execution_history,
-                    user_id=state.user_id,
-                )
-
-                log.info(
-                    "evaluation_complete",
-                    needs_human_input=evaluation.needs_human_input,
-                    confirmation_type=evaluation.confirmation_type.value if evaluation.needs_human_input else None,
-                )
-
-                # If human input is needed, pause and wait
-                if evaluation.needs_human_input:
-                    state.status = AgentStatus.WAITING_FOR_USER
-                    state.waiting_for_user_input = True
-
-                    # Create user input request
-                    user_input_request = self.human_in_loop_handler.create_request_from_evaluation(
-                        evaluation=evaluation
+                if state.steps:
+                    last_step = state.steps[-1]
+                    log.info(
+                        "debug_last_step",
+                        step_number=last_step.step_number,
+                        has_action=bool(last_step.action),
+                        action_value=last_step.action,
+                        has_action_input=last_step.action_input is not None,
+                        action_input_value=str(last_step.action_input)[:200] if last_step.action_input else None,
+                        has_observation=last_step.observation is not None,
+                        observation_value=str(last_step.observation)[:100] if last_step.observation else None,
                     )
-                    state.user_input_request = user_input_request.to_dict()
 
-                    # Save state and return
-                    await self._save_state(state)
+                # Check if the last step has a confirmed action awaiting execution
+                # (action and action_input set, but no observation)
+                pending_action_step = None
+                if state.steps:
+                    last_step = state.steps[-1]
+                    log.info(
+                        "CHECKING_CONFIRMED_ACTION",
+                        has_action=bool(last_step.action),
+                        action=last_step.action,
+                        has_action_input=last_step.action_input is not None,
+                        action_input_empty=not bool(last_step.action_input) if last_step.action_input is not None else None,
+                        has_observation=last_step.observation is not None,
+                    )
+
+                if state.steps and state.steps[-1].action and state.steps[-1].action_input is not None:
+                    last_step = state.steps[-1]
+                    if last_step.observation is None:
+                        # Last step has a confirmed action that hasn't been executed yet
+                        pending_action_step = last_step
+                        log.info(
+                            "executing_confirmed_action",
+                            step=last_step.step_number,
+                            action=last_step.action,
+                        )
+
+                # Plan next action using Planner (unless we have a pending confirmed action)
+                if pending_action_step:
+                    # Use the confirmed action from the last step
+                    step = pending_action_step
+                    # Don't increment current_step since we're executing the last step's action
+                    state.current_step -= 1
+                    log.info("using_confirmed_action_from_last_step", action=step.action)
+                else:
+                    # Plan a new action
+                    execution_history = [
+                        {
+                            "thought": step.thought,
+                            "action": step.action,
+                            "action_input": step.action_input,
+                            "observation": step.observation,
+                        }
+                        for step in state.steps
+                    ]
+
+                    plan = await self.planner.plan_next_action(
+                        user_message=state.user_message,
+                        available_tools=loaded_tools,
+                        execution_history=execution_history,
+                        user_id=state.user_id,
+                    )
+
+                    # Create step with plan
+                    step = AgentStep(
+                        step_number=state.current_step,
+                        thought=plan.thought,
+                        action=plan.action,
+                        action_input=plan.action_input,
+                    )
+
+                    state.steps.append(step)
+
+                # If this is a pending confirmed action, skip evaluation and execute directly
+                if pending_action_step:
+                    log.info("skipping_evaluation_for_confirmed_action")
+                else:
+                    log.info(
+                        "plan_generated",
+                        step=state.current_step,
+                        has_action=plan.action is not None,
+                        is_complete=plan.is_complete,
+                    )
+
+                    # Check if task is complete
+                    if plan.is_complete:
+                        state.status = AgentStatus.COMPLETED
+                        state.final_response = plan.final_answer or "Task completed successfully"
+                        break
+
+                    # If no action, something went wrong
+                    if not plan.action:
+                        state.status = AgentStatus.COMPLETED
+                        state.final_response = plan.thought
+                        break
+
+                    # Evaluate if human input is needed
+                    evaluation = await self.evaluator.evaluate_plan(
+                        plan=plan,
+                        user_message=state.user_message,
+                        execution_history=execution_history,
+                        user_id=state.user_id,
+                    )
 
                     log.info(
-                        "waiting_for_user_input",
-                        request_type=user_input_request.type.value,
+                        "evaluation_complete",
+                        needs_human_input=evaluation.needs_human_input,
+                        confirmation_type=evaluation.confirmation_type.value if evaluation.needs_human_input else None,
                     )
 
-                    return AgentResponse(
-                        status=AgentStatus.WAITING_FOR_USER,
-                        message=user_input_request.question,
-                        requires_user_input=True,
-                        user_input_request=user_input_request.to_dict(),
-                    )
+                    # If human input is needed, pause and wait
+                    if evaluation.needs_human_input:
+                        state.status = AgentStatus.WAITING_FOR_USER
+                        state.waiting_for_user_input = True
+
+                        # Create user input request
+                        user_input_request = self.human_in_loop_handler.create_request_from_evaluation(
+                            evaluation=evaluation
+                        )
+                        state.user_input_request = user_input_request.to_dict()
+
+                        # Save state and return
+                        await self._save_state(state)
+
+                        log.info(
+                            "waiting_for_user_input",
+                            request_type=user_input_request.type.value,
+                        )
+
+                        return AgentResponse(
+                            status=AgentStatus.WAITING_FOR_USER,
+                            message=user_input_request.question,
+                            requires_user_input=True,
+                            user_input_request=user_input_request.to_dict(),
+                        )
 
                 # Execute action
                 state.status = AgentStatus.ACTING
@@ -765,10 +845,10 @@ class ReActAgent:
                 try:
                     # Convert messages to dict format for tool context
                     conversation_history = self._messages_to_history(state.messages)
-                    
+
                     tool_result = await self._execute_tool(
-                        tool_name=plan.action,
-                        parameters=plan.action_input or {},
+                        tool_name=step.action,
+                        parameters=step.action_input or {},
                         available_tools=loaded_tools,
                         user_id=state.user_id,
                         conversation_history=conversation_history,
@@ -776,8 +856,8 @@ class ReActAgent:
 
                     # Record tool call
                     tool_call = ToolCall(
-                        tool_name=plan.action,
-                        parameters=plan.action_input or {},
+                        tool_name=step.action,
+                        parameters=step.action_input or {},
                         result=tool_result,
                     )
                     state.tool_calls.append(tool_call)
@@ -785,8 +865,8 @@ class ReActAgent:
                     # Save tool result to memory
                     await self.memory.save_tool_result(
                         session_id=state.session_id,
-                        tool_name=plan.action,
-                        parameters=plan.action_input or {},
+                        tool_name=step.action,
+                        parameters=step.action_input or {},
                         result=tool_result,
                     )
 
@@ -795,7 +875,7 @@ class ReActAgent:
 
                     log.info(
                         "tool_executed",
-                        tool_name=plan.action,
+                        tool_name=step.action,
                         success=tool_result.get("success", False),
                     )
 
@@ -906,6 +986,30 @@ class ReActAgent:
             log.info("react_step_start", step=state.current_step)
 
             try:
+                # Check if the last step has a confirmed action awaiting execution
+                # (action and action_input set, but no observation)
+                pending_action_step = None
+                if state.steps:
+                    last_step = state.steps[-1]
+                    log.info(
+                        "STREAM_CHECKING_CONFIRMED_ACTION",
+                        has_action=bool(last_step.action),
+                        action=last_step.action,
+                        has_action_input=last_step.action_input is not None,
+                        has_observation=last_step.observation is not None,
+                    )
+
+                if state.steps and state.steps[-1].action and state.steps[-1].action_input is not None:
+                    last_step = state.steps[-1]
+                    if last_step.observation is None:
+                        # Last step has a confirmed action that hasn't been executed yet
+                        pending_action_step = last_step
+                        log.info(
+                            "stream_executing_confirmed_action",
+                            step=last_step.step_number,
+                            action=last_step.action,
+                        )
+
                 # Build execution history
                 execution_history = [
                     {
@@ -917,40 +1021,56 @@ class ReActAgent:
                     for step in state.steps
                 ]
 
-                # Plan next action with streaming
+                # Plan next action with streaming (unless we have a pending confirmed action)
                 plan = None
                 thought_content = ""
+                step = None
 
-                async for event in self.planner.plan_next_action_stream(
+                if pending_action_step:
+                    # Use the confirmed action from the last step
+                    step = pending_action_step
+                    # Don't increment current_step since we're executing the last step's action
+                    state.current_step -= 1
+                    log.info("stream_using_confirmed_action_from_last_step", action=step.action)
+
+                    # Create a minimal plan object for the confirmed action
+                    plan = PlanAction(
+                        thought=step.thought or "Executing confirmed action",
+                        action=step.action,
+                        action_input=step.action_input,
+                        is_complete=False,
+                    )
+                else:
+                    async for event in self.planner.plan_next_action_stream(
                     user_message=state.user_message,
                     available_tools=loaded_tools,
                     execution_history=execution_history,
                     user_id=state.user_id,
                     attachments=state.attachments if state.attachments else None,
                 ):
-                    if event["type"] == "thought":
-                        chunk = event["content"]
-                        thought_content += chunk
-                        # Always stream thought events - frontend will handle display
-                        yield {"type": "thought", "content": chunk}
+                        if event["type"] == "thought":
+                            chunk = event["content"]
+                            thought_content += chunk
+                            # Always stream thought events - frontend will handle display
+                            yield {"type": "thought", "content": chunk}
 
-                    elif event["type"] == "plan":
-                        plan = event["data"]
+                        elif event["type"] == "plan":
+                            plan = event["data"]
 
-                if not plan:
-                    log.error("no_plan_received")
-                    yield {"type": "error", "error": "Failed to generate plan"}
-                    break
+                    if not plan:
+                        log.error("no_plan_received")
+                        yield {"type": "error", "error": "Failed to generate plan"}
+                        break
 
-                # Create step with plan
-                step = AgentStep(
-                    step_number=state.current_step,
-                    thought=plan.thought or thought_content[:500],
-                    action=plan.action,
-                    action_input=plan.action_input,
-                )
+                    # Create step with plan
+                    step = AgentStep(
+                        step_number=state.current_step,
+                        thought=plan.thought or thought_content[:500],
+                        action=plan.action,
+                        action_input=plan.action_input,
+                    )
 
-                state.steps.append(step)
+                    state.steps.append(step)
 
                 log.info(
                     "plan_generated",
@@ -984,37 +1104,40 @@ class ReActAgent:
                     yield {"type": "text", "content": state.final_response}
                     break
 
-                # Evaluate if human input is needed
-                evaluation = await self.evaluator.evaluate_plan(
-                    plan=plan,
-                    user_message=state.user_message,
-                    execution_history=execution_history,
-                    user_id=state.user_id,
-                )
-
-                log.info(
-                    "evaluation_complete",
-                    needs_human_input=evaluation.needs_human_input,
-                )
-
-                # If human input is needed, yield request and stop
-                if evaluation.needs_human_input:
-                    state.status = AgentStatus.WAITING_FOR_USER
-                    state.waiting_for_user_input = True
-
-                    user_input_request = self.human_in_loop_handler.create_request_from_evaluation(
-                        evaluation=evaluation
+                # Evaluate if human input is needed (skip evaluation for confirmed actions)
+                if pending_action_step:
+                    log.info("stream_skipping_evaluation_for_confirmed_action")
+                else:
+                    evaluation = await self.evaluator.evaluate_plan(
+                        plan=plan,
+                        user_message=state.user_message,
+                        execution_history=execution_history,
+                        user_id=state.user_id,
                     )
-                    state.user_input_request = user_input_request.to_dict()
 
-                    await self._save_state(state)
+                    log.info(
+                        "evaluation_complete",
+                        needs_human_input=evaluation.needs_human_input,
+                    )
 
-                    yield {
-                        "type": "user_input_request",
-                        "data": user_input_request.to_dict(),
-                        "message": user_input_request.question,
-                    }
-                    return
+                    # If human input is needed, yield request and stop
+                    if evaluation.needs_human_input:
+                        state.status = AgentStatus.WAITING_FOR_USER
+                        state.waiting_for_user_input = True
+
+                        user_input_request = self.human_in_loop_handler.create_request_from_evaluation(
+                            evaluation=evaluation
+                        )
+                        state.user_input_request = user_input_request.to_dict()
+
+                        await self._save_state(state)
+
+                        yield {
+                            "type": "user_input_request",
+                            "data": user_input_request.to_dict(),
+                            "message": user_input_request.question,
+                        }
+                        return
 
                 # Notify user about tool execution
                 yield {
@@ -1169,19 +1292,54 @@ class ReActAgent:
                 session_id=session_id,
                 original_message=existing_state.user_message[:50] if existing_state.user_message else "",
             )
+
             # Update the last step with user's response
+            user_confirmed_action = False
             if existing_state.steps:
                 last_step = existing_state.steps[-1]
-                last_step.observation = f"User selected: {user_message}"
 
-                # If there's a pending action in metadata, update action_input
+                # Check if user is confirming a suggested action
                 if existing_state.user_input_request:
                     metadata = existing_state.user_input_request.get("metadata", {})
-                    reason = metadata.get("reason", "")
-                    if ":" in reason:
-                        param_name = reason.split(":")[1]
-                        if last_step.action_input:
-                            last_step.action_input[param_name] = user_message
+                    suggested_action = metadata.get("suggested_action")
+
+                    if suggested_action:
+                        # User is responding to a confirmation request
+                        # Check if they confirmed (true/yes) or rejected
+                        user_message_str = str(user_message).strip()
+                        user_message_lower = user_message_str.lower()
+                        # Match various confirmation formats from frontend
+                        is_confirmed = (
+                            user_message_lower in ["true", "yes", "确认", "✅"]
+                            or user_message_str == "✅ 确认"  # Exact match with emoji
+                            or "确认" in user_message_str  # Contains confirmation text
+                        )
+                        if is_confirmed:
+                            # User confirmed, set the action to execute
+                            last_step.action = suggested_action.get("action")
+                            last_step.action_input = suggested_action.get("parameters")
+                            user_confirmed_action = True
+                            # DON'T set observation yet - let execution set it
+                            logger.info(
+                                "user_confirmed_action_in_process_message",
+                                action=last_step.action,
+                                action_input=str(last_step.action_input)[:200] if last_step.action_input else None,
+                            )
+                        else:
+                            # User rejected or provided alternative
+                            last_step.observation = f"User rejected: {user_message}"
+                    else:
+                        # Not a confirmation, check if updating action_input parameter
+                        reason = metadata.get("reason", "")
+                        if ":" in reason:
+                            param_name = reason.split(":")[1]
+                            if last_step.action_input:
+                                last_step.action_input[param_name] = user_message
+                        last_step.observation = f"User input: {user_message}"
+
+                # Only set observation if user didn't confirm an action to execute
+                if not user_confirmed_action and not existing_state.user_input_request:
+                    last_step.observation = f"User selected: {user_message}"
 
             # Reset waiting state
             existing_state.waiting_for_user_input = False

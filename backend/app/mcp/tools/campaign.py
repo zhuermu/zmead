@@ -179,12 +179,12 @@ async def get_campaign(
 
 @tool(
     name="create_campaign",
-    description="Create a new advertising campaign. Requires an active ad account.",
+    description="Create a new advertising campaign. Requires an active ad account. You can use either the database ad_account_id or the platform_account_id.",
     parameters=[
         MCPToolParameter(
             name="ad_account_id",
             type="integer",
-            description="Ad account ID to use for this campaign",
+            description="Ad account ID (database ID) or platform account ID to use for this campaign. The system will try both.",
             required=True,
         ),
         MCPToolParameter(
@@ -248,8 +248,34 @@ async def create_campaign(
     landing_page_id: int | None = None,
 ) -> dict[str, Any]:
     """Create a new campaign."""
+    # Try to resolve ad_account_id - could be database ID or platform_account_id
+    from app.services.ad_account import AdAccountService
+    from sqlalchemy import select
+    from app.models.ad_account import AdAccount
+
+    ad_account_service = AdAccountService(db)
+
+    # First try as database ID
+    resolved_account = await ad_account_service.get_ad_account(user_id, ad_account_id)
+
+    # If not found, try as platform_account_id
+    if not resolved_account:
+        result = await db.execute(
+            select(AdAccount).where(
+                AdAccount.user_id == user_id,
+                AdAccount.platform_account_id == str(ad_account_id),
+            )
+        )
+        resolved_account = result.scalar_one_or_none()
+
+    if not resolved_account:
+        raise ValueError(f"Ad account {ad_account_id} not found. Please check the account ID and ensure it's connected.")
+
+    # Use the resolved database ID
+    resolved_ad_account_id = resolved_account.id
+
     data = CampaignCreate(
-        ad_account_id=ad_account_id,
+        ad_account_id=resolved_ad_account_id,
         name=name,
         objective=CampaignObjective(objective),
         budget=Decimal(str(budget)),
@@ -263,9 +289,9 @@ async def create_campaign(
     try:
         campaign = await service.create(user_id, data)
     except AdAccountNotFoundError:
-        raise ValueError(f"Ad account {ad_account_id} not found")
+        raise ValueError(f"Ad account {resolved_ad_account_id} not found")
     except AdAccountNotActiveError:
-        raise ValueError(f"Ad account {ad_account_id} is not active")
+        raise ValueError(f"Ad account {resolved_account.account_name} is not active")
 
     return {
         "id": campaign.id,

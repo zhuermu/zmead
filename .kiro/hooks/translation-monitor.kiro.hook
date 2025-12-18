@@ -1,0 +1,25 @@
+{
+  "enabled": true,
+  "name": "Translation Monitor",
+  "description": "Monitor changes to files containing user-facing text content (such as .json, .yaml, or other localization files) in the primary language. When changes are detected, automatically identify the new or modified text and generate translations for all configured target languages. Ensure translations maintain proper context and meaning while adhering to locale-specific conventions.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.json",
+      "*.yaml",
+      "*.yml",
+      "locales/*.json",
+      "i18n/*.json",
+      "lang/*.json",
+      "translations/*.json",
+      "frontend/locales/*.json",
+      "backend/locales/*.json",
+      "ai-orchestrator/locales/*.json"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A localization file has been modified. Please analyze the changes and:\n\n1. Identify any new or modified text strings that need translation\n2. Determine the source language of the changes\n3. Generate accurate translations for all configured target languages (Chinese and English based on the project's bilingual support)\n4. Ensure translations maintain proper context and meaning\n5. Follow locale-specific conventions and terminology consistency\n6. Update the corresponding translation files with the new translations\n7. Verify that all translation keys are properly synchronized across language files\n\nModified file: {file_path}\nChanges detected in: {changed_content}\n\nPlease provide translations that are:\n- Contextually appropriate for the application domain (advertising/marketing)\n- Consistent with existing terminology in the codebase\n- Culturally appropriate for the target locales\n- Properly formatted according to the file structure"
+  }
+}

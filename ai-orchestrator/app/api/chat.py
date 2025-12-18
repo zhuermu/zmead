@@ -314,11 +314,15 @@ async def chat_stream(
     async def generate():
         """Generate SSE events."""
         try:
-            agent = _create_agent_with_tools()
-
-            # Send initial thinking event
+            # Send initial thinking event IMMEDIATELY (before agent initialization)
             thinking_msg = get_message("thinking", language)
             yield f"data: {json.dumps({'type': 'thinking', 'message': thinking_msg}, ensure_ascii=False)}\n\n"
+
+            # Flush the event to client
+            await asyncio.sleep(0)
+
+            # Now create agent (this may take a moment)
+            agent = _create_agent_with_tools()
 
             # Process message with ReAct Agent in streaming mode
             async for event in agent.process_message_stream(

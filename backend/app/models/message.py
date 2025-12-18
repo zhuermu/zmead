@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.mysql import JSON
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.database import Base
 
@@ -67,3 +67,13 @@ class Message(Base):
     __table_args__ = (
         Index("ix_messages_conversation_created", "conversation_id", "created_at"),
     )
+
+    @validates('process_info', 'tool_calls', 'generated_assets', 'attachments', 'message_metadata')
+    def validate_json_fields(self, key: str, value):
+        """Prevent empty strings from being stored in JSON fields."""
+        # Convert empty strings to None for nullable JSON fields
+        if value == '':
+            if key == 'message_metadata':
+                return {}  # message_metadata has a default of {}
+            return None  # Other JSON fields are nullable
+        return value

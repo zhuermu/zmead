@@ -31,10 +31,28 @@ function parseProcessInfo(processInfo: string): ProcessStep[] {
   const steps: ProcessStep[] = [];
   const lines = processInfo.split('\n').filter(line => line.trim());
   let stepId = 0;
+  let currentThoughtLines: string[] = [];
+
+  // Helper function to flush accumulated thought lines into a single step
+  const flushThought = () => {
+    if (currentThoughtLines.length > 0) {
+      const thoughtContent = currentThoughtLines.join(' ').trim();
+      if (thoughtContent.length > 5) {
+        steps.push({
+          id: `step-${stepId++}`,
+          type: 'thought',
+          content: thoughtContent.substring(0, 200), // Increased limit to show more content
+          timestamp: new Date(),
+        });
+      }
+      currentThoughtLines = [];
+    }
+  };
 
   for (const line of lines) {
     // Parse action lines: 🔧 tool_name: message
     if (line.includes('🔧')) {
+      flushThought(); // Flush any accumulated thought lines first
       const match = line.match(/🔧\s*([^:]+):\s*(.*)/);
       if (match) {
         steps.push({
@@ -48,6 +66,7 @@ function parseProcessInfo(processInfo: string): ProcessStep[] {
     }
     // Parse observation lines: ✅ or ❌ Result: message
     else if (line.includes('✅') || line.includes('❌')) {
+      flushThought(); // Flush any accumulated thought lines first
       const success = line.includes('✅');
       const match = line.match(/[✅❌]\s*Result:\s*(.*)/);
       steps.push({
@@ -62,15 +81,14 @@ function parseProcessInfo(processInfo: string): ProcessStep[] {
     else if (!line.startsWith('```') && !line.includes('"action"') && !line.includes('"is_complete"')) {
       const cleanedLine = line.trim();
       if (cleanedLine && !cleanedLine.startsWith('{') && !cleanedLine.startsWith('}') && cleanedLine.length > 5) {
-        steps.push({
-          id: `step-${stepId++}`,
-          type: 'thought',
-          content: cleanedLine.substring(0, 100),
-          timestamp: new Date(),
-        });
+        // Accumulate consecutive thought lines instead of creating a new step for each line
+        currentThoughtLines.push(cleanedLine);
       }
     }
   }
+
+  // Flush any remaining thought lines
+  flushThought();
 
   return steps;
 }

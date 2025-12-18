@@ -26,7 +26,7 @@ class UserInputType(str, Enum):
 
     CONFIRMATION = "confirmation"  # Yes/No confirmation
     SELECTION = "selection"  # Choose from options
-    TEXT_INPUT = "text_input"  # Free-form text input
+    INPUT = "input"  # Free-form text input
 
 
 @dataclass
@@ -307,7 +307,7 @@ class HumanInLoopHandler:
         }
 
         return UserInputRequest(
-            type=UserInputType.TEXT_INPUT,
+            type=UserInputType.INPUT,
             question=question,
             options=options,
             default_value=default_value,
@@ -376,7 +376,7 @@ class HumanInLoopHandler:
             if not custom_value_provided and selected_option:
                 value = selected_option["value"]
 
-        elif request.type == UserInputType.TEXT_INPUT:
+        elif request.type == UserInputType.INPUT:
             # Value is the text input
             if not value or (isinstance(value, str) and not value.strip()):
                 cancelled = True

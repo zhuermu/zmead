@@ -98,7 +98,10 @@
       "Bash(docker-compose exec:*)",
       "Bash(npm install:*)",
       "Bash(TZ=UTC date:*)",
-      "Bash(python test_google_accounts.py:*)"
+      "Bash(python test_google_accounts.py:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(xargs:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

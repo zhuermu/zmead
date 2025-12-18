@@ -67,6 +67,7 @@ interface ChatState {
   sidebarOpen: boolean;
   isLoadingFromDb: boolean;
   pendingDeleteId: string | null; // For delete confirmation
+  draftInput: string; // Draft input that persists across navigation
 
   // Session actions
   createSession: () => string;
@@ -82,6 +83,7 @@ interface ChatState {
   setIsLoadingFromDb: (loading: boolean) => void;
   setSessions: (sessions: ChatSession[]) => void;
   markSessionSynced: (sessionId: string) => void;
+  setDraftInput: (input: string) => void;
 }
 
 // Generate unique session ID
@@ -115,6 +117,11 @@ export const useChatStore = create<ChatState>()(
       sidebarOpen: true,
       isLoadingFromDb: false,
       pendingDeleteId: null,
+      draftInput: '',
+
+      setDraftInput: (input: string) => {
+        set({ draftInput: input });
+      },
 
       createSession: () => {
         const newSession: ChatSession = {
@@ -250,6 +257,7 @@ export const useChatStore = create<ChatState>()(
           synced: session.synced,
         })),
         currentSessionId: state.currentSessionId,
+        draftInput: state.draftInput, // Persist draft input
       }),
     }
   )

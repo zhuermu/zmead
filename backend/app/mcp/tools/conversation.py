@@ -110,9 +110,14 @@ async def save_conversation(
             content=msg_data.get("content", ""),
             tool_calls=msg_data.get("tool_calls"),
             tool_call_id=msg_data.get("tool_call_id"),
-            metadata=msg_data.get("metadata", {}),
+            message_metadata=msg_data.get("metadata", {}),
+            process_info=msg_data.get("process_info"),
+            generated_assets=msg_data.get("generated_assets"),
+            attachments=msg_data.get("attachments"),
             input_tokens=msg_data.get("input_tokens"),
             output_tokens=msg_data.get("output_tokens"),
+            model_provider=msg_data.get("model_provider"),
+            model_name=msg_data.get("model_name"),
             created_at=datetime.fromisoformat(msg_data["timestamp"])
             if msg_data.get("timestamp")
             else now,
@@ -212,9 +217,11 @@ async def get_conversation_history(
             "content": msg.content,
             "tool_calls": msg.tool_calls,
             "tool_call_id": msg.tool_call_id,
-            "metadata": msg.metadata or {},
+            "metadata": msg.message_metadata or {},
             "input_tokens": msg.input_tokens,
             "output_tokens": msg.output_tokens,
+            "model_provider": msg.model_provider,
+            "model_name": msg.model_name,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
         }
         for msg in messages

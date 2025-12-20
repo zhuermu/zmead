@@ -14,7 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.mcp.registry import tool
 from app.mcp.types import MCPToolParameter
 from app.services.ad_account import AdAccountService
-from app.services.google_ads_campaign_service import get_google_ads_campaign_service
+
+# Google Ads is planned but not yet implemented
+try:
+    from app.services.google_ads_campaign_service import get_google_ads_campaign_service
+    GOOGLE_ADS_AVAILABLE = True
+except ImportError:
+    GOOGLE_ADS_AVAILABLE = False
+    get_google_ads_campaign_service = None  # type: ignore
 
 
 @tool(

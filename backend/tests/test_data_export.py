@@ -22,6 +22,7 @@ from app.services.data_export import DataExportService
 async def test_user(db_session: AsyncSession) -> User:
     """Create a test user."""
     user = User(
+        id=1,  # Explicitly set ID for SQLite compatibility
         email="test@example.com",
         display_name="Test User",
         oauth_provider="google",

@@ -17,12 +17,7 @@ interface ConversationResponse {
     tool_call_id?: string;
     metadata?: any;
     process_info?: string;
-    generated_assets?: {
-      images?: any[];
-      video_url?: string;
-      video_object_name?: string;
-    };
-    attachments?: any[];
+    attachments?: any[];  // Unified attachments (images, videos, documents, etc.)
     created_at?: string;
   }>;
   created_at: string;
@@ -99,9 +94,6 @@ export function useConversationSync() {
         content: msg.content,
         createdAt: msg.created_at ? new Date(msg.created_at) : new Date(),
         processInfo: msg.process_info,
-        generatedImages: msg.generated_assets?.images,
-        generatedVideoUrl: msg.generated_assets?.video_url,
-        videoObjectName: msg.generated_assets?.video_object_name,
         attachments: msg.attachments,
       }));
 
@@ -162,17 +154,12 @@ export function useConversationSync() {
         role: msg.role,
         content: msg.content || '',
         metadata: {},
-        process_info: msg.processInfo,
-        generated_assets: {
-          images: msg.generatedImages,
-          video_url: msg.generatedVideoUrl,
-          video_object_name: msg.videoObjectName,
-        },
-        attachments: msg.attachments,
-        created_at: msg.createdAt instanceof Date 
-          ? msg.createdAt.toISOString() 
-          : typeof msg.createdAt === 'string' 
-            ? msg.createdAt 
+        process_info: msg.processInfo || null,  // Convert undefined to null for backend
+        attachments: msg.attachments || null,  // Unified attachments format
+        created_at: msg.createdAt instanceof Date
+          ? msg.createdAt.toISOString()
+          : typeof msg.createdAt === 'string'
+            ? msg.createdAt
             : new Date().toISOString(),
       }));
 

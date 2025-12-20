@@ -389,7 +389,7 @@ async def handle_user_message(
     try:
         # Forward to AI Orchestrator
         async with httpx.AsyncClient(timeout=settings.ai_orchestrator_timeout) as client:
-            # Prepare request payload
+            # Prepare request payload with user's model preferences
             payload = {
                 "messages": [
                     {
@@ -399,6 +399,10 @@ async def handle_user_message(
                 ],
                 "user_id": str(user.id),
                 "session_id": session_id,
+                "model_preferences": {
+                    "conversational_provider": user.conversational_provider,
+                    "conversational_model": user.conversational_model,
+                },
             }
 
             # Build headers with service token

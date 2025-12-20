@@ -87,11 +87,12 @@ export function useFileUpload(sessionId: string) {
     contentType: string,
     fileSize: number
   ): Promise<PresignedUrlResponse> => {
+    const token = localStorage.getItem('access_token'); // ✅ 修复：使用正确的 key
     const response = await fetch(`${API_BASE_URL}/api/v1/uploads/presigned/chat-attachment`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({
         filename,

@@ -72,13 +72,13 @@ async def lifespan(app: FastAPI):
         # Don't fail startup - MCP might become available later
         logger.warning("mcp_client_will_retry_on_first_request")
 
-    # Initialize ReAct Agent (tools are loaded dynamically on demand)
+    # Initialize Strands ReAct Agent (tools are loaded dynamically on demand)
     try:
-        from app.core.react_agent import ReActAgent
+        from app.core.strands_agent import StrandsReActAgent
         # Agent initialization is lazy - happens on first request
-        logger.info("react_agent_ready")
+        logger.info("strands_agent_ready")
     except Exception as e:
-        logger.error("react_agent_initialization_failed", error=str(e))
+        logger.error("strands_agent_initialization_failed", error=str(e))
         raise
 
     logger.info("application_startup_complete")

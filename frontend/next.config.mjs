@@ -7,6 +7,16 @@ const nextConfig = {
         hostname: 'storage.googleapis.com',
         pathname: '/**',
       },
+      {
+        protocol: 'https',
+        hostname: '**.s3.amazonaws.com',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: '**.s3.*.amazonaws.com',
+        pathname: '/**',
+      },
     ],
   },
   async rewrites() {

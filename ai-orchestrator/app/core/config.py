@@ -30,9 +30,9 @@ class Settings(BaseSettings):
         default="INFO", description="Logging level"
     )
 
-    # Gemini API configuration
+    # Gemini API configuration (Optional - only needed if using Gemini models)
     # Reference: https://ai.google.dev/gemini-api/docs/gemini-3
-    gemini_api_key: str = Field(..., description="Google Gemini API key (required)")
+    gemini_api_key: str = Field(default="", description="Google Gemini API key (optional - only for Gemini models)")
 
     # Main chat model - Gemini 3 Pro for complex reasoning and function calling
     gemini_model_chat: str = Field(
@@ -90,6 +90,33 @@ class Settings(BaseSettings):
         description="Signed URL expiration time in minutes",
     )
 
+    # AWS Configuration
+    aws_region: str = Field(default="us-west-2", description="AWS region")
+    aws_access_key_id: str = Field(default="", description="AWS access key ID (optional if using IAM roles)")
+    aws_secret_access_key: str = Field(default="", description="AWS secret access key (optional if using IAM roles)")
+    aws_session_token: str = Field(default="", description="AWS session token for temporary credentials")
+
+    # AWS S3 Configuration
+    s3_bucket_creatives: str = Field(default="aae-creatives", description="S3 bucket for creatives")
+    s3_bucket_landing_pages: str = Field(default="aae-landing-pages", description="S3 bucket for landing pages")
+    s3_bucket_exports: str = Field(default="aae-exports", description="S3 bucket for exports")
+    s3_bucket_uploads: str = Field(default="aae-user-uploads", description="S3 bucket for user uploads")
+    cloudfront_domain: str = Field(default="", description="CloudFront CDN domain")
+
+    # AWS Bedrock Configuration
+    bedrock_region: str = Field(default="us-west-2", description="AWS Bedrock region")
+    bedrock_default_model: str = Field(
+        default="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        description="Default Bedrock model ID"
+    )
+    bedrock_temperature: float = Field(default=0.7, description="Bedrock model temperature")
+    bedrock_max_tokens: int = Field(default=4096, description="Bedrock model max tokens")
+
+    # AWS SageMaker Configuration
+    sagemaker_region: str = Field(default="us-west-2", description="AWS SageMaker region")
+    sagemaker_qwen_image_endpoint: str = Field(default="", description="SageMaker Qwen-Image endpoint name")
+    sagemaker_wan_video_endpoint: str = Field(default="", description="SageMaker Wan2.2 video endpoint name")
+
     # Web Platform integration
     web_platform_url: str = Field(
         default="http://localhost:8000", description="Web Platform backend URL"
@@ -109,17 +136,6 @@ class Settings(BaseSettings):
     # Performance settings
     max_concurrent_requests: int = Field(default=100, description="Maximum concurrent requests")
     request_timeout: int = Field(default=60, description="Request timeout in seconds")
-
-    @field_validator("gemini_api_key")
-    @classmethod
-    def validate_gemini_api_key(cls, v: str) -> str:
-        """Validate Gemini API key is not empty or placeholder."""
-        if not v or v == "your_gemini_api_key_here":
-            raise ValueError(
-                "GEMINI_API_KEY is required. "
-                "Get your API key from: https://aistudio.google.com/app/apikey"
-            )
-        return v
 
     @field_validator("web_platform_service_token")
     @classmethod

@@ -1,22 +1,25 @@
 """Creative Tools for Ad Creative generation and analysis.
 
 This module provides Agent Custom Tools for creative-related operations:
-- generate_image_tool: Generate ad images using Gemini Imagen
-- generate_video_tool: Generate ad videos using Gemini Veo
+- generate_image_tool: Generate ad images using Gemini Imagen or Bedrock
+- generate_video_tool: Generate ad videos using Gemini Veo or Bedrock
 - analyze_creative_tool: Analyze creative quality using Gemini Vision
 - extract_product_info_tool: Extract product information using Gemini
 
-These tools can call LLMs (Gemini) for AI capabilities.
+These tools can call LLMs (Gemini/Bedrock) for AI capabilities.
 They call the module functions directly (not through capability.py).
 """
 
+import asyncio
 import base64
 import structlog
 from typing import Any
 
 from app.services.gemini_client import GeminiClient, GeminiError
-from app.services.gcs_client import GCSClient, GCSError, get_gcs_client
+from app.services.s3_client import S3Client, S3Error, get_s3_client
 from app.services.mcp_client import MCPClient, MCPError
+from app.services.bedrock_image_client import BedrockImageClient
+from app.services.bedrock_video_client import BedrockVideoClient
 from app.tools.base import (
     AgentTool,
     ToolCategory,
@@ -104,7 +107,7 @@ class GenerateImageTool(AgentTool):
 
         Args:
             parameters: Tool parameters
-            context: Execution context with user_id
+            context: Execution context with user_id and model_preferences
 
         Returns:
             Generated image URLs and creative IDs
@@ -118,45 +121,136 @@ class GenerateImageTool(AgentTool):
         aspect_ratio = parameters.get("aspect_ratio", "1:1")
         count = parameters.get("count", 1)
 
+        # Get user's model preferences from context (default to gemini)
+        model_preferences = context.get("model_preferences") if context else None
+        image_provider = "gemini"
+        image_model = "gemini-2.5-flash-image"
+
+        if model_preferences:
+            # Extract image generation preferences
+            if hasattr(model_preferences, "image_generation_provider"):
+                image_provider = model_preferences.image_generation_provider
+                image_model = model_preferences.image_generation_model
+            elif isinstance(model_preferences, dict):
+                image_provider = model_preferences.get("image_generation_provider", "gemini")
+                image_model = model_preferences.get("image_generation_model", "gemini-2.5-flash-image")
+
         log = logger.bind(
             tool=self.name,
             user_id=user_id,
             style=style,
             aspect_ratio=aspect_ratio,
             count=count,
+            image_provider=image_provider,
+            image_model=image_model,
         )
         log.info("generate_image_start")
 
         try:
-            # Build prompt directly for simple image generation
-            # This allows generating general images without full ProductInfo validation
-            prompt = self._build_image_prompt(product_info, style)
+            # Handle product_info - it can be a string, JSON string, or dict
+            if isinstance(product_info, str):
+                # Try to parse as JSON first
+                try:
+                    import json
+                    product_info_dict = json.loads(product_info)
+                    # If it's a dict with "prompt" key, use that directly as the image prompt
+                    if isinstance(product_info_dict, dict) and "prompt" in product_info_dict:
+                        prompt = product_info_dict["prompt"]
+                    elif isinstance(product_info_dict, dict) and "product_info" in product_info_dict:
+                        # Nested structure: {"product_info": "description"}
+                        prompt = str(product_info_dict["product_info"])
+                    else:
+                        # Use the dict for _build_image_prompt
+                        product_info = product_info_dict
+                        prompt = self._build_image_prompt(product_info, style)
+                except (json.JSONDecodeError, ValueError):
+                    # Not JSON, treat as plain text description
+                    prompt = product_info
+            elif isinstance(product_info, dict):
+                # Already a dict, use _build_image_prompt
+                prompt = self._build_image_prompt(product_info, style)
+            else:
+                # Fallback: convert to string
+                prompt = str(product_info)
 
             log.info("generating_image", prompt_preview=prompt[:100])
 
-            # Generate images directly using Gemini client
-            image_bytes_list = await self.gemini_client.generate_images(
-                prompt=prompt,
-                count=count,
-                aspect_ratio=aspect_ratio,
-                use_pro_model=False,
-            )
+            # Generate images using user-selected provider
+            if image_provider == "gemini":
+                image_bytes_list = await self.gemini_client.generate_images(
+                    prompt=prompt,
+                    count=count,
+                    aspect_ratio=aspect_ratio,
+                    use_pro_model="pro" in image_model.lower(),
+                )
+            elif image_provider == "bedrock":
+                # Use Bedrock for image generation
+                # Note: AI Agent should provide prompt in English (system prompt instructs this)
+                bedrock_client = BedrockImageClient()
+
+                # Convert aspect ratio to width/height
+                aspect_map = {
+                    "1:1": (1024, 1024),
+                    "16:9": (1024, 576),
+                    "9:16": (576, 1024),
+                    "4:3": (1024, 768),
+                    "3:4": (768, 1024),
+                }
+                width, height = aspect_map.get(aspect_ratio, (1024, 1024))
+
+                image_bytes_list = await bedrock_client.generate_images(
+                    prompt=prompt,
+                    model_id=image_model,
+                    count=count,
+                    width=width,
+                    height=height,
+                )
+            elif image_provider == "sagemaker":
+                # SageMaker support not implemented yet
+                log.warning(
+                    "unsupported_image_provider_fallback",
+                    requested_provider=image_provider,
+                    fallback="gemini"
+                )
+                image_bytes_list = await self.gemini_client.generate_images(
+                    prompt=prompt,
+                    count=count,
+                    aspect_ratio=aspect_ratio,
+                    use_pro_model=False,
+                )
+            else:
+                # Fallback to Gemini for unknown providers
+                log.warning(
+                    "unknown_image_provider_fallback",
+                    requested_provider=image_provider,
+                    fallback="gemini"
+                )
+                image_bytes_list = await self.gemini_client.generate_images(
+                    prompt=prompt,
+                    count=count,
+                    aspect_ratio=aspect_ratio,
+                    use_pro_model=False,
+                )
 
             log.info("images_generated", count=len(image_bytes_list))
 
-            # Upload images to GCS for persistent storage (not base64 in DB)
+            # Upload images to S3 for persistent storage (not base64 in DB)
             # This follows the requirement: 图片存储到对象存储，前端通过签名URL访问
-            gcs_client = get_gcs_client()
+            s3_client = get_s3_client()
             creative_ids = []
-            image_objects = []  # GCS object info for frontend to fetch signed URLs
+            image_objects = []  # S3 object info for frontend to fetch signed URLs
 
             for idx, image_bytes in enumerate(image_bytes_list):
-                product_name = product_info.get("name", "generated_image")
+                # Handle product_info being string or dict
+                if isinstance(product_info, dict):
+                    product_name = product_info.get("name", "generated_image")
+                else:
+                    product_name = "generated_image"
                 filename = f"{product_name}_{style}_{idx + 1}.png"
 
                 try:
-                    # Upload to GCS
-                    upload_result = await gcs_client.upload_for_chat_display(
+                    # Upload to S3
+                    upload_result = await s3_client.upload_for_chat_display(
                         image_bytes=image_bytes,
                         filename=filename,
                         user_id=user_id or "anonymous",
@@ -164,24 +258,25 @@ class GenerateImageTool(AgentTool):
                         style=style,
                     )
 
+                    # Return as attachment (unified format)
                     image_objects.append({
-                        "index": idx,
-                        "format": "png",
+                        "id": f"image_{idx}_{upload_result['object_name'].split('/')[-1].split('.')[0]}",
+                        "filename": filename,
+                        "contentType": "image/png",
                         "size": len(image_bytes),
-                        "object_name": upload_result["object_name"],
-                        "bucket": upload_result["bucket"],
-                        "gcs_url": upload_result["gcs_url"],
+                        "s3Url": upload_result["object_name"],  # S3 object key for fetching presigned URL
+                        "type": "image",
                     })
 
                     log.info(
-                        "image_uploaded_to_gcs",
+                        "image_uploaded_to_s3",
                         index=idx,
                         object_name=upload_result["object_name"],
                     )
 
-                except GCSError as e:
+                except S3Error as e:
                     log.warning(
-                        "gcs_upload_failed",
+                        "s3_upload_failed",
                         index=idx,
                         error=str(e),
                     )
@@ -225,7 +320,7 @@ class GenerateImageTool(AgentTool):
                 "success": True,
                 "creative_ids": [cid for cid in creative_ids if cid],
                 "count": len(image_bytes_list),
-                "images": image_objects,  # GCS object info for signed URL access
+                "attachments": image_objects,  # Unified attachment format
                 "message": f"Successfully generated {len(image_bytes_list)} images",
             }
 
@@ -441,7 +536,7 @@ class GenerateVideoTool(AgentTool):
 
         Args:
             parameters: Tool parameters
-            context: Execution context with user_id and conversation_history
+            context: Execution context with user_id, conversation_history, and model_preferences
 
         Returns:
             Video URL and metadata once generation completes
@@ -458,13 +553,27 @@ class GenerateVideoTool(AgentTool):
         duration = parameters.get("duration", 4)
         aspect_ratio = parameters.get("aspect_ratio", "16:9")
         negative_prompt = parameters.get("negative_prompt")
-        
+
         # Image inputs
         first_frame_b64 = parameters.get("first_frame_b64")
         last_frame_b64 = parameters.get("last_frame_b64")
         reference_images_b64 = parameters.get("reference_images_b64", [])
         use_context_image = parameters.get("use_context_image", False)
         context_image_index = parameters.get("context_image_index", 0)
+
+        # Get user's model preferences from context (default to gemini)
+        model_preferences = context.get("model_preferences") if context else None
+        video_provider = "gemini"
+        video_model = "gemini-veo-3.1"
+
+        if model_preferences:
+            # Extract video generation preferences
+            if hasattr(model_preferences, "video_generation_provider"):
+                video_provider = model_preferences.video_generation_provider
+                video_model = model_preferences.video_generation_model
+            elif isinstance(model_preferences, dict):
+                video_provider = model_preferences.get("video_generation_provider", "gemini")
+                video_model = model_preferences.get("video_generation_model", "gemini-veo-3.1")
 
         log = logger.bind(
             tool=self.name,
@@ -475,6 +584,8 @@ class GenerateVideoTool(AgentTool):
             has_first_frame=first_frame_b64 is not None,
             has_last_frame=last_frame_b64 is not None,
             use_context_image=use_context_image,
+            video_provider=video_provider,
+            video_model=video_model,
         )
         log.info("generate_video_start")
 
@@ -504,41 +615,200 @@ class GenerateVideoTool(AgentTool):
             else:
                 prompt = self._build_video_prompt(product_info, style)
 
-            log.info("generating_video", 
+            log.info("generating_video",
                      prompt_preview=prompt[:100],
                      mode="image-to-video" if first_frame else "text-to-video")
 
-            # Generate video using Gemini Veo
-            result = await self.gemini_client.generate_video(
-                prompt=prompt,
-                duration=duration,
-                aspect_ratio=aspect_ratio,
-                first_frame=first_frame,
-                last_frame=last_frame,
-                reference_images=reference_images,
-                negative_prompt=negative_prompt,
-                use_fast_model=False,
-            )
+            # Generate video using user-selected provider
+            if video_provider == "gemini":
+                result = await self.gemini_client.generate_video(
+                    prompt=prompt,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    first_frame=first_frame,
+                    last_frame=last_frame,
+                    reference_images=reference_images,
+                    negative_prompt=negative_prompt,
+                    use_fast_model="fast" in video_model.lower(),
+                )
+            elif video_provider == "bedrock":
+                # Use Bedrock for video generation
+                # Note: AI Agent should provide prompt in English (system prompt instructs this)
+                bedrock_client = BedrockVideoClient()
 
-            operation_id = result.get("operation_id")
+                result = await bedrock_client.generate_video(
+                    prompt=prompt,
+                    model_id=video_model,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    first_frame=first_frame,
+                    last_frame=last_frame,
+                    negative_prompt=negative_prompt,
+                    user_id=user_id or "anonymous",
+                )
+            elif video_provider == "sagemaker":
+                # SageMaker support not implemented yet
+                log.warning(
+                    "unsupported_video_provider_fallback",
+                    requested_provider=video_provider,
+                    fallback="gemini"
+                )
+                result = await self.gemini_client.generate_video(
+                    prompt=prompt,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    first_frame=first_frame,
+                    last_frame=last_frame,
+                    reference_images=reference_images,
+                    negative_prompt=negative_prompt,
+                    use_fast_model=False,
+                )
+            else:
+                # Fallback to Gemini for unknown providers
+                log.warning(
+                    "unknown_video_provider_fallback",
+                    requested_provider=video_provider,
+                    fallback="gemini"
+                )
+                result = await self.gemini_client.generate_video(
+                    prompt=prompt,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    first_frame=first_frame,
+                    last_frame=last_frame,
+                    reference_images=reference_images,
+                    negative_prompt=negative_prompt,
+                    use_fast_model=False,
+                )
 
-            log.info("video_generation_started", operation_id=operation_id)
+            # Check if video is already completed (for synchronous providers like Bedrock)
+            if result.get("status") == "completed":
+                video_bytes = result.get("video_bytes")
+                video_data_b64 = result.get("video_data_b64")
+                operation_id = result.get("operation_id", f"sync_{int(asyncio.get_event_loop().time())}")
 
-            # Poll for completion (max 5 minutes with 5 second intervals)
-            max_attempts = 60
-            poll_interval = 5
+                log.info(
+                    "video_generation_complete_sync",
+                    operation_id=operation_id,
+                    has_video_bytes=video_bytes is not None,
+                )
+
+                final_result = {
+                    "success": True,
+                    "status": "completed",
+                    "operation_id": operation_id,
+                    "message": "Video generated successfully",
+                }
+
+                # Upload video to S3 for persistent public access
+                if video_bytes:
+                    try:
+                        s3_client = get_s3_client()
+                        product_name = product_info.get("name", "video")
+                        filename = f"{product_name}_{style}_{operation_id[-8:]}.mp4"
+
+                        upload_result = await s3_client.upload_video(
+                            video_bytes=video_bytes,
+                            filename=filename,
+                            user_id=user_id or "anonymous",
+                            content_type="video/mp4",
+                            prefix="chat-videos",
+                            metadata={
+                                "style": style,
+                                "duration": str(duration),
+                                "aspect_ratio": aspect_ratio,
+                                "operation_id": operation_id,
+                            },
+                        )
+
+                        # Return video as attachment (frontend will fetch presigned URL)
+                        final_result["attachments"] = [{
+                            "id": f"video_{operation_id[-8:]}",
+                            "filename": filename,
+                            "contentType": "video/mp4",
+                            "size": upload_result["size"],
+                            "s3Url": upload_result["object_name"],  # S3 object key for fetching presigned URL
+                            "type": "video",
+                        }]
+                        log.info(
+                            "video_uploaded_to_s3",
+                            object_name=upload_result["object_name"],
+                            size=upload_result["size"],
+                        )
+                    except S3Error as e:
+                        log.warning("s3_upload_failed", error=str(e))
+                        # Fallback to base64 if GCS upload fails
+                        if video_data_b64:
+                            final_result["video_data_b64"] = video_data_b64
+                            final_result["video_format"] = "mp4"
+
+                return final_result
+
+            # For async providers (Gemini and Bedrock), poll for completion
+            # Bedrock uses invocation_arn, others use operation_id
+            operation_id = result.get("operation_id") or result.get("invocation_arn")
+            invocation_arn = result.get("invocation_arn")
+
+            log.info("video_generation_started_async", operation_id=operation_id)
+
+            # Poll for completion (max 10 minutes with 10 second intervals for Bedrock video)
+            max_attempts = 60 if video_provider != "bedrock" else 60  # 10 min for Bedrock
+            poll_interval = 5 if video_provider != "bedrock" else 10  # 10s for Bedrock
 
             for attempt in range(max_attempts):
-                poll_result = await self.gemini_client.poll_video_operation(operation_id)
+                # Use appropriate polling based on provider
+                if video_provider == "bedrock":
+                    bedrock_client = BedrockVideoClient()
+                    poll_result = await bedrock_client.poll_video_operation(invocation_arn, video_model)
+                else:
+                    poll_result = await self.gemini_client.poll_video_operation(operation_id)
 
                 if poll_result.get("status") == "completed":
                     video_uri = poll_result.get("video_uri")
                     video_bytes = poll_result.get("video_bytes")
+                    s3_uri = poll_result.get("s3_uri")
+
+                    # For Bedrock, download video from S3
+                    if video_provider == "bedrock" and s3_uri and not video_bytes:
+                        try:
+                            import boto3
+                            # Parse S3 URI: s3://bucket/path/to/file.mp4
+                            if s3_uri.startswith("s3://"):
+                                s3_parts = s3_uri[5:].split("/", 1)
+                                bucket = s3_parts[0]
+                                key = s3_parts[1]
+
+                                # List objects to find the actual video file
+                                s3_client_boto = boto3.client("s3")
+                                response = s3_client_boto.list_objects_v2(
+                                    Bucket=bucket,
+                                    Prefix=key,
+                                )
+
+                                # Find the .mp4 file
+                                for obj in response.get("Contents", []):
+                                    if obj["Key"].endswith(".mp4"):
+                                        # Download the video
+                                        obj_response = s3_client_boto.get_object(
+                                            Bucket=bucket,
+                                            Key=obj["Key"],
+                                        )
+                                        video_bytes = obj_response["Body"].read()
+                                        log.info(
+                                            "bedrock_video_downloaded_from_s3",
+                                            bucket=bucket,
+                                            key=obj["Key"],
+                                            size=len(video_bytes),
+                                        )
+                                        break
+                        except Exception as e:
+                            log.error("failed_to_download_bedrock_video", error=str(e))
 
                     log.info(
                         "video_generation_complete",
                         operation_id=operation_id,
                         video_uri=video_uri[:100] if video_uri else None,
+                        s3_uri=s3_uri[:100] if s3_uri else None,
                         has_video_bytes=video_bytes is not None,
                     )
 
@@ -549,14 +819,14 @@ class GenerateVideoTool(AgentTool):
                         "message": "Video generated successfully",
                     }
 
-                    # Upload video to GCS for persistent public access
+                    # Upload video to S3 for persistent public access
                     if video_bytes:
                         try:
-                            gcs_client = get_gcs_client()
+                            s3_client = get_s3_client()
                             product_name = product_info.get("name", "video")
                             filename = f"{product_name}_{style}_{operation_id[-8:]}.mp4"
 
-                            upload_result = await gcs_client.upload_video(
+                            upload_result = await s3_client.upload_video(
                                 video_bytes=video_bytes,
                                 filename=filename,
                                 user_id=user_id or "anonymous",
@@ -570,18 +840,23 @@ class GenerateVideoTool(AgentTool):
                                 },
                             )
 
-                            # Return object_name for signed URL generation
-                            result["video_object_name"] = upload_result["object_name"]
-                            result["video_bucket"] = upload_result["bucket"]
-                            result["video_gcs_url"] = upload_result["gcs_url"]
+                            # Return video as attachment (frontend will fetch presigned URL)
+                            result["attachments"] = [{
+                                "id": f"video_{operation_id[-8:]}",
+                                "filename": filename,
+                                "contentType": "video/mp4",
+                                "size": upload_result["size"],
+                                "s3Url": upload_result["object_name"],  # S3 object key for fetching presigned URL
+                                "type": "video",
+                            }]
                             log.info(
-                                "video_uploaded_to_gcs",
+                                "video_uploaded_to_s3",
                                 object_name=upload_result["object_name"],
                                 size=upload_result["size"],
                             )
-                        except GCSError as e:
+                        except S3Error as e:
                             log.warning(
-                                "gcs_upload_failed",
+                                "s3_upload_failed",
                                 error=str(e),
                             )
                             # Fallback to base64 if GCS upload fails

@@ -29,6 +29,8 @@ class ConversationMessage:
         content: str,
         timestamp: datetime | None = None,
         metadata: dict[str, Any] | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
     ):
         """Initialize conversation message.
 
@@ -37,11 +39,15 @@ class ConversationMessage:
             content: Message content
             timestamp: Message timestamp
             metadata: Additional metadata
+            model_provider: AI provider used (gemini, bedrock, sagemaker)
+            model_name: Specific model name/ID
         """
         self.role = role
         self.content = content
         self.timestamp = timestamp or datetime.utcnow()
         self.metadata = metadata or {}
+        self.model_provider = model_provider
+        self.model_name = model_name
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -50,6 +56,8 @@ class ConversationMessage:
             "content": self.content,
             "timestamp": self.timestamp.isoformat(),
             "metadata": self.metadata,
+            "model_provider": self.model_provider,
+            "model_name": self.model_name,
         }
 
     @classmethod
@@ -60,6 +68,8 @@ class ConversationMessage:
             content=data["content"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
             metadata=data.get("metadata", {}),
+            model_provider=data.get("model_provider"),
+            model_name=data.get("model_name"),
         )
 
 
@@ -122,6 +132,8 @@ class AgentMemory:
         role: str,
         content: str,
         metadata: dict[str, Any] | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
     ) -> None:
         """Add a message to conversation history.
 
@@ -130,6 +142,8 @@ class AgentMemory:
             role: Message role (user, assistant, system)
             content: Message content
             metadata: Additional metadata
+            model_provider: AI provider used (gemini, bedrock, sagemaker)
+            model_name: Specific model name/ID
         """
         log = logger.bind(session_id=session_id, role=role)
         log.debug("add_message")
@@ -143,6 +157,8 @@ class AgentMemory:
                 role=role,
                 content=content,
                 metadata=metadata,
+                model_provider=model_provider,
+                model_name=model_name,
             )
 
             # Add to list

@@ -7,19 +7,17 @@ import { useAuth } from '@/components/auth/AuthProvider';
 const MESSAGE_TIMEOUT = 300000; // 5 minutes - landing page generation can take 2-3 minutes
 
 // Generated image data (supports both GCS object and fallback base64)
-export interface GeneratedImage {
-  index: number;
-  format: string;
-  size: number;
-  // GCS storage (preferred) - frontend fetches signed URL
-  object_name?: string;
-  bucket?: string;
-  gcs_url?: string;
-  // Signed URL (resolved from object_name)
-  signed_url?: string;
-  // Fallback base64 (only if GCS upload fails)
-  data_b64?: string;
-}
+// Deprecated: Use MessageAttachment instead
+// export interface GeneratedImage {
+//   index: number;
+//   format: string;
+//   size: number;
+//   object_name?: string;
+//   bucket?: string;
+//   gcs_url?: string;
+//   signed_url?: string;
+//   data_b64?: string;
+// }
 
 // File attachment with S3 URL
 export interface MessageAttachment {
@@ -41,13 +39,8 @@ export interface Message {
   // Agent process info (collapsible, contains thinking + actions + observations)
   // All intermediate process is consolidated here, only final text shows in main content
   processInfo?: string;
-  // Generated images from tool calls
-  generatedImages?: GeneratedImage[];
-  // Generated video URL from tool calls (signed URL or data URL)
-  generatedVideoUrl?: string;
-  // GCS object name for video (used to fetch signed URL)
-  videoObjectName?: string;
-  // Uploaded file attachments (with S3 URLs)
+  // Attachments (images, videos, documents, etc.) with S3 URLs
+  // Frontend will fetch presigned URLs dynamically when needed
   attachments?: MessageAttachment[];
 }
 
@@ -141,97 +134,16 @@ export function useChat(options: UseChatSSEOptions = {}) {
     return newId;
   }, [user?.id]);
 
-  // Fetch signed URL for GCS video object (defined early for use in load effect)
-  const fetchSignedUrl = useCallback(async (objectName: string, messageId: string) => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch(`/api/media/signed-url/${encodeURIComponent(objectName)}`, {
-        method: 'GET',
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-      });
-
-      if (!response.ok) {
-        console.error('Failed to fetch signed URL:', response.status);
-        return;
-      }
-
-      const data = await response.json();
-      const signedUrl = data.signed_url;
-
-      // Update the message with the signed URL
-      setMessages(prev =>
-        prev.map(msg =>
-          msg.id === messageId
-            ? { ...msg, generatedVideoUrl: signedUrl }
-            : msg
-        )
-      );
-    } catch (err) {
-      console.error('Error fetching signed URL:', err);
-    }
-  }, []);
-
-  // Fetch signed URL for GCS image object
-  const fetchImageSignedUrl = useCallback(async (objectName: string, messageId: string, imageIndex: number) => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch(`/api/media/signed-url/${encodeURIComponent(objectName)}`, {
-        method: 'GET',
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-      });
-
-      if (!response.ok) {
-        console.error('Failed to fetch image signed URL:', response.status);
-        return;
-      }
-
-      const data = await response.json();
-      const signedUrl = data.signed_url;
-
-      // Update the specific image in the message with the signed URL
-      setMessages(prev =>
-        prev.map(msg => {
-          if (msg.id === messageId && msg.generatedImages) {
-            const updatedImages = msg.generatedImages.map((img, idx) =>
-              idx === imageIndex ? { ...img, signed_url: signedUrl } : img
-            );
-            return { ...msg, generatedImages: updatedImages };
-          }
-          return msg;
-        })
-      );
-    } catch (err) {
-      console.error('Error fetching image signed URL:', err);
-    }
-  }, []);
-
-  // Load chat history from store on mount and refresh signed URLs
+  // Load chat history from store on mount
   useEffect(() => {
     const storedMessages = useChatStore.getState().messages;
     if (storedMessages.length > 0 && messages.length === 0) {
       const loadedMessages = storedMessages as Message[];
       setMessages(loadedMessages);
-
-      // Re-fetch signed URLs for messages that have videoObjectName but no valid URL
-      loadedMessages.forEach((msg) => {
-        if (msg.videoObjectName && !msg.generatedVideoUrl) {
-          fetchSignedUrl(msg.videoObjectName, msg.id);
-        }
-        // Re-fetch signed URLs for images with GCS object names
-        if (msg.generatedImages) {
-          msg.generatedImages.forEach((img, idx) => {
-            if (img.object_name && !img.signed_url && !img.data_b64) {
-              fetchImageSignedUrl(img.object_name, msg.id, idx);
-            }
-          });
-        }
-      });
+      // Note: Presigned URLs for attachments will be fetched automatically
+      // by AttachmentDisplay component when rendering
     }
-  }, [messages.length, fetchSignedUrl, fetchImageSignedUrl]);
+  }, [messages.length]);
 
   // Sync messages to store
   useEffect(() => {
@@ -351,6 +263,34 @@ export function useChat(options: UseChatSSEOptions = {}) {
         }
       ];
 
+      // Fetch user's model preferences before sending chat request
+      let modelPreferences = null;
+      if (token) {
+        try {
+          const backendApiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const prefsResponse = await fetch(`${backendApiUrl}/api/v1/users/me/model-preferences`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+          if (prefsResponse.ok) {
+            const fullPrefs = await prefsResponse.json();
+            // Send 6 essential fields: conversational, image generation, and video generation
+            modelPreferences = {
+              conversational_provider: fullPrefs.conversational_provider,
+              conversational_model: fullPrefs.conversational_model,
+              image_generation_provider: fullPrefs.image_generation_provider,
+              image_generation_model: fullPrefs.image_generation_model,
+              video_generation_provider: fullPrefs.video_generation_provider,
+              video_generation_model: fullPrefs.video_generation_model,
+            };
+          }
+        } catch (prefsErr) {
+          console.warn('Failed to fetch model preferences, using defaults:', prefsErr);
+        }
+      }
+
       // Send POST request to initiate SSE stream
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -362,6 +302,7 @@ export function useChat(options: UseChatSSEOptions = {}) {
           messages: allMessages,
           user_id: String(user?.id || 'anonymous'),
           session_id: sessionId,
+          model_preferences: modelPreferences,
         }),
       });
 
@@ -464,68 +405,32 @@ export function useChat(options: UseChatSSEOptions = {}) {
                 const resultText = `\n${event.success ? '✅' : '❌'} Result: ${event.result || 'No result'}`;
                 currentProcessInfoRef.current += resultText;
 
-                // Extract generated images/videos from observation
-                const generatedImages = event.images as GeneratedImage[] | undefined;
-                // Video object name for signed URL (stored as pending, resolved later)
-                const videoObjectName = event.video_object_name as string | undefined;
+                // Extract attachments from observation event (unified format per UNIFIED_ATTACHMENT_ARCHITECTURE.md)
+                const newAttachments = event.attachments as MessageAttachment[] | undefined;
 
-                // Priority: GCS object name > base64 > direct URL
-                let generatedVideoUrl: string | undefined;
-                let pendingVideoObjectName: string | undefined;
-
-                if (videoObjectName) {
-                  // Store object name - will be resolved to signed URL
-                  pendingVideoObjectName = videoObjectName;
-                } else if (event.video_data_b64) {
-                  // Create data URL from base64 video data
-                  const videoFormat = event.video_format || 'mp4';
-                  generatedVideoUrl = `data:video/${videoFormat};base64,${event.video_data_b64}`;
-                } else if (event.video_url) {
-                  generatedVideoUrl = event.video_url as string;
-                }
-
-                // Process images - fetch signed URLs for GCS objects
-                const processedImages = generatedImages ? [...generatedImages] : [];
-                
                 setMessages(prev =>
                   prev.map(msg => {
                     if (msg.id === currentMessageIdRef.current) {
                       const updates: Partial<Message> = {
                         processInfo: currentProcessInfoRef.current,
                       };
-                      // Append new images to existing ones
-                      if (processedImages.length > 0) {
-                        updates.generatedImages = [
-                          ...(msg.generatedImages || []),
-                          ...processedImages,
+
+                      // Add attachments if present
+                      if (newAttachments && newAttachments.length > 0) {
+                        updates.attachments = [
+                          ...(msg.attachments || []),
+                          ...newAttachments,
                         ];
                       }
-                      if (generatedVideoUrl) {
-                        updates.generatedVideoUrl = generatedVideoUrl;
-                      }
-                      if (pendingVideoObjectName) {
-                        // Store object name for later resolution
-                        (updates as any).videoObjectName = pendingVideoObjectName;
-                      }
-                      return { ...msg, ...updates };
+
+                      return {
+                        ...msg,
+                        ...updates,
+                      };
                     }
                     return msg;
                   })
                 );
-
-                // Fetch signed URLs for images with GCS object names
-                if (processedImages.length > 0) {
-                  processedImages.forEach((img, idx) => {
-                    if (img.object_name && !img.signed_url && !img.data_b64) {
-                      fetchImageSignedUrl(img.object_name, currentMessageIdRef.current, idx);
-                    }
-                  });
-                }
-
-                // If we have a video object name, fetch the signed URL
-                if (pendingVideoObjectName) {
-                  fetchSignedUrl(pendingVideoObjectName, currentMessageIdRef.current);
-                }
                 setAgentStatus({
                   type: 'observation',
                   message: event.result || (event.success ? '执行成功' : '执行失败'),
@@ -533,6 +438,26 @@ export function useChat(options: UseChatSSEOptions = {}) {
                   success: event.success,
                   result: event.result,
                 });
+              } else if (event.type === 'attachments') {
+                // Dedicated attachments event - for S3 file attachments (images, videos, documents, etc.)
+                const newAttachments = event.attachments as MessageAttachment[] | undefined;
+
+                if (newAttachments && newAttachments.length > 0) {
+                  setMessages(prev =>
+                    prev.map(msg => {
+                      if (msg.id === currentMessageIdRef.current) {
+                        return {
+                          ...msg,
+                          attachments: [
+                            ...(msg.attachments || []),
+                            ...newAttachments,
+                          ],
+                        };
+                      }
+                      return msg;
+                    })
+                  );
+                }
               } else if (event.type === 'thinking' || event.type === 'status') {
                 // Initial thinking status - just update status indicator
                 setAgentStatus({
@@ -554,6 +479,17 @@ export function useChat(options: UseChatSSEOptions = {}) {
               } else if (event.type === 'done') {
                 // Stream complete
                 setAgentStatus(null);
+
+                // ✅ Ensure final processInfo is saved to message before streaming ends
+                if (currentProcessInfoRef.current) {
+                  setMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === currentMessageIdRef.current
+                        ? { ...msg, processInfo: currentProcessInfoRef.current }
+                        : msg
+                    )
+                  );
+                }
               } else if (event.type === 'error') {
                 throw new Error(event.error || 'Unknown error');
               }

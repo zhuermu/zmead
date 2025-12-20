@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { Download, FileText, File } from 'lucide-react';
 import { ImageLightbox } from './ImageLightbox';
@@ -33,6 +33,78 @@ interface AttachmentDisplayProps {
 
 export function AttachmentDisplay({ attachments, isUserMessage = false }: AttachmentDisplayProps) {
   const [lightboxImage, setLightboxImage] = useState<{ url: string; filename: string } | null>(null);
+  const [presignedUrls, setPresignedUrls] = useState<Record<number, string>>({});
+  const fetchedRef = useRef<Set<string>>(new Set()); // Track which S3 URLs we've already fetched
+
+  // Debug: Log attachments structure
+  useEffect(() => {
+    console.log('[AttachmentDisplay] Received attachments:', attachments);
+    attachments.forEach((att, idx) => {
+      console.log(`[AttachmentDisplay] Attachment ${idx}:`, {
+        filename: att.filename,
+        s3Url: att.s3Url,
+        download_url: att.download_url,
+        cdnUrl: att.cdnUrl,
+        previewUrl: att.previewUrl,
+        contentType: att.contentType || att.content_type,
+      });
+    });
+  }, [attachments]);
+
+  // Fetch presigned URLs for attachments with s3Url
+  useEffect(() => {
+    console.log('[AttachmentDisplay] useEffect triggered for new attachments');
+
+    const fetchPresignedUrl = async (attachment: Attachment, idx: number) => {
+      // Skip if already has a direct URL
+      if (attachment.download_url || attachment.cdnUrl || attachment.previewUrl) {
+        console.log(`[AttachmentDisplay] Skipping ${idx}: already has direct URL`);
+        return;
+      }
+
+      // Skip if no s3Url
+      if (!attachment.s3Url) {
+        console.log(`[AttachmentDisplay] No s3Url for ${idx}, cannot fetch presigned URL`);
+        return;
+      }
+
+      // Skip if already fetched
+      if (fetchedRef.current.has(attachment.s3Url)) {
+        console.log(`[AttachmentDisplay] Already fetched ${idx}:`, attachment.s3Url);
+        return;
+      }
+
+      // Mark as fetching
+      fetchedRef.current.add(attachment.s3Url);
+
+      console.log(`[AttachmentDisplay] Fetching presigned URL for ${idx}:`, attachment.s3Url);
+      try {
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(`/api/v1/media/signed-url/${encodeURIComponent(attachment.s3Url)}`, {
+          method: 'GET',
+          headers: {
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+        });
+
+        console.log(`[AttachmentDisplay] Response for ${idx}:`, response.status);
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`[AttachmentDisplay] Got presigned URL for ${idx}:`, data.signed_url);
+          setPresignedUrls(prev => ({ ...prev, [idx]: data.signed_url }));
+        } else {
+          console.error(`[AttachmentDisplay] Failed to fetch presigned URL for ${idx}:`, response.status, await response.text());
+        }
+      } catch (error) {
+        console.error(`[AttachmentDisplay] Error fetching presigned URL for ${idx}:`, error);
+      }
+    };
+
+    // Fetch all attachments that need presigned URLs
+    attachments.forEach((attachment, idx) => {
+      fetchPresignedUrl(attachment, idx);
+    });
+  }, [attachments]);
 
   if (!attachments || attachments.length === 0) {
     return null;
@@ -77,10 +149,25 @@ export function AttachmentDisplay({ attachments, isUserMessage = false }: Attach
           // Get content type (prefer new format)
           const contentType = attachment.content_type || attachment.contentType || '';
           const fileSize = attachment.file_size || attachment.size || 0;
-          const url = attachment.download_url || attachment.cdnUrl || attachment.previewUrl || attachment.s3Url || '';
+          // Use presigned URL if available, fallback to direct URLs
+          const url = attachment.download_url || attachment.cdnUrl || attachment.previewUrl || presignedUrls[idx] || '';
+
+          // Debug: Log URL construction
+          console.log(`[AttachmentDisplay] Rendering attachment ${idx}:`, {
+            filename: attachment.filename,
+            contentType,
+            download_url: attachment.download_url,
+            cdnUrl: attachment.cdnUrl,
+            previewUrl: attachment.previewUrl,
+            presignedUrl: presignedUrls[idx],
+            finalUrl: url,
+          });
 
           // Image attachment
           if (contentType.startsWith('image/')) {
+            // Check if URL is a presigned URL (contains AWS signature parameters)
+            const isPresignedUrl = url && (url.includes('X-Amz-Signature') || url.includes('X-Amz-Algorithm'));
+
             return (
               <div key={idx} className="relative group">
                 <div
@@ -96,6 +183,7 @@ export function AttachmentDisplay({ attachments, isUserMessage = false }: Attach
                       height={200}
                       className="rounded-lg object-cover"
                       style={{ maxHeight: '200px', width: 'auto' }}
+                      unoptimized={isPresignedUrl}
                     />
                   ) : (
                     <div className="w-full h-32 bg-gray-200 dark:bg-gray-700 rounded-lg flex items-center justify-center">

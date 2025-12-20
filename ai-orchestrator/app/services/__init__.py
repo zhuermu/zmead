@@ -16,6 +16,16 @@ from app.services.mcp_client import (
     MCPTimeoutError,
     MCPToolError,
 )
+from app.services.model_provider import ModelProvider, ModelProviderError
+from app.services.gemini_provider import GeminiProvider
+from app.services.bedrock_provider import BedrockProvider
+from app.services.sagemaker_provider import SageMakerProvider
+from app.services.model_factory import (
+    ModelProviderFactory,
+    ModelConfig,
+    ConversationalModelConfig,
+    GenerationModelConfig,
+)
 
 __all__ = [
     # MCP Client
@@ -25,11 +35,22 @@ __all__ = [
     "MCPToolError",
     "MCPTimeoutError",
     "InsufficientCreditsError",
-    # Gemini Client
+    # Gemini Client (legacy)
     "GeminiClient",
     "GeminiError",
     "GeminiAPIError",
     "GeminiRateLimitError",
     "GeminiQuotaExceededError",
     "GeminiTimeoutError",
+    # Model Providers
+    "ModelProvider",
+    "ModelProviderError",
+    "GeminiProvider",
+    "BedrockProvider",
+    "SageMakerProvider",
+    # Model Factory
+    "ModelProviderFactory",
+    "ModelConfig",
+    "ConversationalModelConfig",
+    "GenerationModelConfig",
 ]

@@ -691,14 +691,16 @@ Market Tools:
 注：modules/ 不再是独立的 Sub-Agents，而是被 Agent Custom Tools 调用的业务逻辑实现层
 
 **技术栈**：
-- ReAct Agent：Gemini 2.5 Pro
-- 素材分析：Gemini 2.5 Flash（图片/视频理解）
-- 图片生成：Gemini Imagen 3
-- 视频生成：Gemini Veo 3.1
-- Memory：Redis
-- 广告 API：Meta/TikTok/Google Ads API
-- MCP：实现 Client（调用 Backend 工具）
-- 前端通信：HTTP POST + SSE
+- Agent Framework: Strands Agents (intelligent tool orchestration)
+- Primary Models: AWS Bedrock (Claude 4.5 Sonnet, Qwen3 235B, Nova 2 Lite)
+- Fallback: Gemini 2.5 Flash/Pro
+- Web Search: Amazon Nova Search → Google Grounding (automatic fallback)
+- Image Generation: Qwen-Image (SageMaker) / Bedrock Stable Diffusion
+- Video Generation: Wan2.2 (SageMaker)
+- Storage: AWS S3 + Presigned URLs (1-hour expiration)
+- Memory: Redis (conversation context)
+- MCP: Client implementation (Backend communication)
+- Frontend Communication: HTTP POST + SSE (real-time, no buffering)
 
 ---
 
@@ -710,8 +712,13 @@ Market Tools:
 
 **流程**：
 1. 前端发送消息：`POST /api/chat`
-2. AI Orchestrator 返回 SSE 流式响应
-3. 前端接收流式消息并渲染
+2. AI Orchestrator 返回 SSE 实时流式响应（无缓冲）
+3. 前端接收流式消息并渲染（工具名称映射）
+
+**流式响应特性**：
+- 直接转发模型delta.text，无文本缓冲
+- 真实反映模型输出粒度
+- 降低延迟，提升用户体验
 
 **消息格式**：
 ```typescript
@@ -723,10 +730,23 @@ Market Tools:
 }
 
 // AI Orchestrator 返回（SSE）
-data: {"type": "message", "content": "正在生成素材..."}
-data: {"type": "user_input_request", "question": "请选择风格", "options": [...]}
-data: {"type": "message", "content": "✅ 完成！"}
+data: {"type": "text", "content": "正在"}  // Real-time, no buffering
+data: {"type": "text", "content": "生成"}
+data: {"type": "text", "content": "素材..."}
+data: {"type": "action", "tool": "web_search"}  // Internal tool name
+data: {"type": "observation", "tool": "web_search", "success": true}
 data: {"type": "done"}
+```
+
+**前端工具名称映射**：
+```typescript
+// AgentProcessingCard.tsx
+const toolNameMap = {
+  'web_search': '互联网搜索',
+  'generate_image_tool': '图片生成',
+  'calculator': '计算器'
+}
+// User sees: "互联网搜索" instead of "web_search"
 ```
 
 ### AI Orchestrator ↔ Backend
@@ -1036,30 +1056,39 @@ return "✅ 素材和广告都已完成！"
 - Celery（定时任务）
 
 ### AI Orchestrator
-- ReAct Agent 架构
-- Gemini 2.5 Pro（规划、推理、工具调用）
-- Redis（Memory 存储）
-- MCP Client（调用 Backend 工具）
-- LangChain（工具集成）
+- Strands Agents Framework (multi-provider support)
+- AWS Bedrock (Claude 4.5 Sonnet, Qwen3 235B, Nova 2 Lite)
+- Gemini 2.5 Flash/Pro (fallback)
+- Redis (Memory storage)
+- MCP Client (Backend communication)
+- S3 Client (presigned URLs for media)
 
-### 3 类 Tools
-- **LangChain 内置**：google_search, calculator
-- **Agent 自定义**：20+ AI 能力工具（调用 Gemini）
-- **MCP Server**：25+ 数据交互工具（Backend API）
+### Built-in Tools
+- **Strands Built-in**: web_search (unified, auto-fallback), calculator, datetime
+- **Creative Tools**: 10+ AI-powered tools (Bedrock, SageMaker, Gemini)
+- **MCP Server**: 25+ data interaction tools (Backend API)
+
+### Web Search Strategy
+- **Primary**: Amazon Nova Search (Bedrock Converse + nova_grounding, ~5-6s)
+- **Fallback**: Google Grounding (Gemini API, ~3-4s)
+- **Frontend Display**: "互联网搜索" (tool name mapping)
+- **Transparent**: Automatic provider selection, user doesn't see details
 
 ### 数据库
 - MySQL 8.4（业务数据）
 - Redis（缓存 + 会话 + Memory）
 
 ### 存储
-- AWS S3（素材文件、落地页文件）
+- AWS S3（素材文件、落地页文件、生成内容）
+- Presigned URLs (1-hour expiration for secure browser access)
 - CloudFront（CDN）
 
 ### AI 模型
-- Gemini 2.5 Pro（ReAct Agent、规划、推理）
-- Gemini 2.5 Flash（图片/视频理解、素材分析）
-- Gemini Imagen 3（广告图片生成）
-- Gemini Veo 3.1（广告视频生成）
+- **Conversational**: AWS Bedrock (Claude 4.5 Sonnet, Qwen3 235B, Nova 2 Lite)
+- **Search**: Amazon Nova Search → Google Grounding (automatic fallback)
+- **Image Generation**: Qwen-Image (SageMaker), Bedrock Stable Diffusion
+- **Video Generation**: Wan2.2 (SageMaker)
+- **Fallback**: Gemini 2.5 Flash/Pro for all capabilities
 
 ### 广告平台 API
 - Meta Marketing API

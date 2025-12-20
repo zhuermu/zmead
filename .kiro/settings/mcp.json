@@ -2,11 +2,13 @@
   "mcpServers": {
     "figma": {
       "command": "uvx",
-      "args": ["figma-mcp-server@latest"],
+      "args": [
+        "figma-mcp-server@latest"
+      ],
       "env": {
         "FASTMCP_LOG_LEVEL": "ERROR"
       },
-      "disabled": false,
+      "disabled": true,
       "autoApprove": []
     }
   }

@@ -307,7 +307,13 @@ async def get_credit_config(
             type="string",
             description="AI model to use (for chat operations)",
             required=False,
-            enum=["gemini_flash", "gemini_pro"],
+        ),
+        MCPToolParameter(
+            name="provider",
+            type="string",
+            description="AI provider (gemini, bedrock, sagemaker)",
+            required=False,
+            enum=["gemini", "bedrock", "sagemaker"],
         ),
         MCPToolParameter(
             name="input_tokens",
@@ -331,6 +337,7 @@ async def estimate_credit(
     db: AsyncSession,
     operation_type: str,
     model: str | None = None,
+    provider: str | None = None,
     input_tokens: int = 0,
     output_tokens: int = 0,
 ) -> dict[str, Any]:
@@ -347,11 +354,13 @@ async def estimate_credit(
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            provider=provider,
         )
 
         return {
             "operation_type": operation_type,
             "model": model,
+            "provider": provider,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "estimated_cost": str(cost),

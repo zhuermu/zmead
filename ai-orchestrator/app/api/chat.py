@@ -18,10 +18,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.i18n import detect_language, get_message
-from app.core.react_agent import ReActAgent
+from app.core.strands_enhanced_agent import StrandsEnhancedReActAgent
 from app.tools.registry import ToolRegistry
 # Tool factory imports
-from app.tools.langchain_tools import create_langchain_tools
+from app.tools.strands_builtin_tools import create_strands_builtin_tools
 from app.tools.creative_tools import create_creative_tools
 from app.tools.campaign_tools import create_campaign_tools
 from app.tools.landing_page_tools import create_landing_page_tools
@@ -34,11 +34,21 @@ from app.services.gemini_files import gemini_files_service
 logger = structlog.get_logger(__name__)
 
 
-def _create_agent_with_tools() -> ReActAgent:
-    """Create ReActAgent with all tools loaded.
+def _create_agent_with_tools(
+    model_provider: str = "gemini",
+    model_name: str | None = None,
+) -> StrandsEnhancedReActAgent:
+    """Create StrandsEnhancedReActAgent with all tools loaded.
+
+    This creates an Enhanced Strands Agent with full ReAct intelligence:
+    - Explicit Planner for task decomposition
+    - Explicit Evaluator for risk assessment and HITL
+    - Enhanced Memory for long-term learning
+    - Perceive logic for self-assessment
+    - 100% LangChain-free architecture
 
     Tools are organized in 3 categories:
-    1. LangChain tools: google_search, calculator, datetime
+    1. Strands built-in tools (no LangChain): google_search, calculator, datetime
     2. Agent custom tools (5 capability modules):
        - Creative: generate_image, generate_video, analyze_creative, extract_product_info
        - Campaign: create_campaign, update_campaign, pause_campaign, get_campaigns
@@ -46,12 +56,16 @@ def _create_agent_with_tools() -> ReActAgent:
        - Market: analyze_competitors, get_market_trends, analyze_audience
        - Performance: get_performance_report, analyze_anomalies, get_recommendations
     3. MCP tools: Tools that interact with backend via MCP protocol
+
+    Args:
+        model_provider: AI model provider (gemini or bedrock)
+        model_name: Specific model ID to use
     """
     registry = ToolRegistry()
 
-    # 1. Register LangChain built-in tools
-    langchain_tools = create_langchain_tools()
-    registry.register_batch(langchain_tools)
+    # 1. Register Strands built-in tools (LangChain-free)
+    builtin_tools = create_strands_builtin_tools()
+    registry.register_batch(builtin_tools)
 
     # 2. Register Agent custom tools (5 capability modules)
     creative_tools = create_creative_tools()
@@ -74,12 +88,19 @@ def _create_agent_with_tools() -> ReActAgent:
     registry.register_batch(mcp_tools)
 
     logger.info(
-        "agent_tools_loaded",
+        "enhanced_agent_tools_loaded",
         total_tools=len(registry.get_all_tools()),
         stats=registry.get_stats(),
+        model_provider=model_provider,
+        model_name=model_name,
+        architecture="Strands Enhanced ReAct",
     )
 
-    return ReActAgent(tool_registry=registry)
+    return StrandsEnhancedReActAgent(
+        model_provider=model_provider,
+        model_name=model_name,
+        tool_registry=registry,
+    )
 
 router = APIRouter()
 
@@ -123,11 +144,25 @@ class ChatMessage(BaseModel):
     tempAttachments: list[TempAttachment] | None = Field(None, description="Temporary file attachments (need processing)")
 
 
+class ModelPreferences(BaseModel):
+    """User's AI model preferences."""
+    conversational_provider: str = Field(default="gemini", description="AI provider: gemini or bedrock")
+    conversational_model: str = Field(default="gemini-2.5-flash", description="Specific model ID")
+    image_generation_provider: str | None = Field(None, description="Image generation provider")
+    image_generation_model: str | None = Field(None, description="Image generation model")
+    video_generation_provider: str | None = Field(None, description="Video generation provider")
+    video_generation_model: str | None = Field(None, description="Video generation model")
+
+    class Config:
+        extra = "ignore"  # Ignore extra fields from frontend
+
+
 class ChatRequest(BaseModel):
     """Unified chat request model compatible with Vercel AI SDK."""
     messages: list[ChatMessage] = Field(..., description="Conversation messages")
     user_id: str = Field(..., description="User identifier")
     session_id: str = Field(..., description="Session identifier")
+    model_preferences: ModelPreferences | None = Field(None, description="User's model preferences")
 
 
 @router.post("/chat")
@@ -170,6 +205,15 @@ async def chat_stream(
     # Extract last user message and attachments
     last_message_obj = request.messages[-1] if request.messages else None
     last_message = last_message_obj.content if last_message_obj else ""
+
+    # Build conversation history (all messages except the last one)
+    # Convert ChatMessage objects to simple dict format for agent
+    conversation_history = []
+    for msg in request.messages[:-1]:  # All messages except last (current)
+        conversation_history.append({
+            "role": msg.role,
+            "content": msg.content,
+        })
 
     # Handle processed attachments, temp attachments, and new format attachments
     attachments = []
@@ -306,10 +350,32 @@ async def chat_stream(
 
             attachments.append(attachment_info)
 
+    # Extract model preferences (default to Gemini if not provided)
+    model_provider = "gemini"
+    model_name = "gemini-2.5-flash"
+
+    # Debug: Log the raw model_preferences value
+    log.info(
+        "model_preferences_debug",
+        raw_value=request.model_preferences,
+        is_none=request.model_preferences is None,
+    )
+
+    if request.model_preferences:
+        model_provider = request.model_preferences.conversational_provider
+        model_name = request.model_preferences.conversational_model
+        log.info(
+            "using_user_model_preferences",
+            provider=model_provider,
+            model=model_name,
+        )
+
     log.info("chat_stream_request",
              message_preview=last_message[:100],
              has_attachments=bool(attachments),
-             attachment_count=len(attachments) if attachments else 0)
+             attachment_count=len(attachments) if attachments else 0,
+             model_provider=model_provider,
+             model_name=model_name)
 
     async def generate():
         """Generate SSE events."""
@@ -321,23 +387,44 @@ async def chat_stream(
             # Flush the event to client
             await asyncio.sleep(0)
 
-            # Now create agent (this may take a moment)
-            agent = _create_agent_with_tools()
+            # Now create agent with user's model preferences (this may take a moment)
+            agent = _create_agent_with_tools(
+                model_provider=model_provider,
+                model_name=model_name,
+            )
 
             # Process message with ReAct Agent in streaming mode
+            # Pass conversation_history and model_preferences
             async for event in agent.process_message_stream(
                 user_message=last_message,
                 user_id=request.user_id,
                 session_id=request.session_id,
+                conversation_history=conversation_history,  # Pass full conversation history
                 attachments=attachments,  # Already dict format, no need for model_dump()
+                model_preferences=request.model_preferences,  # Pass to tools for multi-model support
             ):
                 event_type = event.get("type")
 
                 # Stream events to frontend
-                if event_type == "thought":
+                if event_type == "planning":
+                    # Planning phase - show to user
+                    yield f"data: {json.dumps({'type': 'status', 'message': event.get('message', 'Planning...')}, ensure_ascii=False)}\n\n"
+
+                elif event_type == "thought":
                     # Agent's reasoning process - keep as thought type
                     # Frontend will display with different styling (collapsible)
                     yield f"data: {json.dumps({'type': 'thought', 'content': event.get('content', '')}, ensure_ascii=False)}\n\n"
+
+                elif event_type == "evaluation":
+                    # Evaluation phase - internal, log only (don't spam user)
+                    if event.get('needs_input'):
+                        logger.info("evaluation_needs_input", reason=event.get('reason'))
+
+                elif event_type == "reflection":
+                    # Reflection phase - optionally show to user as thought
+                    reflection_content = event.get('content', '')
+                    if reflection_content:
+                        yield f"data: {json.dumps({'type': 'thought', 'content': f'🤔 Reflection: {reflection_content}'}, ensure_ascii=False)}\n\n"
 
                 elif event_type == "action":
                     # Tool execution starting
@@ -358,7 +445,11 @@ async def chat_stream(
                         'result': result,
                     }
 
-                    # Include generated media data if present
+                    # Include attachments if present (unified format)
+                    if event.get("attachments"):
+                        observation_data["attachments"] = event["attachments"]
+
+                    # Include generated media data if present (legacy support)
                     if event.get("images"):
                         observation_data["images"] = event["images"]
                     # Priority: GCS object name > base64 > direct URL

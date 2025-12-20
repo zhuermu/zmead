@@ -52,6 +52,10 @@ class Message(Base):
     # Token usage tracking
     input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    
+    # Model provider information (for multi-provider support)
+    model_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)  # 'gemini', 'bedrock', 'sagemaker'
+    model_name: Mapped[str | None] = mapped_column(String(100), nullable=True)  # Specific model used
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

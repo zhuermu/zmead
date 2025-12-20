@@ -45,6 +45,30 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(50), default="UTC")
     notification_preferences: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # AI Model Preferences - Conversational
+    conversational_provider: Mapped[str] = mapped_column(
+        String(50), default="gemini", nullable=False
+    )
+    conversational_model: Mapped[str] = mapped_column(
+        String(100), default="gemini-2.5-flash", nullable=False
+    )
+    
+    # AI Model Preferences - Image Generation
+    image_generation_provider: Mapped[str] = mapped_column(
+        String(50), default="gemini", nullable=False
+    )
+    image_generation_model: Mapped[str] = mapped_column(
+        String(100), default="gemini-2.5-flash-image", nullable=False
+    )
+    
+    # AI Model Preferences - Video Generation
+    video_generation_provider: Mapped[str] = mapped_column(
+        String(50), default="sagemaker", nullable=False
+    )
+    video_generation_model: Mapped[str] = mapped_column(
+        String(100), default="wan2.2", nullable=False
+    )
+
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 

@@ -94,6 +94,30 @@ class Settings(BaseSettings):
             v = v.split("#")[0].strip()
         return v
 
+    # AWS Configuration
+    aws_region: str = Field(default="us-west-2")
+    aws_access_key_id: str = Field(default="")
+    aws_secret_access_key: str = Field(default="")
+    aws_session_token: str = Field(default="")  # Optional for temporary credentials
+    
+    # AWS S3 Configuration
+    s3_bucket_creatives: str = "aae-creatives"
+    s3_bucket_landing_pages: str = "aae-landing-pages"
+    s3_bucket_exports: str = "aae-exports"
+    s3_bucket_uploads: str = "aae-user-uploads"
+    cloudfront_domain: str = Field(default="")  # CloudFront CDN domain
+    
+    # AWS Bedrock Configuration
+    bedrock_region: str = Field(default="us-west-2")
+    bedrock_default_model: str = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    bedrock_temperature: float = 0.7
+    bedrock_max_tokens: int = 4096
+    
+    # AWS SageMaker Configuration
+    sagemaker_region: str = Field(default="us-west-2")
+    sagemaker_qwen_image_endpoint: str = Field(default="")
+    sagemaker_wan_video_endpoint: str = Field(default="")
+
     # OAuth - Google
     google_client_id: str = Field(default="")
     google_client_secret: str = Field(default="")

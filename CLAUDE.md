@@ -8,8 +8,8 @@ AAE (Automated Ad Engine) is an advertising SaaS platform with an embedded AI ag
 
 **Core Architecture**: 3 services communicating via HTTP/MCP:
 - **Frontend** (Next.js, port 3000) - User interface with Vercel AI SDK chat
-- **Backend** (FastAPI, port 8000) - REST API, MCP Server, data storage
-- **AI Orchestrator** (FastAPI + LangGraph, port 8001) - Intent recognition, module coordination
+- **Backend** (FastAPI, port 8000) - REST API, MCP Server, data storage (MySQL + Redis + AWS S3)
+- **AI Orchestrator** (FastAPI + Strands Agent, port 8001) - Intent recognition, tool orchestration, multi-model support
 
 ## Development Commands
 
@@ -88,7 +88,7 @@ celery -A app.core.celery worker --loglevel=info
 celery -A app.core.celery beat --loglevel=info
 ```
 
-### AI Orchestrator (FastAPI + LangGraph) - Port 8001
+### AI Orchestrator (FastAPI + Strands Agent) - Port 8001
 ```bash
 cd ai-orchestrator
 
@@ -153,14 +153,14 @@ zmead/
 │   │   └── main.py          # FastAPI application entry
 │   ├── alembic/             # Database migrations
 │   └── tests/
-├── ai-orchestrator/         # AI Agent Service (FastAPI + LangGraph)
+├── ai-orchestrator/         # AI Agent Service (Strands Agents)
 │   ├── app/
 │   │   ├── api/             # Chat streaming endpoint
-│   │   ├── core/            # Config, state, graph builder
-│   │   ├── nodes/           # LangGraph nodes (router, modules, respond)
-│   │   ├── modules/         # Capability module implementations
+│   │   ├── core/            # Config, Strands Agent, memory
+│   │   ├── tools/           # Unified web_search, creative tools, etc.
+│   │   ├── modules/         # Business logic implementations
 │   │   ├── prompts/         # LLM prompt templates
-│   │   └── services/        # MCP client, Gemini client
+│   │   └── services/        # MCP client, model providers (Bedrock, Gemini)
 │   └── tests/
 ├── frontend/                # Web UI (Next.js 14)
 │   └── src/
@@ -186,27 +186,29 @@ User Portal (用户入口)
          │
          │ HTTP Streaming (对话) + MCP Protocol (数据)
          ▼
-Unified AI Agent (LangGraph)
-├── Intent Recognition (Gemini 2.5 Flash)
-├── Orchestrator (协调器)
-└── 5 Capability Modules:
-    ├── Ad Creative (素材生成)
-    ├── Market Insights (市场洞察)
-    ├── Ad Performance (报表分析)
-    ├── Landing Page (落地页)
-    └── Campaign Automation (广告投放)
+Unified AI Agent (Strands Agents Framework)
+├── Multi-Model Support (Gemini 2.5 / AWS Bedrock Claude / Nova / Qwen3)
+├── Intelligent Tool Orchestration
+└── Built-in Tools:
+    ├── Unified Web Search (Nova → Google automatic fallback)
+    ├── Calculator & DateTime
+    ├── Creative Tools (Image/Video generation via Bedrock/SageMaker)
+    ├── Performance Analysis Tools
+    └── Campaign Management Tools
 ```
 
 ## Key Technical Decisions
 
-- **AI Agent Framework**: LangGraph with ReAct (Reasoning + Acting) pattern
-- **Frontend-to-Agent Communication**: HTTP POST + SSE (Server-Sent Events) for streaming responses
+- **AI Agent Framework**: Strands Agents with multi-provider support (Gemini / AWS Bedrock)
+- **Frontend-to-Agent Communication**: HTTP POST + SSE (Server-Sent Events) for real-time streaming (no buffering)
 - **Agent-to-Backend Communication**: MCP Protocol (Model Context Protocol)
 - **State Management**: Zustand (frontend), React Query for server state
 - **Billing**: Credit-based system (¥199/30K credits, ¥1999/400K credits, overage at ¥0.01/credit)
-- **Primary LLM**: Gemini 2.5 Flash/Pro (with fallback to Claude 3.5 Sonnet)
-- **Image Generation**: Gemini Imagen 3
-- **Video Generation**: Gemini Veo 3.1
+- **Primary LLM**: AWS Bedrock (Claude 4.5 Sonnet, Qwen3 235B, Nova 2 Lite) with Gemini fallback
+- **Image Generation**: Qwen-Image (AWS SageMaker) with Bedrock Stable Diffusion fallback
+- **Video Generation**: Wan2.2 (AWS SageMaker)
+- **Web Search**: Unified tool with automatic fallback (Amazon Nova Search → Google Grounding)
+- **Storage**: AWS S3 with presigned URLs (1-hour expiration) for secure media access
 - **Memory Storage**: Redis for conversation context and agent state
 
 ## Specification Documents
@@ -219,7 +221,7 @@ All requirements are in `.kiro/specs/`:
 | `INTERFACES.md` | MCP tools, WebSocket protocols, error codes |
 | `SUMMARY.md` | Quick architecture overview |
 | `web-platform/requirements.md` | Web Platform requirements (auth, billing, Credit system) |
-| `ai-orchestrator/requirements.md` | AI Agent with LangGraph implementation |
+| `ai-orchestrator/requirements.md` | AI Agent with Strands Agents implementation |
 | `ad-creative/requirements.md` | Image generation capability |
 | `market-insights/requirements.md` | Competitor analysis, trends |
 | `ad-performance/requirements.md` | Data fetching, anomaly detection |
@@ -290,8 +292,12 @@ Required environment variables:
 - Backend uses async SQLAlchemy with aiomysql
 - Frontend uses Next.js App Router (not Pages Router)
 - Python version: 3.12+ required for both backend services
-- Chat uses HTTP streaming (SSE) instead of WebSocket for simplicity
-- Agent uses ReAct pattern: Plan → Evaluate (Human-in-the-Loop) → Act → Memory → Perceive
+- Chat uses HTTP streaming (SSE) with real-time forwarding (no text buffering)
+- Agent framework: Strands Agents with streaming via `stream_async()`
+- Web Search: Unified `web_search` tool with automatic Nova → Google fallback
+- Storage: S3 presigned URLs (1-hour expiration) for secure media access
+- Frontend: Tool name mapping to user-friendly Chinese names (e.g., "互联网搜索")
+- Model Selection: User can choose between Gemini and Bedrock providers in settings
 
 ## Important File Locations
 

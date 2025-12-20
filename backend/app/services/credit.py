@@ -345,27 +345,48 @@ class CreditService:
         model: str,
         input_tokens: int,
         output_tokens: int,
+        provider: str | None = None,
     ) -> Decimal:
         """Calculate credit cost for token usage.
         
+        Supports multiple AI providers: Gemini, Bedrock (Claude, Qwen, Nova).
+        
         Args:
-            model: Model name ('gemini_flash' or 'gemini_pro')
+            model: Model name or identifier
             input_tokens: Number of input tokens
             output_tokens: Number of output tokens
+            provider: Optional provider name ('gemini', 'bedrock', 'sagemaker')
             
         Returns:
             Total credit cost
         """
         config = await self.get_config()
 
-        if model == "gemini_flash":
+        # Normalize model name for lookup
+        model_lower = model.lower().replace("-", "_").replace(".", "_")
+        
+        # Map model identifiers to rate configuration
+        # Gemini models
+        if model_lower in ["gemini_flash", "gemini_2_5_flash", "gemini_2_0_flash"] or provider == "gemini" and "flash" in model_lower:
             input_rate = config.gemini_flash_input_rate
             output_rate = config.gemini_flash_output_rate
-        elif model == "gemini_pro":
+        elif model_lower in ["gemini_pro", "gemini_2_5_pro", "gemini_3_pro", "gemini_2_0_pro"] or provider == "gemini" and "pro" in model_lower:
+            input_rate = config.gemini_pro_input_rate
+            output_rate = config.gemini_pro_output_rate
+        # Bedrock models - use Gemini Pro rates as baseline for now
+        # TODO: Add specific Bedrock model rates to CreditConfig
+        elif provider == "bedrock" or any(x in model_lower for x in ["claude", "qwen", "nova", "anthropic", "amazon"]):
+            # Use Gemini Pro rates for Bedrock models (can be adjusted in config)
+            input_rate = config.gemini_pro_input_rate
+            output_rate = config.gemini_pro_output_rate
+        # SageMaker models - use Gemini Pro rates as baseline
+        elif provider == "sagemaker":
             input_rate = config.gemini_pro_input_rate
             output_rate = config.gemini_pro_output_rate
         else:
-            raise ValueError(f"Unknown model: {model}")
+            # Default to Gemini Flash rates for unknown models
+            input_rate = config.gemini_flash_input_rate
+            output_rate = config.gemini_flash_output_rate
 
         # Rates are per 1K tokens
         input_cost = (Decimal(input_tokens) / 1000) * input_rate

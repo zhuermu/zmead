@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { ProfileSettings } from "@/components/settings/ProfileSettings";
 import { NotificationSettings } from "@/components/settings/NotificationSettings";
 import { DataPrivacySettings } from "@/components/settings/DataPrivacySettings";
+import { ModelPreferences } from "@/components/settings/ModelPreferences";
 
-type TabType = "profile" | "notifications" | "data";
+type TabType = "profile" | "notifications" | "models" | "data";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabType>("profile");
@@ -16,6 +17,7 @@ export default function SettingsPage() {
   const tabs = [
     { id: "profile" as TabType, label: "Profile", icon: "👤" },
     { id: "notifications" as TabType, label: "Notifications", icon: "🔔" },
+    { id: "models" as TabType, label: "AI Models", icon: "🤖" },
     { id: "data" as TabType, label: "Data & Privacy", icon: "🔒" },
   ];
 
@@ -57,6 +59,7 @@ export default function SettingsPage() {
           <Card className="p-6">
             {activeTab === "profile" && <ProfileSettings />}
             {activeTab === "notifications" && <NotificationSettings />}
+            {activeTab === "models" && <ModelPreferences />}
             {activeTab === "data" && <DataPrivacySettings />}
           </Card>
         </div>

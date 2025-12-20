@@ -1,4 +1,4 @@
-"""Presigned URL generation for direct upload to GCS."""
+"""Presigned URL generation for direct upload to S3."""
 
 import uuid
 from datetime import datetime, timedelta
@@ -8,12 +8,12 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
-from app.core.storage import GCSStorage
+from app.core.storage import S3Storage
 
 router = APIRouter(prefix="/uploads/presigned", tags=["uploads"])
 
-# Permanent uploads storage
-uploads_storage = GCSStorage(settings.gcs_bucket_uploads)
+# Permanent uploads storage (S3)
+uploads_storage = S3Storage(settings.s3_bucket_uploads)
 
 
 class PresignedUploadRequest(BaseModel):

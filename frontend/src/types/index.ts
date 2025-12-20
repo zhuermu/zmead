@@ -13,6 +13,8 @@ export interface User {
   purchasedCredits: number;
   language: string;
   timezone: string;
+  conversationalProvider: string;
+  conversationalModel: string;
   createdAt: string;
   lastLoginAt?: string;
 }

@@ -71,6 +71,8 @@ export async function POST(req: Request) {
         messages: normalizedMessages,
         user_id: userId,
         session_id: sessionId,
+        // Forward model preferences if provided
+        ...(body.model_preferences ? { model_preferences: body.model_preferences } : {}),
       }),
     });
 

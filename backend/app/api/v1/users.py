@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.notification import NotificationPreferencesUpdate
 from app.schemas.user import (
+    ModelPreferencesResponse,
+    ModelPreferencesUpdateRequest,
     NotificationPreferences,
     UserDeleteRequest,
     UserResponse,
@@ -30,6 +32,12 @@ async def get_current_user(current_user: CurrentUser) -> UserResponse:
         language=current_user.language,
         timezone=current_user.timezone,
         notification_preferences=current_user.notification_preferences,
+        conversational_provider=current_user.conversational_provider,
+        conversational_model=current_user.conversational_model,
+        image_generation_provider=getattr(current_user, 'image_generation_provider', 'gemini'),
+        image_generation_model=getattr(current_user, 'image_generation_model', 'gemini-2.5-flash-image'),
+        video_generation_provider=getattr(current_user, 'video_generation_provider', 'sagemaker'),
+        video_generation_model=getattr(current_user, 'video_generation_model', 'wan2.2'),
         is_active=current_user.is_active,
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
@@ -59,6 +67,12 @@ async def update_current_user(
         language=updated_user.language,
         timezone=updated_user.timezone,
         notification_preferences=updated_user.notification_preferences,
+        conversational_provider=updated_user.conversational_provider,
+        conversational_model=updated_user.conversational_model,
+        image_generation_provider=getattr(updated_user, 'image_generation_provider', 'gemini'),
+        image_generation_model=getattr(updated_user, 'image_generation_model', 'gemini-2.5-flash-image'),
+        video_generation_provider=getattr(updated_user, 'video_generation_provider', 'sagemaker'),
+        video_generation_model=getattr(updated_user, 'video_generation_model', 'wan2.2'),
         is_active=updated_user.is_active,
         created_at=updated_user.created_at,
         updated_at=updated_user.updated_at,
@@ -219,3 +233,107 @@ async def get_export_status(
     export_status = await user_service.get_export_status(current_user, job_id)
     
     return export_status
+
+
+@router.get("/me/model-preferences", response_model=ModelPreferencesResponse)
+async def get_model_preferences(
+    current_user: CurrentUser,
+) -> ModelPreferencesResponse:
+    """Get current user's AI model preferences for all model types."""
+    return ModelPreferencesResponse(
+        conversational_provider=current_user.conversational_provider,
+        conversational_model=current_user.conversational_model,
+        image_generation_provider=getattr(current_user, 'image_generation_provider', 'gemini'),
+        image_generation_model=getattr(current_user, 'image_generation_model', 'gemini-2.5-flash-image'),
+        video_generation_provider=getattr(current_user, 'video_generation_provider', 'sagemaker'),
+        video_generation_model=getattr(current_user, 'video_generation_model', 'wan2.2'),
+    )
+
+
+@router.put("/me/model-preferences", response_model=ModelPreferencesResponse)
+async def update_model_preferences(
+    preferences: ModelPreferencesUpdateRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ModelPreferencesResponse:
+    """
+    Update current user's AI model preferences.
+    
+    This controls which AI model provider and specific model is used for:
+    - Conversational AI interactions
+    - Image generation
+    - Video generation
+    
+    All fields are optional - only provided fields will be updated.
+    """
+    # Valid models for each category
+    valid_conversational_models = {
+        "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
+        "bedrock": [
+            "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "qwen.qwen3-235b-a22b-2507-v1:0",
+            "us.amazon.nova-2-lite-v1:0"
+        ]
+    }
+    
+    valid_image_models = {
+        "gemini": ["gemini-2.5-flash-image", "gemini-2.0-flash-exp", "imagen-3.0-generate-002"],
+        "sagemaker": ["qwen-image"],
+        "bedrock": [
+            "amazon.nova-canvas-v1:0",
+            "stability.sd3-5-large-v1:0",  # Latest SD3.5 Large (replaces deprecated sd3-large-v1:0)
+            "amazon.titan-image-generator-v2:0"
+        ]
+    }
+    
+    valid_video_models = {
+        "gemini": ["gemini-veo-3.1"],
+        "sagemaker": ["wan2.2"],
+        "bedrock": ["amazon.nova-reel-v1:1", "luma.ray-v2:0"]
+    }
+    
+    # Validate conversational model if provided
+    if preferences.conversational_provider and preferences.conversational_model:
+        if preferences.conversational_model not in valid_conversational_models.get(preferences.conversational_provider, []):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid conversational model '{preferences.conversational_model}' for provider '{preferences.conversational_provider}'"
+            )
+    
+    # Validate image generation model if provided
+    if preferences.image_generation_provider and preferences.image_generation_model:
+        if preferences.image_generation_model not in valid_image_models.get(preferences.image_generation_provider, []):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid image model '{preferences.image_generation_model}' for provider '{preferences.image_generation_provider}'"
+            )
+    
+    # Validate video generation model if provided
+    if preferences.video_generation_provider and preferences.video_generation_model:
+        if preferences.video_generation_model not in valid_video_models.get(preferences.video_generation_provider, []):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid video model '{preferences.video_generation_model}' for provider '{preferences.video_generation_provider}'"
+            )
+    
+    user_service = UserService(db)
+    
+    # Build update data with only provided fields
+    update_data = UserUpdateRequest(
+        conversational_provider=preferences.conversational_provider,
+        conversational_model=preferences.conversational_model,
+        image_generation_provider=preferences.image_generation_provider,
+        image_generation_model=preferences.image_generation_model,
+        video_generation_provider=preferences.video_generation_provider,
+        video_generation_model=preferences.video_generation_model,
+    )
+    updated_user = await user_service.update_user(current_user, update_data)
+    
+    return ModelPreferencesResponse(
+        conversational_provider=updated_user.conversational_provider,
+        conversational_model=updated_user.conversational_model,
+        image_generation_provider=getattr(updated_user, 'image_generation_provider', 'gemini'),
+        image_generation_model=getattr(updated_user, 'image_generation_model', 'gemini-2.5-flash-image'),
+        video_generation_provider=getattr(updated_user, 'video_generation_provider', 'sagemaker'),
+        video_generation_model=getattr(updated_user, 'video_generation_model', 'wan2.2'),
+    )

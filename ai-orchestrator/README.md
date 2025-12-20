@@ -1,20 +1,21 @@
 # AI Orchestrator
 
-AI Orchestrator is the core intelligent assistant for the AAE (Automated Ad Engine) platform. It provides a unified conversational interface where users interact with the system through natural language using a **ReAct (Reasoning + Acting) Agent** architecture.
+AI Orchestrator is the core intelligent assistant for the AAE (Automated Ad Engine) platform. It provides a unified conversational interface where users interact with the system through natural language using the **Strands Agents** framework.
 
 ## Overview
 
 The AI Orchestrator:
-- Uses **ReAct Agent** pattern for autonomous task planning and execution
-- Leverages **3 types of Tools** (LangChain built-in, Agent custom, MCP Server)
-- Implements **intelligent Human-in-the-Loop** for confirmations when needed
+- Uses **Strands Agents** framework for autonomous task planning and execution
+- Supports **multi-provider AI models** (Gemini, AWS Bedrock Claude/Nova/Qwen3)
+- Provides **unified web search** with automatic fallback (Nova → Google Grounding)
+- Implements **intelligent tool orchestration** with real-time streaming
 - Manages conversation context and memory via Redis
 - Communicates with Backend via MCP protocol
-- Supports streaming responses via SSE (Server-Sent Events)
+- Supports real-time streaming responses via SSE (Server-Sent Events) without buffering
 
 ## Architecture
 
-The AI Orchestrator uses a **ReAct Agent + 3 Types of Tools** architecture:
+The AI Orchestrator uses **Strands Agents** with intelligent tool orchestration:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -58,17 +59,16 @@ The AI Orchestrator uses a **ReAct Agent + 3 Types of Tools** architecture:
 │  └───────────────────────────────────────────────────────────┘  │
 │                              │                                   │
 │  ┌───────────────────────────▼───────────────────────────────┐  │
-│  │                   3 类 Tools                               │  │
+│  │                   Built-in Tools                           │  │
 │  │                                                            │  │
-│  │  1. LangChain 内置 Tools                                   │  │
-│  │     - google_search, calculator                           │  │
+│  │  1. Strands Built-in Tools                                │  │
+│  │     - web_search (unified, auto-fallback Nova → Google)   │  │
+│  │     - calculator, datetime                                │  │
 │  │                                                            │  │
-│  │  2. Agent 自定义 Tools (可调用大模型)                       │  │
-│  │     - Creative Tools (generate_image_tool, etc.)          │  │
-│  │     - Performance Tools (analyze_performance_tool, etc.)  │  │
-│  │     - Campaign Tools (optimize_budget_tool, etc.)         │  │
-│  │     - Landing Page Tools (generate_page_content_tool)     │  │
-│  │     - Market Tools (analyze_competitor_tool, etc.)        │  │
+│  │  2. Creative Tools (AI-powered)                           │  │
+│  │     - generate_image_tool (Bedrock/SageMaker)             │  │
+│  │     - generate_video_tool (AWS SageMaker)                 │  │
+│  │     - analyze_creative_tool (Gemini Vision)               │  │
 │  │                                                            │  │
 │  │  3. MCP Server Tools (Backend API)                        │  │
 │  │     - save_creative, fetch_ad_data, create_campaign       │  │
@@ -87,20 +87,24 @@ The AI Orchestrator uses a **ReAct Agent + 3 Types of Tools** architecture:
 │                              │                                   │
 │  ┌───────────────────────────▼───────────────────────────────┐  │
 │  │                   Integration Layer                        │  │
-│  │  - MCP Client (Backend)                                   │  │
-│  │  - Gemini Client                                          │  │
-│  │  - Redis Client (Memory)                                  │  │
+│  │  - MCP Client (Backend communication)                     │  │
+│  │  - Model Providers (Bedrock, Gemini, SageMaker)           │  │
+│  │  - S3 Client (presigned URLs for media)                   │  │
+│  │  - Redis Client (conversation memory)                     │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **Key Features:**
-- **ReAct Pattern**: Agent autonomously plans, acts, and evaluates in a loop
-- **3 Types of Tools**: Clear separation of responsibilities (general, AI capabilities, data interaction)
-- **Intelligent Human-in-the-Loop**: Only asks for confirmation when necessary (spending, important operations, ambiguous parameters)
+- **Strands Agents Framework**: Autonomous tool orchestration with streaming support
+- **Multi-Provider Support**: Choose between Gemini and AWS Bedrock (Claude, Nova, Qwen3)
+- **Unified Web Search**: Automatic fallback from Amazon Nova Search to Google Grounding
+- **Intelligent Tool Orchestration**: Built-in tools for search, calculations, creative generation
+- **Real-time Streaming**: SSE streaming without buffering for instant responses
 - **Memory Management**: Uses Redis to maintain conversation context and agent state
-- **Streaming Responses**: Real-time SSE streaming for better UX
-- **Extensible**: Easy to add new tools without modifying core agent logic
+- **S3 Integration**: Presigned URLs for secure media access (images, videos)
+- **User-Friendly Display**: Frontend tool name mapping (e.g., "互联网搜索" instead of technical names)
+- **Extensible**: Easy to add new tools and model providers
 
 ## Project Structure
 
@@ -175,7 +179,14 @@ ai-orchestrator/
 - Python 3.12+
 - Redis 7.x running locally or via Docker
 - Web Platform backend running on port 8000
-- Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+- **For Gemini provider:**
+  - Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+- **For AWS Bedrock provider:**
+  - AWS Account with Bedrock access
+  - AWS credentials configured
+  - Model access approved (Claude, Qwen3, Nova)
+- **For SageMaker models:**
+  - SageMaker endpoints deployed (Qwen-Image, Wan2.2)
 
 ### Local Development Setup
 
@@ -194,9 +205,16 @@ ai-orchestrator/
 
 3. **Configure environment**
    ```bash
+   # For AWS setup
+   cp .env.aws.example .env
+   
+   # Or for Gemini-only setup
    cp .env.example .env
+   
    # Edit .env with your configuration (see Environment Variables section)
    ```
+   
+   **Important:** See [AWS Setup Guide](../AWS_SETUP_GUIDE.md) for complete AWS configuration instructions.
 
 4. **Start Redis** (if not using Docker)
    ```bash
@@ -875,3 +893,184 @@ See `.kiro/specs/react-agent-v2/design.md` for detailed design.
 ## License
 
 MIT
+
+
+---
+
+## AWS Integration
+
+### Model Providers
+
+The AI Orchestrator supports multiple model providers:
+
+1. **Google Gemini** (default for new installations)
+   - Gemini 2.5 Flash
+   - Gemini 2.5 Pro
+   - Multimodal support (images, videos, documents)
+
+2. **AWS Bedrock** (recommended for production)
+   - Claude 4.5 Sonnet
+   - Qwen3 235B
+   - Amazon Nova 2 Lite
+
+3. **AWS SageMaker** (for custom models)
+   - Qwen-Image (image generation)
+   - Wan2.2 (video generation)
+
+### AWS Setup
+
+See [AWS Setup Guide](../AWS_SETUP_GUIDE.md) for complete instructions:
+
+1. Configure AWS credentials
+2. Request Bedrock model access
+3. Deploy SageMaker endpoints
+4. Update environment configuration
+5. Validate setup
+
+### Configuration Validation
+
+```bash
+python -m app.core.aws_config_validator
+```
+
+Expected output:
+```
+✓ AWS credentials configured
+✓ Bedrock models available
+✓ SageMaker endpoints ready
+✓ Configuration valid
+```
+
+## Key Features Implemented
+
+### Unified Web Search
+
+The `web_search` tool provides automatic fallback for reliable search results:
+
+**Primary**: Amazon Nova Search (AWS Bedrock Converse API)
+- Fast, AWS-native integration
+- Uses `nova_grounding` system tool
+- Model: `us.amazon.nova-lite-v1:0`
+- Response time: ~5-6 seconds
+
+**Fallback**: Google Search (Gemini Grounding)
+- Structured citations support
+- Response time: ~3-4 seconds
+
+**User Experience**:
+- Single tool name: `web_search`
+- Frontend displays: "互联网搜索"
+- Automatic provider selection (transparent to user)
+
+See [WEB_SEARCH_UNIFIED.md](./WEB_SEARCH_UNIFIED.md) and [NOVA_SEARCH_IMPLEMENTATION.md](./NOVA_SEARCH_IMPLEMENTATION.md) for technical details.
+
+### S3 Presigned URLs
+
+Generated images and videos return presigned URLs for secure browser access:
+
+```python
+# Generate presigned URL (1-hour expiration)
+presigned_url = s3_client.generate_presigned_url(
+    object_name=upload_result["object_name"],
+    expiration=3600
+)
+
+# Response includes both formats
+{
+    "s3_url": "s3://bucket/path/to/image.png",  # For internal use
+    "url": "https://bucket.s3.amazonaws.com/...?X-Amz..."  # For browser display
+}
+```
+
+### Real-time Streaming
+
+Streaming implementation forwards model delta directly without buffering:
+
+```python
+# Direct forwarding from model
+if "delta" in chunk and isinstance(chunk["delta"], dict):
+    text = chunk["delta"].get("text", "")
+    if text:
+        yield {"type": "text", "content": text}  # No buffering
+```
+
+**Benefits**:
+- True real-time streaming experience
+- Lower latency (no accumulation delay)
+- Preserves model's original chunking
+
+### Frontend Tool Name Mapping
+
+User-friendly Chinese names for tools displayed in UI:
+
+```typescript
+const toolNameMap = {
+  'web_search': '互联网搜索',
+  'google_search': '互联网搜索',
+  'nova_search': '互联网搜索',
+  'calculator': '计算器',
+  'datetime': '日期时间',
+  'generate_image_tool': '图片生成',
+  'generate_video_tool': '视频生成'
+}
+```
+
+See `frontend/src/components/chat/AgentProcessingCard.tsx` for implementation.
+
+---
+
+## Attachment Handling & Media Generation
+
+The AI Orchestrator supports generating and displaying media in the chat interface:
+
+- **Image Generation**: Bedrock Stable Diffusion / SageMaker Qwen-Image
+- **Video Generation**: AWS SageMaker Wan2.2 / Bedrock Nova Reel
+- **Storage**: AWS S3 with presigned URLs (1-hour expiration)
+- **Display**: Real-time streaming with unified attachment format
+
+### Unified Attachment Format
+
+All tools return attachments in the same structure:
+
+```python
+{
+    "success": True,
+    "message": "Successfully generated 1 images",
+    "attachments": [
+        {
+            "id": "image_0_generated_image_modern_1",
+            "filename": "generated_image_modern_1.png",
+            "contentType": "image/png",
+            "size": 1152573,
+            "s3Url": "chat-images/2/session-123/image.png",
+            "type": "image"  # or "video", "document"
+        }
+    ]
+}
+```
+
+### Complete Flow
+
+```
+Tool Execution → Upload to S3 → Yield observation + attachments
+    → SSE forwards to frontend → Fetch presigned URLs → Display in chat
+```
+
+**See [Attachment Handling Guide](./ATTACHMENT_HANDLING_GUIDE.md) for complete documentation.**
+
+## Additional Documentation
+
+- **[Attachment Handling Guide](./ATTACHMENT_HANDLING_GUIDE.md)** - Complete guide for media generation and display
+- [AWS Setup Guide](../AWS_SETUP_GUIDE.md) - Complete AWS setup instructions
+- [AWS Troubleshooting Guide](../AWS_TROUBLESHOOTING_GUIDE.md) - Common issues and solutions
+- [Model Provider Capabilities](../MODEL_PROVIDER_CAPABILITIES.md) - Model comparison and selection guide
+- [API Model Selection](../API_MODEL_SELECTION.md) - Model selection API documentation
+- [SageMaker Deployment Guide](./SAGEMAKER_DEPLOYMENT_GUIDE.md) - Deploy custom models
+- [Strands Agents Migration](./STRANDS_AGENTS_MIGRATION.md) - Framework migration details
+- [Multi-Provider Implementation](./MULTI_PROVIDER_IMPLEMENTATION.md) - Technical implementation details
+- [Web Search Unified](./WEB_SEARCH_UNIFIED.md) - Unified web search implementation
+- [Nova Search Implementation](./NOVA_SEARCH_IMPLEMENTATION.md) - Amazon Nova Search details
+
+---
+
+**For AWS-related issues, see [AWS Troubleshooting Guide](../AWS_TROUBLESHOOTING_GUIDE.md)**

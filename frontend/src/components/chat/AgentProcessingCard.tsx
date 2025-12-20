@@ -19,6 +19,25 @@ interface ProcessStep {
   timestamp: Date;
 }
 
+// Tool name mapping - show user-friendly names instead of internal tool names
+const getToolDisplayName = (toolName: string | undefined): string => {
+  if (!toolName) return '工具';
+
+  const toolNameMap: Record<string, string> = {
+    'web_search': '互联网搜索',
+    'google_search': '互联网搜索',
+    'nova_search': '互联网搜索',
+    'calculator': '计算器',
+    'datetime': '日期时间',
+    'generate_image_tool': '图片生成',
+    'generate_video_tool': '视频生成',
+    'create_campaign': '创建广告',
+    'get_reports': '获取报告',
+  };
+
+  return toolNameMap[toolName] || toolName;
+};
+
 /**
  * Agent Processing Card - Shows AI thinking and tool execution in real-time
  *
@@ -188,7 +207,7 @@ export function AgentProcessingCard({ status, isLoading, thinkingContent }: Agen
                   )}
                   {hasActions && !hasObservations && (
                     <div className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-                      {steps.find(s => s.type === 'action')?.tool || '工具'}
+                      {getToolDisplayName(steps.find(s => s.type === 'action')?.tool)}
                     </div>
                   )}
                 </div>
@@ -280,8 +299,8 @@ export function AgentProcessingCard({ status, isLoading, thinkingContent }: Agen
                         }`}>
                           {step.type === 'thinking' && '思考中'}
                           {step.type === 'thought' && '推理'}
-                          {step.type === 'action' && `执行: ${step.tool || '工具'}`}
-                          {step.type === 'observation' && `结果: ${step.tool || '工具'}`}
+                          {step.type === 'action' && `执行: ${getToolDisplayName(step.tool)}`}
+                          {step.type === 'observation' && `结果: ${getToolDisplayName(step.tool)}`}
                         </span>
                         {isLoading && index === steps.length - 1 && step.type !== 'observation' && (
                           <Loader2 className="w-3 h-3 text-gray-400 animate-spin" />

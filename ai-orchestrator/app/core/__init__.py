@@ -4,18 +4,16 @@ This package contains core infrastructure:
 - config: Configuration management
 - logging: Structured logging
 - redis_client: Redis connection
-- state: Agent state schema (legacy, for compatibility)
-- context: Context management utilities
-- react_agent: ReAct Agent implementation
+- strands_agent: Strands Agent implementation (ReAct pattern)
+- messages: Simple message types for AI interactions
+
+Legacy modules (not imported by default):
+- state: Agent state schema (legacy, requires langchain)
+- context: Context management utilities (legacy, requires langchain)
+- react_agent: ReAct Agent implementation (legacy, requires langchain)
 """
 
 from app.core.config import Settings, get_settings
-from app.core.context import (
-    compress_history,
-    extract_references,
-    get_context_window_usage,
-    resolve_reference,
-)
 from app.core.logging import (
     bind_context,
     clear_context,
@@ -26,13 +24,15 @@ from app.core.logging import (
 )
 from app.core.redis_client import RedisConnectionError, get_redis
 from app.core.redis_client import ping as redis_ping
-from app.core.state import (
-    ActionItem,
-    ActionResult,
-    AgentState,
-    ErrorInfo,
-    create_initial_state,
-)
+
+# Import message types
+from app.core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+
+# Note: Legacy modules with langchain dependencies are not imported by default.
+# Import them explicitly if needed:
+# from app.core.context import compress_history, extract_references, ...
+# from app.core.state import AgentState, ActionItem, ...
+# from app.core.react_agent import ReActAgent
 
 __all__ = [
     # Config
@@ -49,17 +49,15 @@ __all__ = [
     "RedisConnectionError",
     "get_redis",
     "redis_ping",
-    # State (legacy, for compatibility)
-    "AgentState",
-    "ActionItem",
-    "ActionResult",
-    "ErrorInfo",
-    "create_initial_state",
-    # Context
-    "extract_references",
-    "resolve_reference",
-    "compress_history",
-    "get_context_window_usage",
-    # Note: ReAct Agent should be imported directly:
+    # Messages
+    "BaseMessage",
+    "HumanMessage",
+    "AIMessage",
+    "SystemMessage",
+    # Note: Strands Agent should be imported directly:
+    # from app.core.strands_agent import StrandsReActAgent
+    # Legacy modules with langchain dependencies:
     # from app.core.react_agent import ReActAgent
+    # from app.core.state import AgentState, ActionItem, ...
+    # from app.core.context import extract_references, ...
 ]

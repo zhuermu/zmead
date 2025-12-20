@@ -64,15 +64,17 @@ cd frontend && npm run dev
 - **API**: FastAPI (Python 3.12+)
 - **MCP Server**: Model Context Protocol
 - **数据库**: MySQL 8.4 + Redis 7.x
-- **存储**: Google Cloud Storage
+- **存储**: Amazon S3 + CloudFront CDN
 - **异步任务**: Celery
 
 ### AI编排
-- **框架**: LangGraph
-- **LLM**: Gemini 2.5 Flash/Pro
-- **图片生成**: Gemini Imagen 3
-- **视频生成**: Gemini Veo 3.1
-- **模式**: ReAct (Reasoning + Acting)
+- **框架**: Strands Agents (多模型支持)
+- **LLM**: AWS Bedrock (Claude 4.5 Sonnet, Qwen3 235B, Nova 2 Lite) + Gemini fallback
+- **Web搜索**: 统一工具，自动降级 (Amazon Nova Search → Google Grounding)
+- **图片生成**: Qwen-Image (AWS SageMaker) + Bedrock Stable Diffusion
+- **视频生成**: Wan2.2 (AWS SageMaker)
+- **存储**: AWS S3 + 预签名URL (1小时有效期)
+- **流式响应**: SSE实时传输，无缓冲
 
 ## 项目结构
 
@@ -86,12 +88,13 @@ zmead/
 │   │   ├── services/       # 业务逻辑
 │   │   └── tasks/          # Celery异步任务
 │   └── alembic/            # 数据库迁移
-├── ai-orchestrator/         # AI代理服务 (LangGraph)
+├── ai-orchestrator/         # AI代理服务 (Strands Agents)
 │   ├── app/
-│   │   ├── nodes/          # LangGraph节点
-│   │   ├── modules/        # 能力模块
+│   │   ├── core/           # Strands Agent核心
+│   │   ├── tools/          # 统一工具 (web_search等)
+│   │   ├── modules/        # 业务逻辑实现
 │   │   ├── prompts/        # LLM提示词
-│   │   └── services/       # MCP客户端, Gemini客户端
+│   │   └── services/       # 模型提供商 (Bedrock, Gemini)
 │   └── tests/
 ├── frontend/                # Web界面 (Next.js)
 │   └── src/
@@ -114,19 +117,43 @@ REDIS_URL=redis://localhost:6379/0
 SECRET_KEY=your-secret-key-here
 WEB_PLATFORM_SERVICE_TOKEN=your-service-token
 
-# Google Cloud Storage
-GCS_PROJECT_ID=your-project-id
-GCS_CREDENTIALS_PATH=/path/to/credentials.json
-GEMINI_API_KEY=your-gemini-api-key
+# AWS配置
+AWS_REGION=us-west-2
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
 
-# GCS存储桶
-# aae-user-uploads-temp (临时存储, 48h生命周期)
-# aae-user-uploads (永久存储)
+# S3存储桶
+S3_BUCKET_CREATIVES=aae-creatives
+S3_BUCKET_LANDING_PAGES=aae-landing-pages
+S3_BUCKET_EXPORTS=aae-exports
+S3_BUCKET_UPLOADS=aae-user-uploads
+CLOUDFRONT_DOMAIN=your-cloudfront-domain.cloudfront.net
+
+# 存储提供商 (s3 或 gcs)
+STORAGE_PROVIDER=s3
 ```
 
 ### AI Orchestrator (.env)
 ```bash
-GEMINI_API_KEY=your-gemini-api-key
+# AI模型配置
+DEFAULT_MODEL_PROVIDER=bedrock  # gemini 或 bedrock
+GEMINI_API_KEY=your-gemini-api-key  # 如果使用Gemini
+
+# AWS配置
+AWS_REGION=us-west-2
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+
+# Bedrock模型
+BEDROCK_MODEL_CLAUDE=anthropic.claude-sonnet-4-20250514-v1:0
+BEDROCK_MODEL_QWEN=qwen.qwen3-235b-a22b-2507-v1:0
+BEDROCK_MODEL_NOVA=us.amazon.nova-lite-v1:0
+
+# SageMaker端点
+SAGEMAKER_ENDPOINT_QWEN_IMAGE=qwen-image-endpoint
+SAGEMAKER_ENDPOINT_WAN_VIDEO=wan-video-endpoint
+
+# 服务配置
 WEB_PLATFORM_URL=http://localhost:8000
 WEB_PLATFORM_SERVICE_TOKEN=same-as-backend-token
 REDIS_URL=redis://localhost:6379/0
@@ -137,29 +164,76 @@ REDIS_URL=redis://localhost:6379/0
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-**重要**: `WEB_PLATFORM_SERVICE_TOKEN` 必须在backend和ai-orchestrator中保持一致。
+**重要**: 
+- `WEB_PLATFORM_SERVICE_TOKEN` 必须在backend和ai-orchestrator中保持一致
+- AWS凭证可以通过环境变量或IAM角色提供
+- 详细的AWS配置指南请参见 [AWS_DEPLOYMENT_GUIDE.md](./AWS_DEPLOYMENT_GUIDE.md)
 
 ## 最近更新
+
+### 2025-12-19: 统一Web搜索和流式优化 ✅
+
+**核心功能增强**:
+- ✅ 统一`web_search`工具，自动降级 (Amazon Nova Search → Google Grounding)
+- ✅ S3预签名URL支持，图片/视频安全访问（1小时有效期）
+- ✅ 实时流式响应，移除文本缓冲，真实传输模型输出
+- ✅ 前端工具名称映射，用户友好的中文显示（如"互联网搜索"）
+
+**技术实现**:
+- ✅ `NovaSearchTool`: Amazon Bedrock Converse API + nova_grounding
+- ✅ `WebSearchTool`: 自动降级逻辑，透明切换搜索提供商
+- ✅ S3Client: 预签名URL生成方法（1小时过期）
+- ✅ Strands Agent: 直接转发delta.text，无缓冲
+- ✅ Frontend: AgentProcessingCard工具名称映射
+
+**详细文档**:
+- [统一Web搜索实现](./ai-orchestrator/WEB_SEARCH_UNIFIED.md)
+- [Nova Search实现详情](./ai-orchestrator/NOVA_SEARCH_IMPLEMENTATION.md)
+
+### 2025-12-18: AWS集成完成 ✅
+
+完成了从Google Cloud到AWS的全面迁移：
+
+**基础设施迁移**:
+- ✅ S3存储替代GCS（支持CloudFront CDN）
+- ✅ AWS Bedrock多模型支持（Claude 4.5 Sonnet, Qwen3, Nova 2 Lite）
+- ✅ SageMaker自定义模型部署（Qwen-Image, Wan2.2）
+- ✅ Strands Agents框架替代LangGraph
+
+**用户功能**:
+- ✅ 用户可选择AI模型提供商（Gemini或Bedrock）
+- ✅ 模型偏好设置界面
+- ✅ 多提供商积分扣除支持
+- ✅ 完整的AWS服务集成测试
+
+**部署配置**:
+- ✅ Docker配置更新
+- ✅ AWS凭证管理
+- ✅ 部署脚本和验证工具
+- ✅ 完整的文档和故障排查指南
+
+**详细文档**:
+- [AWS部署指南](./AWS_DEPLOYMENT_GUIDE.md)
+- [AWS配置摘要](./AWS_MIGRATION_CONFIGURATION_SUMMARY.md)
+- [集成测试摘要](./TASK_12_INTEGRATION_TESTS_SUMMARY.md)
 
 ### 2025-12-04: 多模态文件上传功能完成 ✅
 
 实现了完整的文件上传功能，支持图片、视频和文档：
 
 **功能特性**:
-- ✅ 直接上传到GCS（使用预签名URL）
+- ✅ 直接上传到S3（使用预签名URL）
 - ✅ 实时上传进度显示
 - ✅ 图片/视频预览
 - ✅ 多文件上传支持
 - ✅ 拖拽上传
 - ✅ 文件大小和类型验证
-- ✅ 与Gemini File API集成
+- ✅ 与AI模型集成
 
 **支持的文件类型**:
 - 图片: PNG, JPEG, WebP, HEIC (最大20MB)
 - 视频: MP4, MOV, WebM (最大200MB)
 - 文档: PDF, TXT, HTML, CSS等 (最大50MB)
-
-**Bug修复记录**: 详见 [TEST_RESULTS_2025-12-04.md](./TEST_RESULTS_2025-12-04.md)
 
 ## 开发指南
 

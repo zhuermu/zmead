@@ -19,11 +19,18 @@ from typing import Any, TypeVar
 import structlog
 from google import genai
 from google.genai import types
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 
 from app.core.config import get_settings
+from app.core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+
+# Import langchain types only if needed (for backward compatibility)
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+    ChatGoogleGenerativeAI = None
 
 logger = structlog.get_logger(__name__)
 
@@ -158,8 +165,16 @@ class GeminiClient:
             self._genai_client = genai.Client(api_key=self.api_key)
         return self._genai_client
 
-    def _get_chat_llm(self) -> ChatGoogleGenerativeAI:
-        """Get or create chat LLM instance (Gemini 2.5 Pro)."""
+    def _get_chat_llm(self):
+        """Get or create chat LLM instance (Gemini 2.5 Pro).
+
+        Returns:
+            ChatGoogleGenerativeAI if available, None otherwise
+        """
+        if not LANGCHAIN_AVAILABLE:
+            logger.warning("langchain_not_available", feature="chat_llm")
+            return None
+
         if self._chat_llm is None:
             self._chat_llm = ChatGoogleGenerativeAI(
                 model=self.chat_model_name,
@@ -170,8 +185,16 @@ class GeminiClient:
             )
         return self._chat_llm
 
-    def _get_fast_llm(self) -> ChatGoogleGenerativeAI:
-        """Get or create fast LLM instance (Gemini 2.5 Flash)."""
+    def _get_fast_llm(self):
+        """Get or create fast LLM instance (Gemini 2.5 Flash).
+
+        Returns:
+            ChatGoogleGenerativeAI if available, None otherwise
+        """
+        if not LANGCHAIN_AVAILABLE:
+            logger.warning("langchain_not_available", feature="fast_llm")
+            return None
+
         if self._fast_llm is None:
             self._fast_llm = ChatGoogleGenerativeAI(
                 model=self.fast_model_name,

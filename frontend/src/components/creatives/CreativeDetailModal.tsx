@@ -211,12 +211,12 @@ export function CreativeDetailModal({
                     <span className="text-gray-600">Created:</span>{' '}
                     <span className="font-medium">{formatDate(creative.createdAt)}</span>
                   </p>
-                  <p>
-                    <span className="text-gray-600">Status:</span>{' '}
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-600 text-sm">Status:</span>
                     <Badge variant={creative.status === 'active' ? 'default' : 'secondary'}>
                       {creative.status}
                     </Badge>
-                  </p>
+                  </div>
                 </div>
               </div>
 

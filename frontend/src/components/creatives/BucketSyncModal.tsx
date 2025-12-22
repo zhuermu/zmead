@@ -87,11 +87,12 @@ export function BucketSyncModal({ onClose, onComplete }: BucketSyncModalProps) {
       await fetchBucketFiles();
       setSelectedFiles(new Set());
 
-      // If all synced successfully, auto-complete
-      if (response.data.failedCount === 0 && response.data.syncedCount > 0) {
+      // Auto-complete after showing result (longer delay if there are failures)
+      if (response.data.syncedCount > 0) {
+        const delay = response.data.failedCount > 0 ? 2500 : 1500;
         setTimeout(() => {
           onComplete();
-        }, 1500);
+        }, delay);
       }
     } catch (err) {
       console.error('Failed to sync files:', err);
@@ -338,9 +339,24 @@ export function BucketSyncModal({ onClose, onComplete }: BucketSyncModalProps) {
             <Button
               onClick={handleSync}
               disabled={selectedCount === 0 || syncing}
+              className={syncResult && syncResult.syncedCount > 0 ? 'bg-green-600 hover:bg-green-700' : ''}
             >
-              <CloudDownload className="w-4 h-4 mr-2" />
-              {syncing ? 'Syncing...' : `Sync ${selectedCount > 0 ? `(${selectedCount})` : ''}`}
+              {syncResult && syncResult.syncedCount > 0 ? (
+                <>
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Synced {syncResult.syncedCount} files!
+                </>
+              ) : syncing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                <>
+                  <CloudDownload className="w-4 h-4 mr-2" />
+                  Sync {selectedCount > 0 ? `(${selectedCount})` : ''}
+                </>
+              )}
             </Button>
           </div>
         </div>

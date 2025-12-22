@@ -1,0 +1,44 @@
+{
+  "CallerReference": "landing-zmead-com-1703242583",
+  "Aliases": {
+    "Quantity": 1,
+    "Items": ["landing.zmead.com"]
+  },
+  "DefaultRootObject": "index.html",
+  "Origins": {
+    "Quantity": 1,
+    "Items": [
+      {
+        "Id": "aae-landing-pages-s3",
+        "DomainName": "aae-landing-pages.s3.us-east-1.amazonaws.com",
+        "OriginAccessControlId": "E2XIA6TY1Q8XE0",
+        "S3OriginConfig": {
+          "OriginAccessIdentity": ""
+        }
+      }
+    ]
+  },
+  "DefaultCacheBehavior": {
+    "TargetOriginId": "aae-landing-pages-s3",
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "AllowedMethods": {
+      "Quantity": 2,
+      "Items": ["GET", "HEAD"],
+      "CachedMethods": {
+        "Quantity": 2,
+        "Items": ["GET", "HEAD"]
+      }
+    },
+    "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+    "Compress": true
+  },
+  "Comment": "Landing pages for zmead.com",
+  "Enabled": true,
+  "PriceClass": "PriceClass_100",
+  "ViewerCertificate": {
+    "CloudFrontDefaultCertificate": false,
+    "ACMCertificateArn": "arn:aws:acm:us-east-1:767828766472:certificate/f5232dae-bfc8-4da0-a8d2-4648a3d88b7f",
+    "SSLSupportMethod": "sni-only",
+    "MinimumProtocolVersion": "TLSv1.2_2021"
+  }
+}

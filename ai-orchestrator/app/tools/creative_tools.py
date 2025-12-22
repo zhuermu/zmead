@@ -53,17 +53,23 @@ class GenerateImageTool(AgentTool):
             name="generate_image_tool",
             description=(
                 "Generate advertising images using AI. "
-                "Provide product information and style preferences to create "
-                "professional ad creatives. Supports various aspect ratios for "
-                "different platforms (TikTok, Instagram, Facebook)."
+                "You can either provide a direct English prompt OR structured product_info. "
+                "For best results with Bedrock Stable Diffusion, use the 'prompt' parameter "
+                "with a clear, concise English description focusing on visual elements."
             ),
             category=ToolCategory.AGENT_CUSTOM,
             parameters=[
                 ToolParameter(
                     name="product_info",
                     type="object",
-                    description="Product information including name, description, features",
-                    required=True,
+                    description="Product information including name, description, features (optional if using prompt)",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="prompt",
+                    type="string",
+                    description="Direct English prompt for image generation. Use this for precise control. Example: 'A modern smartphone with sleek design, metallic frame, edge-to-edge display, professional product photography, clean white background, soft studio lighting'",
+                    required=False,
                 ),
                 ToolParameter(
                     name="style",
@@ -117,6 +123,7 @@ class GenerateImageTool(AgentTool):
         """
         user_id = context.get("user_id") if context else None
         product_info = parameters.get("product_info", {})
+        direct_prompt = parameters.get("prompt")  # Direct English prompt
         style = parameters.get("style", "modern")
         aspect_ratio = parameters.get("aspect_ratio", "1:1")
         count = parameters.get("count", 1)
@@ -147,8 +154,11 @@ class GenerateImageTool(AgentTool):
         log.info("generate_image_start")
 
         try:
-            # Handle product_info - it can be a string, JSON string, or dict
-            if isinstance(product_info, str):
+            # Priority 1: Use direct_prompt if provided (best for Bedrock SD)
+            if direct_prompt:
+                prompt = direct_prompt
+            # Priority 2: Handle product_info - it can be a string, JSON string, or dict
+            elif isinstance(product_info, str):
                 # Try to parse as JSON first
                 try:
                     import json
@@ -162,16 +172,16 @@ class GenerateImageTool(AgentTool):
                     else:
                         # Use the dict for _build_image_prompt
                         product_info = product_info_dict
-                        prompt = self._build_image_prompt(product_info, style)
+                        prompt = self._build_image_prompt(product_info, style, image_provider)
                 except (json.JSONDecodeError, ValueError):
                     # Not JSON, treat as plain text description
                     prompt = product_info
-            elif isinstance(product_info, dict):
+            elif isinstance(product_info, dict) and product_info:
                 # Already a dict, use _build_image_prompt
-                prompt = self._build_image_prompt(product_info, style)
+                prompt = self._build_image_prompt(product_info, style, image_provider)
             else:
-                # Fallback: convert to string
-                prompt = str(product_info)
+                # No prompt or product_info provided - generate a generic one
+                prompt = f"Professional advertising image, {style} style, high quality, commercial photography"
 
             log.info("generating_image", prompt_preview=prompt[:100])
 
@@ -280,7 +290,7 @@ class GenerateImageTool(AgentTool):
                         index=idx,
                         error=str(e),
                     )
-                    # Fallback: include base64 only if GCS fails
+                    # Fallback: include base64 only if S3 fails
                     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
                     image_objects.append({
                         "index": idx,
@@ -295,12 +305,12 @@ class GenerateImageTool(AgentTool):
                         "save_creative",
                         {
                             "user_id": user_id,
-                            "gcs_object_name": image_objects[-1].get("object_name"),
+                            "s3_object_name": image_objects[-1].get("object_name"),
                             "metadata": {
                                 "product_name": product_name,
                                 "style": style,
                                 "aspect_ratio": aspect_ratio,
-                                "generated_by": "gemini_imagen",
+                                "generated_by": image_provider,
                                 "prompt": prompt,
                             },
                         },
@@ -313,7 +323,7 @@ class GenerateImageTool(AgentTool):
             log.info(
                 "generate_image_complete",
                 generated=len(image_bytes_list),
-                uploaded_to_gcs=len([obj for obj in image_objects if obj.get("object_name")]),
+                uploaded_to_s3=len([obj for obj in image_objects if obj.get("object_name")]),
             )
 
             return {
@@ -351,12 +361,14 @@ class GenerateImageTool(AgentTool):
         self,
         product_info: dict[str, Any],
         style: str,
+        image_provider: str = "gemini",
     ) -> str:
         """Build image generation prompt.
 
         Args:
             product_info: Product information
             style: Visual style
+            image_provider: Image generation provider (gemini/bedrock/sagemaker)
 
         Returns:
             Generation prompt
@@ -376,7 +388,36 @@ class GenerateImageTool(AgentTool):
 
         style_desc = style_prompts.get(style, "professional advertising style")
 
-        prompt = f"""Create a professional advertising image for {product_name}.
+        # For Bedrock Stable Diffusion: use concise, comma-separated format
+        # Avoid structured text like "Key Features:" which SD interprets literally
+        if image_provider == "bedrock":
+            # Build a simple, descriptive prompt
+            parts = []
+
+            # Add product name if meaningful
+            if product_name and product_name != "product":
+                parts.append(product_name)
+
+            # Add description
+            if description:
+                parts.append(description)
+
+            # Add features as natural text (not as list)
+            if features:
+                features_text = ", ".join(features[:3])
+                parts.append(features_text)
+
+            # Add style and quality keywords
+            parts.append(style_desc)
+            parts.append("professional advertising photography")
+            parts.append("high quality")
+            parts.append("commercial product shot")
+            parts.append("8K ultra HD")
+
+            prompt = ", ".join(filter(None, parts))
+        else:
+            # For Gemini: use structured format which works better
+            prompt = f"""Create a professional advertising image for {product_name}.
 
 Product Description: {description}
 
@@ -547,6 +588,7 @@ class GenerateVideoTool(AgentTool):
         import asyncio
 
         user_id = context.get("user_id") if context else None
+        session_id = context.get("session_id", "unknown") if context else "unknown"
         product_info = parameters.get("product_info", {})
         direct_prompt = parameters.get("prompt")
         style = parameters.get("style", "dynamic")
@@ -712,7 +754,7 @@ class GenerateVideoTool(AgentTool):
                             filename=filename,
                             user_id=user_id or "anonymous",
                             content_type="video/mp4",
-                            prefix="chat-videos",
+                            session_id=session_id or "videos",
                             metadata={
                                 "style": style,
                                 "duration": str(duration),
@@ -737,7 +779,7 @@ class GenerateVideoTool(AgentTool):
                         )
                     except S3Error as e:
                         log.warning("s3_upload_failed", error=str(e))
-                        # Fallback to base64 if GCS upload fails
+                        # Fallback to base64 if S3 upload fails
                         if video_data_b64:
                             final_result["video_data_b64"] = video_data_b64
                             final_result["video_format"] = "mp4"
@@ -831,7 +873,7 @@ class GenerateVideoTool(AgentTool):
                                 filename=filename,
                                 user_id=user_id or "anonymous",
                                 content_type="video/mp4",
-                                prefix="chat-videos",
+                                session_id=session_id or "videos",
                                 metadata={
                                     "style": style,
                                     "duration": str(duration),
@@ -859,7 +901,7 @@ class GenerateVideoTool(AgentTool):
                                 "s3_upload_failed",
                                 error=str(e),
                             )
-                            # Fallback to base64 if GCS upload fails
+                            # Fallback to base64 if S3 upload fails
                             video_data_b64 = poll_result.get("video_data_b64")
                             if video_data_b64:
                                 result["video_data_b64"] = video_data_b64

@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.storage import creatives_storage, uploads_storage
+from app.core.storage import creatives_storage
 from app.models.creative import Creative
 from app.schemas.creative import (
     CreativeCreate,
@@ -35,7 +35,7 @@ class CreativeService:
         """Generate a signed download URL for a creative file.
 
         Args:
-            file_url: The file URL (can be gs:// or https://storage.googleapis.com/ format)
+            file_url: The file URL (s3:// or https://{bucket}.s3.{region}.amazonaws.com/ format)
             expires_in: URL expiration time in seconds (default 1 hour)
 
         Returns:
@@ -45,25 +45,22 @@ class CreativeService:
             # Extract file key from URL
             file_key = None
 
-            if file_url.startswith("gs://"):
-                # Format: gs://bucket/key
-                parts = file_url.replace("gs://", "").split("/", 1)
+            if file_url.startswith("s3://"):
+                # Format: s3://bucket/key
+                parts = file_url.replace("s3://", "").split("/", 1)
                 if len(parts) > 1:
                     file_key = parts[1]
-            elif "storage.googleapis.com/" in file_url:
-                # Format: https://storage.googleapis.com/bucket/key
-                parts = file_url.split("storage.googleapis.com/", 1)
+            elif ".s3." in file_url and ".amazonaws.com/" in file_url:
+                # Format: https://{bucket}.s3.{region}.amazonaws.com/key
+                parts = file_url.split(".amazonaws.com/", 1)
                 if len(parts) > 1:
-                    # Remove bucket name to get key
-                    path_parts = parts[1].split("/", 1)
-                    if len(path_parts) > 1:
-                        file_key = path_parts[1]
+                    file_key = parts[1]
 
             if not file_key:
                 return None
 
-            # Generate signed URL using uploads_storage (where user files are stored)
-            return uploads_storage.generate_presigned_download_url(
+            # Generate signed URL using creatives_storage
+            return creatives_storage.generate_presigned_download_url(
                 key=file_key,
                 expires_in=expires_in,
             )
@@ -247,13 +244,13 @@ class CreativeService:
             raise CreativeNotFoundError(creative_id)
 
         if hard_delete:
-            # Delete GCS file
+            # Delete S3 file
             try:
-                file_key = self._extract_gcs_key(creative.file_url)
+                file_key = self._extract_s3_key(creative.file_url)
                 if file_key:
                     creatives_storage.delete_file(file_key)
             except Exception:
-                # Log but don't fail if GCS deletion fails
+                # Log but don't fail if S3 deletion fails
                 pass
 
             await self.db.delete(creative)
@@ -265,26 +262,23 @@ class CreativeService:
         await self.db.flush()
         return True
 
-    def _extract_gcs_key(self, gcs_url: str) -> str | None:
-        """Extract GCS key from GCS URL.
+    def _extract_s3_key(self, file_url: str) -> str | None:
+        """Extract S3 key from S3 URL.
 
         Args:
-            gcs_url: GCS URL (gs://bucket/key or https://storage.googleapis.com/...)
+            file_url: S3 URL (s3://bucket/key or https://{bucket}.s3.{region}.amazonaws.com/key)
 
         Returns:
-            GCS key or None
+            S3 key or None
         """
-        if gcs_url.startswith("gs://"):
-            # gs://bucket/key format
-            parts = gcs_url.replace("gs://", "").split("/", 1)
+        if file_url.startswith("s3://"):
+            # s3://bucket/key format
+            parts = file_url.replace("s3://", "").split("/", 1)
             return parts[1] if len(parts) > 1 else None
-        elif "storage.googleapis.com/" in gcs_url:
-            # https://storage.googleapis.com/bucket/key format
-            parts = gcs_url.split("storage.googleapis.com/", 1)
-            if len(parts) > 1:
-                # Remove bucket name from path
-                path_parts = parts[1].split("/", 1)
-                return path_parts[1] if len(path_parts) > 1 else None
+        elif ".s3." in file_url and ".amazonaws.com/" in file_url:
+            # https://{bucket}.s3.{region}.amazonaws.com/key format
+            parts = file_url.split(".amazonaws.com/", 1)
+            return parts[1] if len(parts) > 1 else None
         return None
 
     def generate_presigned_upload_url(
@@ -294,7 +288,10 @@ class CreativeService:
         content_type: str,
         expires_in: int = 3600,
     ) -> dict[str, Any]:
-        """Generate presigned URL for file upload.
+        """Generate presigned URL for user-uploaded file.
+
+        User-uploaded files are stored in: users/{user_id}/uploaded/{unique_id}.{ext}
+        AI-generated files are stored in: users/{user_id}/generated/{session_id}/{filename}
 
         Args:
             user_id: User ID for organizing files
@@ -305,10 +302,10 @@ class CreativeService:
         Returns:
             Dictionary with upload_url, upload_fields, file_key, s3_url, cdn_url
         """
-        # Generate unique file key
+        # Generate unique file key for user uploads
         file_ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
         unique_id = uuid.uuid4().hex
-        file_key = f"users/{user_id}/creatives/{unique_id}.{file_ext}"
+        file_key = f"users/{user_id}/uploaded/{unique_id}.{file_ext}"
 
         # Generate presigned POST URL
         presigned = creatives_storage.generate_presigned_upload_url(
@@ -318,14 +315,14 @@ class CreativeService:
         )
 
         # Get URLs
-        gcs_url = f"gs://{creatives_storage.bucket_name}/{file_key}"
+        s3_url = f"s3://{creatives_storage.bucket_name}/{file_key}"
         cdn_url = creatives_storage.get_cdn_url(file_key)
 
         return {
             "upload_url": presigned["url"],
             "upload_fields": presigned["fields"],
             "file_key": file_key,
-            "gcs_url": gcs_url,
+            "s3_url": s3_url,
             "cdn_url": cdn_url,
             "expires_in": expires_in,
         }
@@ -360,7 +357,7 @@ class CreativeService:
         user_id: int,
         file_types: list[str] | None = None,
     ) -> list[dict]:
-        """List files in user's uploads bucket.
+        """List files in user's S3 uploads bucket.
 
         Args:
             user_id: User ID
@@ -369,9 +366,9 @@ class CreativeService:
         Returns:
             List of file info dicts
         """
-        # User uploads are stored at: {user_id}/chat-attachments/...
-        prefix = f"{user_id}/"
-        files = uploads_storage.list_files(prefix=prefix)
+        # All creative files are stored in creatives bucket at: users/{user_id}/
+        prefix = f"users/{user_id}/"
+        files = creatives_storage.list_files(prefix=prefix)
 
         # Filter by file type if specified
         if file_types:
@@ -406,24 +403,24 @@ class CreativeService:
         user_id: int,
         file_key: str,
     ) -> dict:
-        """Sync a single file from bucket to creatives database.
+        """Sync a single file from S3 bucket to creatives database.
 
         Args:
             user_id: User ID
-            file_key: GCS file key
+            file_key: S3 file key
 
         Returns:
             Dict with success status and creative_id or error
         """
         try:
-            # Get file info from bucket
-            file_info = uploads_storage.get_file_info(file_key)
+            # Get file info from creatives bucket
+            file_info = creatives_storage.get_file_info(file_key)
 
             if not file_info:
                 return {"success": False, "error": "File not found in bucket"}
 
-            # Validate file belongs to user (format: {user_id}/chat-attachments/...)
-            if not file_key.startswith(f"{user_id}/"):
+            # Validate file belongs to user (format: users/{user_id}/...)
+            if not file_key.startswith(f"users/{user_id}/"):
                 return {"success": False, "error": "File does not belong to user"}
 
             # Check if already synced

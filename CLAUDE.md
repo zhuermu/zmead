@@ -262,26 +262,49 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 Required environment variables:
 - **Backend**:
   - Core: `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `WEB_PLATFORM_SERVICE_TOKEN`
-  - File Upload: `GCS_PROJECT_ID`, `GCS_CREDENTIALS_PATH`, `GEMINI_API_KEY`
-  - GCS Buckets: `aae-user-uploads-temp`, `aae-user-uploads` (临时+永久存储)
-- **AI Orchestrator**: `GEMINI_API_KEY`, `WEB_PLATFORM_URL`, `WEB_PLATFORM_SERVICE_TOKEN`, `REDIS_URL`
+  - AWS: `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (or use IAM roles)
+  - S3 Buckets: `S3_BUCKET_CREATIVES`, `S3_BUCKET_LANDING_PAGES`, `S3_BUCKET_EXPORTS`
+  - CloudFront: `CLOUDFRONT_DOMAIN` (required for landing pages)
+- **AI Orchestrator**: `GEMINI_API_KEY`, `WEB_PLATFORM_URL`, `WEB_PLATFORM_SERVICE_TOKEN`, `REDIS_URL`, `AWS_REGION`, `S3_BUCKET_CREATIVES`
 
-### File Upload Configuration
+### Storage Architecture
 
-**GCS Service Account Setup**:
-1. Create Service Account at [IAM Console](https://console.cloud.google.com/iam-admin/serviceaccounts)
-2. Grant role: `Storage Object Admin`
-3. Download JSON key and set `GCS_CREDENTIALS_PATH=/path/to/key.json`
+**S3 Bucket Structure** (需要手动创建):
 
-**GCS Buckets** (需要手动创建):
-- `aae-user-uploads-temp` - 临时存储 (48h lifecycle)
-- `aae-user-uploads` - 永久存储 (按用户组织)
+1. **`aae-creatives`** - All creative assets (统一存储所有创意素材)
+   ```
+   users/{user_id}/uploaded/        # 用户手动上传的素材
+   ├── {uuid}.png
+   └── {uuid}.mp4
 
-**File Upload Methods**:
-- Traditional: `POST /api/v1/uploads` - 文件经过backend
-- Direct Upload: `POST /api/v1/uploads/presigned/*` - 前端直接上传GCS (推荐)
+   users/{user_id}/generated/       # AI 生成的素材
+   └── {session_id}/
+       ├── {filename}.png
+       └── {filename}.mp4
+   ```
+   - 包含用户上传和 AI 生成的所有素材
+   - 所有素材记录同步到 `creatives` 数据表
+   - 通过 S3 presigned URLs 提供访问（1小时有效期）
 
-详见: `frontend/DIRECT_UPLOAD_EXAMPLE.md`
+2. **`aae-landing-pages`** - Landing page HTML files (通过 CloudFront CDN 公开访问)
+   ```
+   {user_id}/{landing_page_id}/
+   └── index.html
+   ```
+   - 独立存储，避免与 creative 素材混淆
+   - **必须配置 CloudFront CDN** 提供公开访问
+   - 发布后生成 CloudFront URL: `https://landing.zmead.com/{user_id}/{landing_page_id}/index.html`
+
+3. **`aae-exports`** - Data export files (临时文件)
+   ```
+   users/{user_id}/exports/{date}/
+   └── export.csv
+   ```
+
+**CloudFront CDN Setup** (Landing Pages):
+1. Create CloudFront distribution pointing to `aae-landing-pages` bucket
+2. Set `CLOUDFRONT_DOMAIN` environment variable (default: `landing.zmead.com`)
+3. Landing pages will be accessible via: `https://landing.zmead.com/{user_id}/{landing_page_id}/index.html`
 
 ## Development Notes
 

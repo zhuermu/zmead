@@ -1,13 +1,10 @@
 {
   "CORSRules": [
     {
-      "AllowedOrigins": [
-        "http://localhost:3000",
-        "https://*.zmead.com"
-      ],
+      "AllowedOrigins": ["http://localhost:3000", "https://*.zmead.com"],
       "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
       "AllowedHeaders": ["*"],
-      "ExposeHeaders": ["ETag"],
+      "ExposeHeaders": ["ETag", "Content-Length", "Content-Type"],
       "MaxAgeSeconds": 3600
     }
   ]

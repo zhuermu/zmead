@@ -8,12 +8,9 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
-from app.core.storage import S3Storage
+from app.core.storage import creatives_storage
 
 router = APIRouter(prefix="/uploads/presigned", tags=["uploads"])
-
-# Permanent uploads storage (S3)
-uploads_storage = S3Storage(settings.s3_bucket_uploads)
 
 
 class PresignedUploadRequest(BaseModel):
@@ -153,14 +150,14 @@ async def generate_chat_attachment_upload_url(
     gcs_path = f"{current_user.id}/chat-attachments/{request.session_id}/{file_id}{ext}"
 
     # Generate presigned upload URL (valid for 15 minutes)
-    presigned_data = uploads_storage.generate_presigned_upload_url(
+    presigned_data = creatives_storage.generate_presigned_upload_url(
         key=gcs_path,
         content_type=request.content_type,
         expires_in=900,  # 15 minutes to complete upload
     )
 
     # Generate signed download URL (valid for 1 hour)
-    download_url = uploads_storage.generate_presigned_download_url(
+    download_url = creatives_storage.generate_presigned_download_url(
         key=gcs_path,
         expires_in=3600,  # 1 hour
     )
@@ -203,7 +200,7 @@ async def generate_presigned_url(
     object_key = f"uploads/{current_user.id}/{file_id}{ext}"
 
     # Generate presigned URL (valid for 1 hour)
-    presigned_data = uploads_storage.generate_presigned_upload_url(
+    presigned_data = creatives_storage.generate_presigned_upload_url(
         key=object_key,
         content_type=request.contentType,
         expires_in=3600,  # 1 hour to complete upload
@@ -213,7 +210,7 @@ async def generate_presigned_url(
     expires_at = datetime.utcnow() + timedelta(seconds=3600)
 
     # Get CDN URL for preview (will be valid after upload completes)
-    cdn_url = uploads_storage.get_cdn_url(object_key)
+    cdn_url = creatives_storage.get_cdn_url(object_key)
 
     return PresignedUploadResponse(
         uploadUrl=presigned_data["url"],
@@ -249,7 +246,7 @@ async def confirm_upload(
     from app.core.gemini_files import gemini_files_service
 
     # Verify file exists in uploads storage
-    if not uploads_storage.file_exists(request.fileKey):
+    if not creatives_storage.file_exists(request.fileKey):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
@@ -262,13 +259,20 @@ async def confirm_upload(
             detail="Access denied",
         )
 
-    # Download file
-    file_blob = uploads_storage.bucket.blob(request.fileKey)
-    file_data = file_blob.download_as_bytes()
-    content_type = file_blob.content_type or "application/octet-stream"
+    # Download file from S3
+    file_data = creatives_storage.download_file(request.fileKey)
+    if not file_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Failed to download file",
+        )
+
+    # Get file info for content type
+    file_info = creatives_storage.get_file_info(request.fileKey)
+    content_type = file_info.get("content_type", "application/octet-stream") if file_info else "application/octet-stream"
 
     # Get CDN URL
-    cdn_url = uploads_storage.get_cdn_url(request.fileKey)
+    cdn_url = creatives_storage.get_cdn_url(request.fileKey)
 
     # Upload to Gemini Files API
     gemini_file_uri = None
@@ -286,7 +290,7 @@ async def confirm_upload(
         gemini_file_name = gemini_result.get("name")
 
     # Generate signed download URL
-    perm_url = uploads_storage.generate_presigned_download_url(
+    perm_url = creatives_storage.generate_presigned_download_url(
         key=request.fileKey,
         expires_in=3600,
     )

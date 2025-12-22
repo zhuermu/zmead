@@ -72,28 +72,6 @@ class Settings(BaseSettings):
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
-    # Google Cloud Storage
-    gcs_project_id: str = Field(default="")
-    gcs_credentials_path: str = Field(default="")  # Path to service account JSON
-    gcs_bucket_creatives: str = "aae-creatives"
-    gcs_bucket_landing_pages: str = "aae-landing-pages"
-    gcs_bucket_exports: str = "aae-exports"
-    gcs_bucket_uploads: str = "aae-user-uploads"  # All file uploads (permanent storage)
-    gcs_cdn_domain: str = Field(default="")  # Custom domain or Cloud CDN domain
-    gcs_landing_pages_cdn_domain: str = Field(default="")  # CDN domain for landing pages
-
-    @field_validator("gcs_cdn_domain", mode="before")
-    @classmethod
-    def clean_cdn_domain(cls, v: str) -> str:
-        """Strip whitespace and comments from CDN domain."""
-        if not v:
-            return ""
-        # Strip whitespace and anything after #
-        v = v.strip()
-        if "#" in v:
-            v = v.split("#")[0].strip()
-        return v
-
     # AWS Configuration
     aws_region: str = Field(default="us-west-2")
     aws_access_key_id: str = Field(default="")
@@ -105,7 +83,7 @@ class Settings(BaseSettings):
     s3_bucket_landing_pages: str = "aae-landing-pages"
     s3_bucket_exports: str = "aae-exports"
     s3_bucket_uploads: str = "aae-user-uploads"
-    cloudfront_domain: str = Field(default="")  # CloudFront CDN domain
+    cloudfront_domain: str = Field(default="landing.zmead.com")  # CloudFront CDN domain for landing pages
     
     # AWS Bedrock Configuration
     bedrock_region: str = Field(default="us-west-2")

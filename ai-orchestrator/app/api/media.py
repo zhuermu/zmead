@@ -1,6 +1,6 @@
 """Media API endpoints for signed URL generation.
 
-This module provides endpoints for accessing GCS media files
+This module provides endpoints for accessing S3 media files
 through signed URLs for secure, time-limited access.
 
 Requirements: 视频/图片使用签名URL访问，不暴露存储桶公开访问
@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.config import get_settings
-from app.services.gcs_client import GCSError, get_gcs_client
+from app.services.s3_client import S3Error, get_s3_client
 
 logger = structlog.get_logger(__name__)
 
@@ -37,7 +37,7 @@ class SignedUrlResponse(BaseModel):
 
 @router.post("/signed-url", response_model=SignedUrlResponse)
 async def get_signed_url(request: SignedUrlRequest) -> dict[str, Any]:
-    """Generate a signed URL for accessing a GCS object.
+    """Generate a signed URL for accessing an S3 object.
 
     Args:
         request: Request with object_name and optional expiration
@@ -49,7 +49,7 @@ async def get_signed_url(request: SignedUrlRequest) -> dict[str, Any]:
         HTTPException: If signed URL generation fails
     """
     settings = get_settings()
-    expiration = request.expiration_minutes or settings.gcs_signed_url_expiration
+    expiration = request.expiration_minutes or 60  # Default 1 hour
 
     log = logger.bind(
         object_name=request.object_name,
@@ -58,10 +58,10 @@ async def get_signed_url(request: SignedUrlRequest) -> dict[str, Any]:
     log.info("signed_url_request")
 
     try:
-        gcs_client = get_gcs_client()
-        signed_url = gcs_client.get_signed_url(
+        s3_client = get_s3_client()
+        signed_url = s3_client.generate_presigned_url(
             object_name=request.object_name,
-            expiration_minutes=expiration,
+            expiration=expiration * 60,  # Convert minutes to seconds
         )
 
         log.info("signed_url_generated")
@@ -72,7 +72,7 @@ async def get_signed_url(request: SignedUrlRequest) -> dict[str, Any]:
             "object_name": request.object_name,
         }
 
-    except GCSError as e:
+    except S3Error as e:
         log.error("signed_url_error", error=str(e), code=e.code)
         raise HTTPException(
             status_code=500,
@@ -92,7 +92,7 @@ async def get_signed_url_by_path(
     object_path: str,
     expiration: int = Query(default=60, ge=1, le=1440, description="Expiration in minutes"),
 ) -> dict[str, Any]:
-    """Generate a signed URL for a GCS object by path.
+    """Generate a signed URL for an S3 object by path.
 
     Args:
         object_path: Full object path in the bucket
@@ -111,10 +111,10 @@ async def get_signed_url_by_path(
     log.info("signed_url_request_by_path")
 
     try:
-        gcs_client = get_gcs_client()
-        signed_url = gcs_client.get_signed_url(
+        s3_client = get_s3_client()
+        signed_url = s3_client.generate_presigned_url(
             object_name=object_path,
-            expiration_minutes=expiration,
+            expiration=expiration * 60,  # Convert minutes to seconds
         )
 
         log.info("signed_url_generated")
@@ -125,7 +125,7 @@ async def get_signed_url_by_path(
             "object_name": object_path,
         }
 
-    except GCSError as e:
+    except S3Error as e:
         log.error("signed_url_error", error=str(e), code=e.code)
         raise HTTPException(
             status_code=500,

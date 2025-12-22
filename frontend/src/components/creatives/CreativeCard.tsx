@@ -48,9 +48,13 @@ export function CreativeCard({ creative, viewMode, onClick, onDelete }: Creative
                 unoptimized
               />
             ) : (
-              <div className="flex items-center justify-center h-full">
-                <Video className="w-8 h-8 text-gray-400" />
-              </div>
+              <video
+                src={imageUrl}
+                className="w-full h-full object-cover"
+                muted
+                playsInline
+                preload="metadata"
+              />
             )}
           </div>
 
@@ -116,9 +120,13 @@ export function CreativeCard({ creative, viewMode, onClick, onDelete }: Creative
             unoptimized
           />
         ) : (
-          <div className="flex items-center justify-center h-full">
-            <Video className="w-12 h-12 text-gray-400" />
-          </div>
+          <video
+            src={imageUrl}
+            className="w-full h-full object-cover"
+            muted
+            playsInline
+            preload="metadata"
+          />
         )}
 
         {/* Type Badge */}

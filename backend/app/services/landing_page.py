@@ -45,18 +45,23 @@ class LandingPageService:
         Returns:
             Created LandingPage instance
         """
-        # Generate unique S3 key and URL
+        # Generate unique S3 key for draft (in drafts subfolder)
         unique_id = uuid.uuid4().hex
-        s3_key = f"users/{user_id}/landing-pages/{unique_id}/index.html"
+        draft_s3_key = f"users/{user_id}/landing-pages/drafts/{unique_id}/index.html"
 
-        # Generate the public URL (will be updated when published)
-        url = landing_pages_storage.get_cdn_url(s3_key)
+        # Upload draft HTML to S3 immediately
+        if data.html_content:
+            landing_pages_storage.upload_file(
+                key=draft_s3_key,
+                data=data.html_content.encode("utf-8"),
+                content_type="text/html; charset=utf-8",
+            )
 
         landing_page = LandingPage(
             user_id=user_id,
             name=data.name,
-            url=url,
-            s3_key=s3_key,
+            url="",  # Draft pages have no public URL until published
+            s3_key=draft_s3_key,  # Store draft S3 key
             product_url=data.product_url,
             template=data.template,
             language=data.language,
@@ -185,6 +190,14 @@ class LandingPageService:
             landing_page.draft_content = update_data["html_content"]
             del update_data["html_content"]
 
+            # 同步更新 S3 文件（覆盖同一个文件，不产生新副本）
+            if draft_content_changed and landing_page.s3_key:
+                landing_pages_storage.upload_file(
+                    key=landing_page.s3_key,
+                    data=landing_page.draft_content.encode("utf-8"),
+                    content_type="text/html; charset=utf-8",
+                )
+
             # 如果草稿内容变化，标记为有未发布的更改
             if draft_content_changed and landing_page.status == LandingPageStatus.PUBLISHED.value:
                 # 保持 published 状态，但标记有未发布的更改（通过比较 draft 和 published content）
@@ -225,12 +238,12 @@ class LandingPageService:
             raise LandingPageNotFoundError(landing_page_id)
 
         if hard_delete:
-            # Delete GCS file
+            # Delete S3 file
             try:
                 if landing_page.s3_key:
                     landing_pages_storage.delete_file(landing_page.s3_key)
             except Exception:
-                # Log but don't fail if GCS deletion fails
+                # Log but don't fail if S3 deletion fails
                 pass
 
             await self.db.delete(landing_page)
@@ -247,7 +260,7 @@ class LandingPageService:
         landing_page_id: int,
         user_id: int,
     ) -> LandingPage:
-        """Publish a landing page to GCS and CDN.
+        """Publish a landing page to S3 and CloudFront CDN.
 
         Args:
             landing_page_id: Landing page ID
@@ -290,19 +303,40 @@ class LandingPageService:
                 # 如果没有 </head>，在 <body 前注入
                 html_to_publish = html_to_publish.replace("<body", f"{ga_script}<body")
 
-        # 发布时：将 draft_content 复制到 html_content，并上传到 GCS
-        # Upload HTML to GCS (with GA4 tracking if configured)
+        # 发布时：从 drafts/ 路径移动到正式路径
+        # Extract unique_id from draft s3_key
+        # Format: users/{user_id}/landing-pages/drafts/{unique_id}/index.html
+        import re
+        match = re.search(r'/drafts/([a-f0-9]+)/', landing_page.s3_key)
+        if not match:
+            # Fallback: 如果不是 drafts 路径，使用原 key（可能已发布过）
+            unique_id = landing_page.s3_key.split('/')[-2] if '/' in landing_page.s3_key else uuid.uuid4().hex
+        else:
+            unique_id = match.group(1)
+
+        # 生成正式发布路径（去掉 drafts/）
+        published_s3_key = f"users/{user_id}/landing-pages/{unique_id}/index.html"
+
+        # Upload HTML to published path (with GA4 tracking if configured)
         landing_pages_storage.upload_file(
-            key=landing_page.s3_key,
+            key=published_s3_key,
             data=html_to_publish.encode("utf-8"),
             content_type="text/html; charset=utf-8",
         )
 
-        # Update status and copy draft to published
-        # Bucket uses uniform bucket-level access with public read permission
+        # 删除 drafts/ 下的旧文件（节省存储空间）
+        if landing_page.s3_key != published_s3_key:
+            try:
+                landing_pages_storage.delete_file(landing_page.s3_key)
+            except Exception:
+                # Log but don't fail if deletion fails
+                pass
+
+        # Update status and metadata
         landing_page.html_content = landing_page.draft_content  # 复制草稿到已发布版本
         landing_page.status = LandingPageStatus.PUBLISHED.value
-        landing_page.url = landing_pages_storage.get_public_url(landing_page.s3_key)
+        landing_page.s3_key = published_s3_key  # 更新到正式路径
+        landing_page.url = landing_pages_storage.get_cdn_url(published_s3_key)  # 使用 CloudFront URL
         landing_page.published_at = datetime.utcnow()
         landing_page.updated_at = datetime.utcnow()
 

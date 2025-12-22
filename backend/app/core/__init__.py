@@ -11,7 +11,7 @@ from app.core.security import (
     token_encryption,
     verify_password,
 )
-from app.core.storage import GCSStorage, creatives_storage, landing_pages_storage
+from app.core.storage import creatives_storage, landing_pages_storage
 
 __all__ = [
     "settings",
@@ -26,7 +26,6 @@ __all__ = [
     "close_redis",
     "creatives_storage",
     "landing_pages_storage",
-    "GCSStorage",
     "create_access_token",
     "create_refresh_token",
     "decode_token",

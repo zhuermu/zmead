@@ -279,9 +279,10 @@ async def preview_landing_page(
 ) -> HTMLResponse:
     """Preview a landing page with embedded images.
 
-    This endpoint returns the HTML content with all external images
-    downloaded and embedded as base64 data URIs. This ensures the
-    preview displays correctly without CORS issues.
+    This endpoint provides secure preview access for draft pages by:
+    1. Verifying user ownership
+    2. Fetching HTML from S3 (draft or published path)
+    3. Optionally embedding images as base64 data URIs
 
     Args:
         landing_page_id: Landing page ID
@@ -290,6 +291,8 @@ async def preview_landing_page(
     Returns:
         HTMLResponse with the landing page content
     """
+    from app.core.storage import landing_pages_storage
+
     service = LandingPageService(db)
 
     landing_page = await service.get_by_id(
@@ -303,12 +306,26 @@ async def preview_landing_page(
             detail=f"Landing page {landing_page_id} not found",
         )
 
-    html_content = landing_page.html_content
-    if not html_content:
+    # For draft pages, read from S3 using s3_key
+    # For published pages, also read from S3 (ensures consistency)
+    if not landing_page.s3_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Landing page has no HTML content",
+            detail="Landing page has no S3 content",
         )
+
+    # Download HTML content from S3
+    html_bytes = landing_pages_storage.download_file(landing_page.s3_key)
+    if not html_bytes:
+        # Fallback to database content if S3 fails
+        html_content = landing_page.draft_content if landing_page.status == LandingPageStatus.DRAFT.value else landing_page.html_content
+        if not html_content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Landing page has no HTML content",
+            )
+    else:
+        html_content = html_bytes.decode("utf-8")
 
     # If embed_images is False, return HTML as-is
     if not embed_images:
@@ -364,6 +381,8 @@ async def download_landing_page(
     Returns:
         HTML file download response
     """
+    from app.core.storage import landing_pages_storage
+
     service = LandingPageService(db)
 
     landing_page = await service.get_by_id(
@@ -377,12 +396,24 @@ async def download_landing_page(
             detail=f"Landing page {landing_page_id} not found",
         )
 
-    html_content = landing_page.html_content
-    if not html_content:
+    # Download from S3 (works for both draft and published)
+    if not landing_page.s3_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Landing page has no HTML content",
+            detail="Landing page has no S3 content",
         )
+
+    html_bytes = landing_pages_storage.download_file(landing_page.s3_key)
+    if not html_bytes:
+        # Fallback to database
+        html_content = landing_page.draft_content if landing_page.status == LandingPageStatus.DRAFT.value else landing_page.html_content
+        if not html_content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Landing page has no HTML content",
+            )
+    else:
+        html_content = html_bytes.decode("utf-8")
 
     # Embed images if requested
     if embed_images:

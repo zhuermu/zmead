@@ -124,7 +124,12 @@
       "Bash(chmod:*)",
       "Bash(node test_image_generation.mjs:*)",
       "Bash(timeout 40 tail:*)",
-      "Bash(docker-compose logs:*)"
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose restart:*)",
+      "Bash(for port in 3000 8000 8001)",
+      "Bash(do echo \"Port $port:\")",
+      "Bash(done)",
+      "Bash(timeout 120 tail:*)"
     ],
     "deny": [],
     "ask": []

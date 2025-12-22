@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.storage import GCSStorage
+from app.core.storage import S3Storage
 from app.models.ad_account import AdAccount
 from app.models.campaign import Campaign
 from app.models.creative import Creative
@@ -34,7 +34,7 @@ class DataExportService:
         """Initialize data export service."""
         self.db = db
         self.email_service = EmailService()
-        self.export_storage = GCSStorage(settings.gcs_bucket_exports)
+        self.export_storage = S3Storage(settings.s3_bucket_exports)
 
     async def export_user_data(self, user: User) -> dict[str, Any]:
         """

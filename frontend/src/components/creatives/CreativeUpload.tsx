@@ -87,12 +87,12 @@ export function CreativeUpload({ onClose, onComplete }: CreativeUploadProps) {
 
       // Step 1: Get presigned upload URL
       const urlResponse = await api.post('/creatives/upload-url', {
-        file_name: uploadFile.file.name,
-        file_type: uploadFile.file.type,
+        filename: uploadFile.file.name,
+        content_type: uploadFile.file.type,
         file_size: uploadFile.file.size,
       });
 
-      const { upload_url, creative_id } = urlResponse.data;
+      const { upload_url, s3_url, cdn_url } = urlResponse.data;
 
       // Step 2: Upload file to S3 with progress tracking
       await new Promise<void>((resolve, reject) => {
@@ -126,9 +126,15 @@ export function CreativeUpload({ onClose, onComplete }: CreativeUploadProps) {
         xhr.send(uploadFile.file);
       });
 
-      // Step 3: Confirm upload and save metadata
-      await api.post(`/creatives/${creative_id}/confirm`, {
-        product_url: productUrl || undefined,
+      // Step 3: Create creative record in database
+      const fileType = uploadFile.file.type.startsWith('image/') ? 'image' : 'video';
+      await api.post('/creatives', {
+        file_url: s3_url,
+        cdn_url: cdn_url,
+        file_type: fileType,
+        file_size: uploadFile.file.size,
+        name: uploadFile.file.name,
+        product_url: productUrl || null,
       });
 
       // Update status to success

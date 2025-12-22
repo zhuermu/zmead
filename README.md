@@ -288,6 +288,196 @@ npm run lint        # ESLint检查
 - **ai-orchestrator/requirements.md** - AI编排器实现
 - 各模块需求文档（ad-creative, market-insights等）
 
+## AWS S3 + CloudFront 配置指南
+
+本节介绍如何创建 S3 存储桶并配置 CloudFront CDN 分发。
+
+### 1. 创建 S3 存储桶
+
+```bash
+# 创建存储桶（以 aae-landing-pages 为例）
+aws s3api create-bucket \
+  --bucket <bucket-name> \
+  --region us-east-1
+
+# 如果是非 us-east-1 区域，需要指定 LocationConstraint
+aws s3api create-bucket \
+  --bucket <bucket-name> \
+  --region <region> \
+  --create-bucket-configuration LocationConstraint=<region>
+```
+
+### 2. 配置 S3 CORS
+
+创建 `cors.json` 文件：
+
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["http://localhost:3000", "https://*.zmead.com"],
+      "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+      "AllowedHeaders": ["*"],
+      "ExposeHeaders": ["ETag", "Content-Length", "Content-Type"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}
+```
+
+应用 CORS 配置：
+
+```bash
+aws s3api put-bucket-cors \
+  --bucket <bucket-name> \
+  --cors-configuration file://cors.json
+```
+
+### 3. 创建 ACM SSL 证书（如果没有）
+
+```bash
+# 在 us-east-1 区域创建证书（CloudFront 要求）
+aws acm request-certificate \
+  --domain-name "*.zmead.com" \
+  --subject-alternative-names "zmead.com" \
+  --validation-method DNS \
+  --region us-east-1
+
+# 获取证书 ARN 后，按提示完成 DNS 验证
+```
+
+### 4. 创建 CloudFront Origin Access Control (OAC)
+
+```bash
+aws cloudfront create-origin-access-control \
+  --origin-access-control-config '{
+    "Name": "<bucket-name>-oac",
+    "Description": "OAC for <bucket-name>",
+    "SigningProtocol": "sigv4",
+    "SigningBehavior": "always",
+    "OriginAccessControlOriginType": "s3"
+  }'
+
+# 记录返回的 OAC ID（如 E2XIA6TY1Q8XE0）
+```
+
+### 5. 创建 CloudFront 分发
+
+创建 `cloudfront-config.json`：
+
+```json
+{
+  "CallerReference": "<unique-reference>",
+  "Aliases": {
+    "Quantity": 1,
+    "Items": ["<your-domain.zmead.com>"]
+  },
+  "DefaultRootObject": "index.html",
+  "Origins": {
+    "Quantity": 1,
+    "Items": [
+      {
+        "Id": "<bucket-name>-s3",
+        "DomainName": "<bucket-name>.s3.us-east-1.amazonaws.com",
+        "OriginAccessControlId": "<OAC-ID>",
+        "S3OriginConfig": {
+          "OriginAccessIdentity": ""
+        }
+      }
+    ]
+  },
+  "DefaultCacheBehavior": {
+    "TargetOriginId": "<bucket-name>-s3",
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "AllowedMethods": {
+      "Quantity": 2,
+      "Items": ["GET", "HEAD"],
+      "CachedMethods": {
+        "Quantity": 2,
+        "Items": ["GET", "HEAD"]
+      }
+    },
+    "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+    "Compress": true
+  },
+  "Comment": "CDN for <bucket-name>",
+  "Enabled": true,
+  "PriceClass": "PriceClass_100",
+  "ViewerCertificate": {
+    "ACMCertificateArn": "<your-acm-certificate-arn>",
+    "SSLSupportMethod": "sni-only",
+    "MinimumProtocolVersion": "TLSv1.2_2021"
+  }
+}
+```
+
+创建分发：
+
+```bash
+aws cloudfront create-distribution \
+  --distribution-config file://cloudfront-config.json
+
+# 记录返回的 Distribution ID 和 DomainName（如 d3s362bp9ghetp.cloudfront.net）
+```
+
+### 6. 配置 S3 存储桶策略
+
+创建 `bucket-policy.json`：
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowCloudFrontServicePrincipal",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudfront.amazonaws.com"
+      },
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::<bucket-name>/*",
+      "Condition": {
+        "StringEquals": {
+          "AWS:SourceArn": "arn:aws:cloudfront::<account-id>:distribution/<distribution-id>"
+        }
+      }
+    }
+  ]
+}
+```
+
+应用策略：
+
+```bash
+aws s3api put-bucket-policy \
+  --bucket <bucket-name> \
+  --policy file://bucket-policy.json
+```
+
+### 7. 配置 DNS
+
+在你的 DNS 提供商添加 CNAME 记录：
+
+```
+<your-domain.zmead.com>  →  <distribution-id>.cloudfront.net
+```
+
+### 8. 验证配置
+
+```bash
+# 检查 CloudFront 分发状态
+aws cloudfront get-distribution --id <distribution-id> --query 'Distribution.Status'
+
+# 状态变为 "Deployed" 后即可访问
+curl -I https://<your-domain.zmead.com>/
+```
+
+### 当前已配置的域名
+
+| 域名 | S3 存储桶 | CloudFront ID | 用途 |
+|------|-----------|---------------|------|
+| landing.zmead.com | aae-landing-pages | EG1ZSKV9LEAHJ | 落地页托管 |
+
 ## 故障排查
 
 ### Backend无法启动

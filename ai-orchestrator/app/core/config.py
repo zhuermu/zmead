@@ -68,28 +68,6 @@ class Settings(BaseSettings):
         description="Veo 3.1 Fast for quick video generation",
     )
 
-    # Google Cloud Storage configuration
-    gcs_project_id: str = Field(
-        default="",
-        description="GCS project ID",
-    )
-    gcs_credentials_path: str | None = Field(
-        default=None,
-        description="Path to GCS service account credentials JSON",
-    )
-    gcs_bucket_name: str = Field(
-        default="zmead-creatives",
-        description="GCS bucket for storing creatives",
-    )
-    gcs_bucket_uploads: str = Field(
-        default="aae-user-uploads",
-        description="GCS bucket for all file uploads (permanent storage)",
-    )
-    gcs_signed_url_expiration: int = Field(
-        default=60,
-        description="Signed URL expiration time in minutes",
-    )
-
     # AWS Configuration
     aws_region: str = Field(default="us-west-2", description="AWS region")
     aws_access_key_id: str = Field(default="", description="AWS access key ID (optional if using IAM roles)")
@@ -111,6 +89,10 @@ class Settings(BaseSettings):
     )
     bedrock_temperature: float = Field(default=0.7, description="Bedrock model temperature")
     bedrock_max_tokens: int = Field(default=4096, description="Bedrock model max tokens")
+    enable_html_continuation: bool = Field(
+        default=True,
+        description="Enable automatic HTML continuation if output is truncated (disable if max_tokens is sufficient)"
+    )
 
     # AWS SageMaker Configuration
     sagemaker_region: str = Field(default="us-west-2", description="AWS SageMaker region")

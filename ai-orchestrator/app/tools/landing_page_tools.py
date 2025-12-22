@@ -14,6 +14,7 @@ import structlog
 from typing import Any
 
 from app.services.gemini_client import GeminiClient, GeminiError
+from app.services.unified_llm_client import UnifiedLLMClient
 from app.services.mcp_client import MCPClient, MCPError
 from app.tools.base import (
     AgentTool,
@@ -107,11 +108,11 @@ class GeneratePageContentTool(AgentTool):
     Supports generating multiple AB test versions with different styles.
     """
 
-    def __init__(self, gemini_client: GeminiClient | None = None):
+    def __init__(self, llm_client: UnifiedLLMClient | None = None):
         """Initialize the generate page content tool.
 
         Args:
-            gemini_client: Gemini client for content generation
+            llm_client: Unified LLM client for content generation (supports both Gemini and Bedrock)
         """
         metadata = ToolMetadata(
             name="generate_page_content_tool",
@@ -163,7 +164,7 @@ class GeneratePageContentTool(AgentTool):
 
         super().__init__(metadata)
 
-        self.gemini_client = gemini_client or GeminiClient()
+        self.llm_client = llm_client or UnifiedLLMClient()
 
     async def execute(
         self,
@@ -190,6 +191,9 @@ class GeneratePageContentTool(AgentTool):
         product_url = parameters.get("product_url", product_info.get("url", "#"))
         color_scheme = parameters.get("color_scheme", {})
 
+        # Get model preferences from context
+        model_preferences = context.get("model_preferences") if context else None
+
         log = logger.bind(
             tool=self.name,
             styles=styles,
@@ -215,16 +219,29 @@ class GeneratePageContentTool(AgentTool):
 
                 log.info(f"generating_version_{version_id}", style=style)
 
-                # Generate using Gemini
-                messages = [{"role": "user", "content": prompt}]
+                # Check if HTML continuation is enabled
+                from app.core.config import get_settings
+                settings = get_settings()
 
-                html_content = await self.gemini_client.chat_completion(
-                    messages=messages,
-                    temperature=0.7,
-                )
-
-                # Clean up the HTML (remove markdown code blocks if present)
-                html_content = self._clean_html_output(html_content)
+                # Generate using unified LLM client with optional continuation
+                if settings.enable_html_continuation:
+                    html_content = await self._generate_html_with_continuation(
+                        prompt=prompt,
+                        style=style,
+                        version_id=version_id,
+                        model_preferences=model_preferences,
+                        log=log,
+                    )
+                else:
+                    # Simple generation without continuation (faster, uses less tokens)
+                    messages = [{"role": "user", "content": prompt}]
+                    html_content = await self.llm_client.chat_completion(
+                        messages=messages,
+                        temperature=0.7,
+                        model_preferences=model_preferences,
+                    )
+                    html_content = self._clean_html_output(html_content)
+                    log.info(f"html_continuation_disabled", version=version_id)
 
                 style_info = STYLE_GUIDELINES.get(style, STYLE_GUIDELINES["modern"])
 
@@ -262,7 +279,7 @@ class GeneratePageContentTool(AgentTool):
         }
 
     def _clean_html_output(self, html: str) -> str:
-        """Clean up HTML output from Gemini.
+        """Clean up HTML output from LLM.
 
         Args:
             html: Raw HTML output
@@ -285,6 +302,166 @@ class GeneratePageContentTool(AgentTool):
                 html = html[doctype_match.start():]
 
         return html
+
+    def _is_html_complete(self, html: str) -> tuple[bool, str]:
+        """Check if HTML output is complete and not truncated.
+
+        Args:
+            html: HTML content to check
+
+        Returns:
+            Tuple of (is_complete, reason)
+        """
+        import re
+
+        html_lower = html.lower().strip()
+
+        # Check 1: Must end with </html>
+        if not html_lower.endswith('</html>'):
+            return False, "Missing closing </html> tag"
+
+        # Check 2: Must have basic structure
+        required_tags = [
+            (r'<!doctype\s+html', 'Missing <!DOCTYPE html>'),
+            (r'<html[^>]*>', 'Missing <html> tag'),
+            (r'<head[^>]*>', 'Missing <head> tag'),
+            (r'</head>', 'Missing </head> tag'),
+            (r'<body[^>]*>', 'Missing <body> tag'),
+            (r'</body>', 'Missing </body> tag'),
+        ]
+
+        for pattern, reason in required_tags:
+            if not re.search(pattern, html_lower):
+                return False, reason
+
+        # Check 3: Look for signs of truncation in the last 200 characters
+        last_content = html[-200:].lower()
+        truncation_indicators = [
+            'position: relative',  # Incomplete CSS
+            'display: flex',       # Incomplete CSS
+            'background:',         # Incomplete CSS
+            '.container {',        # Incomplete CSS class
+            '@media',              # Incomplete media query
+        ]
+
+        for indicator in truncation_indicators:
+            if indicator in last_content and '</html>' not in last_content:
+                return False, f"Looks truncated (found '{indicator}' near end without proper closure)"
+
+        # Check 4: Verify closing tags balance (basic check)
+        body_opens = len(re.findall(r'<body[^>]*>', html_lower))
+        body_closes = len(re.findall(r'</body>', html_lower))
+        if body_opens != body_closes:
+            return False, f"Unbalanced <body> tags: {body_opens} open, {body_closes} close"
+
+        return True, "Complete"
+
+    async def _generate_html_with_continuation(
+        self,
+        prompt: str,
+        style: str,
+        version_id: str,
+        model_preferences: dict[str, Any] | None,
+        log: Any,
+        max_attempts: int = 3,
+    ) -> str:
+        """Generate HTML with automatic continuation if output is truncated.
+
+        Args:
+            prompt: Initial generation prompt
+            style: Design style
+            version_id: Version identifier
+            model_preferences: User's model preferences
+            log: Logger instance
+            max_attempts: Maximum continuation attempts
+
+        Returns:
+            Complete HTML content
+        """
+        messages = [{"role": "user", "content": prompt}]
+        html_parts = []
+        attempt = 0
+
+        while attempt < max_attempts:
+            attempt += 1
+
+            # Generate HTML
+            html_content = await self.llm_client.chat_completion(
+                messages=messages,
+                temperature=0.7,
+                model_preferences=model_preferences,
+            )
+
+            # Clean up output
+            html_content = self._clean_html_output(html_content)
+
+            # First attempt: store as initial output
+            if attempt == 1:
+                html_parts.append(html_content)
+            else:
+                # Continuation: append to existing content
+                # Remove any duplicate DOCTYPE/html tags from continuation
+                import re
+                continuation = re.sub(r'<!DOCTYPE[^>]*>', '', html_content, flags=re.IGNORECASE)
+                continuation = re.sub(r'<html[^>]*>', '', continuation, flags=re.IGNORECASE)
+                continuation = re.sub(r'<head[^>]*>.*?</head>', '', continuation, flags=re.DOTALL | re.IGNORECASE)
+                continuation = re.sub(r'<body[^>]*>', '', continuation, flags=re.IGNORECASE)
+                continuation = continuation.strip()
+                html_parts.append(continuation)
+
+            # Check if complete
+            combined_html = ''.join(html_parts)
+            is_complete, reason = self._is_html_complete(combined_html)
+
+            if is_complete:
+                log.info(
+                    f"html_generation_complete",
+                    version=version_id,
+                    attempts=attempt,
+                    final_length=len(combined_html),
+                )
+                return combined_html
+
+            # Not complete - prepare continuation prompt
+            log.warning(
+                f"html_truncated_continuing",
+                version=version_id,
+                attempt=attempt,
+                reason=reason,
+                current_length=len(combined_html),
+            )
+
+            # Find where we left off (last complete tag or recognizable structure)
+            last_100_chars = combined_html[-100:].strip()
+
+            continuation_prompt = f"""The previous HTML generation was truncated. Here's where it ended:
+
+```
+...{last_100_chars}
+```
+
+Please continue from where it left off and complete the remaining HTML. Include:
+1. Any unfinished CSS rules or sections
+2. The remaining body content
+3. Proper closing tags: </body> and </html>
+
+Output ONLY the continuation (do NOT repeat the entire HTML from the beginning).
+"""
+
+            # Add continuation prompt to conversation
+            messages.append({"role": "assistant", "content": html_content})
+            messages.append({"role": "user", "content": continuation_prompt})
+
+        # Max attempts reached but still incomplete
+        log.error(
+            f"html_generation_incomplete",
+            version=version_id,
+            attempts=max_attempts,
+            final_length=len(''.join(html_parts)),
+        )
+
+        # Return what we have, even if incomplete
+        return ''.join(html_parts)
 
     def _build_html_prompt(
         self,
@@ -509,30 +686,31 @@ class GenerateLandingPageTool(AgentTool):
 
     def __init__(
         self,
-        gemini_client: GeminiClient | None = None,
+        llm_client: UnifiedLLMClient | None = None,
         mcp_client: MCPClient | None = None,
     ):
         """Initialize the generate landing page tool.
 
         Args:
-            gemini_client: Gemini client for AI operations
+            llm_client: Unified LLM client for AI operations (supports both Gemini and Bedrock)
             mcp_client: MCP client for backend operations
         """
         metadata = ToolMetadata(
             name="generate_landing_page_tool",
             description=(
-                "Complete landing page creation workflow. "
-                "Automatically extracts product information and images from URL, "
-                "generates responsive HTML landing pages with AB testing versions, "
-                "and saves them to the backend for publishing. "
-                "Use this tool when user wants to create a landing page from a product URL."
+                "Generate a complete landing page from a product URL. "
+                "When the user provides a product page URL (Amazon, Shopify, etc.) and asks to create/generate a landing page, "
+                "use this tool to: 1) Extract product information and images from the URL, "
+                "2) Generate responsive HTML landing pages with AB testing versions, "
+                "3) Save them to the backend. "
+                "IMPORTANT: You must extract the product URL from the user's message and pass it as the 'product_url' parameter."
             ),
             category=ToolCategory.AGENT_CUSTOM,
             parameters=[
                 ToolParameter(
                     name="product_url",
                     type="string",
-                    description="Product page URL to create landing page from",
+                    description="Product page URL (e.g., Amazon, Shopify link) provided by the user. Extract this URL from the user's message when they want to create a landing page from a product page.",
                     required=True,
                 ),
                 ToolParameter(
@@ -570,7 +748,7 @@ class GenerateLandingPageTool(AgentTool):
 
         super().__init__(metadata)
 
-        self.gemini_client = gemini_client or GeminiClient()
+        self.llm_client = llm_client or UnifiedLLMClient()
         self.mcp_client = mcp_client or MCPClient()
 
     async def execute(
@@ -592,11 +770,28 @@ class GenerateLandingPageTool(AgentTool):
         """
         user_id = context.get("user_id") if context else None
         product_url = parameters.get("product_url")
+
+        # Fix: Handle case where Agent passes nested JSON string
+        # e.g., '{"product_url": "https://..."}' instead of just "https://..."
+        if product_url and isinstance(product_url, str):
+            import json
+            # Check if it's a JSON string that contains a product_url field
+            if product_url.strip().startswith('{'):
+                try:
+                    parsed = json.loads(product_url)
+                    if isinstance(parsed, dict) and "product_url" in parsed:
+                        product_url = parsed["product_url"]
+                except json.JSONDecodeError:
+                    pass  # Not JSON, use as-is
+
         page_name = parameters.get("page_name")
         # Language priority: user explicit > auto-detect from product page
         language = parameters.get("language", "auto")
         styles = parameters.get("styles", ["modern", "bold"])
         auto_save = parameters.get("auto_save", True)
+
+        # Get model preferences from context
+        model_preferences = context.get("model_preferences") if context else None
 
         # Track if user explicitly specified language (not "auto")
         user_specified_language = language != "auto"
@@ -629,7 +824,7 @@ class GenerateLandingPageTool(AgentTool):
         try:
             # Step 1: Extract product information
             log.info("step1_extract_product_info")
-            product_info = await self._extract_product_info(product_url, log)
+            product_info = await self._extract_product_info(product_url, log, model_preferences)
             result["product_info"] = product_info
 
             # Auto-generate page name if not provided
@@ -649,19 +844,19 @@ class GenerateLandingPageTool(AgentTool):
 
             # Step 2: Extract product image URLs (download happens at preview time)
             log.info("step2_extract_product_images")
-            images = await self._extract_product_images(product_url, log)
+            images = await self._extract_product_images(product_url, log, model_preferences)
             result["images"] = images
 
             # Step 2.5: Analyze image colors for color scheme
             log.info("step2_5_analyze_image_colors")
             image_urls = [img.get("url") for img in images if img.get("url")]
-            color_scheme = await self._analyze_image_colors(image_urls, log)
+            color_scheme = await self._analyze_image_colors(image_urls, log, model_preferences)
             result["color_scheme"] = color_scheme
 
             # Step 3: Generate HTML versions with product_url and color scheme
             log.info("step3_generate_html_versions")
             html_versions = await self._generate_html_versions(
-                product_info, images, styles, language, product_url, color_scheme, log
+                product_info, images, styles, language, product_url, color_scheme, log, model_preferences
             )
 
             if not html_versions:
@@ -693,11 +888,24 @@ class GenerateLandingPageTool(AgentTool):
                 ]
 
             result["success"] = True
-            result["message"] = f"成功生成并保存了{len(result['landing_pages'])}个落地页版本，可用于AB测试"
+
+            # Build message with landing page URLs
+            landing_page_count = len(result['landing_pages'])
+            message_lines = [f"成功生成并保存了 {landing_page_count} 个落地页版本，可用于AB测试\n"]
+
+            for idx, page in enumerate(result['landing_pages'], 1):
+                if page.get('saved') and page.get('url'):
+                    version_label = page.get('style', f'版本{idx}').upper()
+                    page_name = page.get('name', '落地页')
+                    page_url = page['url']
+                    message_lines.append(f"{idx}. **{version_label}风格** ({page_name})")
+                    message_lines.append(f"   🔗 访问链接: {page_url}\n")
+
+            result["message"] = "\n".join(message_lines)
 
             log.info(
                 "generate_landing_page_complete",
-                pages_created=len(result["landing_pages"]),
+                pages_created=landing_page_count,
             )
 
         except ToolExecutionError:
@@ -712,13 +920,14 @@ class GenerateLandingPageTool(AgentTool):
         return result
 
     async def _extract_product_info(
-        self, product_url: str, log: Any
+        self, product_url: str, log: Any, model_preferences: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Extract product information from URL including language detection.
 
         Args:
             product_url: Product page URL
             log: Logger instance
+            model_preferences: User's model preferences
 
         Returns:
             Product information dict with detected language
@@ -740,9 +949,10 @@ Output ONLY valid JSON, no explanations."""
 
             messages = [{"role": "user", "content": prompt}]
 
-            result_text = await self.gemini_client.chat_completion(
+            result_text = await self.llm_client.chat_completion(
                 messages=messages,
                 temperature=0.1,
+                model_preferences=model_preferences,
             )
 
             # Parse JSON response
@@ -782,7 +992,7 @@ Output ONLY valid JSON, no explanations."""
             }
 
     async def _extract_product_images(
-        self, product_url: str, log: Any
+        self, product_url: str, log: Any, model_preferences: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         """Extract product image URLs from product page.
 
@@ -790,13 +1000,14 @@ Output ONLY valid JSON, no explanations."""
         Image downloading is done at preview time in the backend.
 
         Supports:
-        - Amazon: Uses Gemini to analyze page and extract image URLs
+        - Amazon: Uses LLM to analyze page and extract image URLs
         - Shopify: og:image, JSON-LD, product gallery
         - Generic: og:image, JSON-LD structured data
 
         Args:
             product_url: Product page URL
             log: Logger instance
+            model_preferences: User's model preferences
 
         Returns:
             List of image objects with original URLs
@@ -812,15 +1023,15 @@ Output ONLY valid JSON, no explanations."""
         is_amazon = "amazon.com" in product_url or "amazon.cn" in product_url or "amzn." in product_url
 
         try:
-            # For Amazon, use Gemini to extract image URLs (bypasses anti-scraping)
+            # For Amazon, use LLM to extract image URLs (bypasses anti-scraping)
             if is_amazon:
-                log.info("using_gemini_for_amazon_images")
-                images = await self._extract_images_via_gemini(product_url, log)
+                log.info("using_llm_for_amazon_images")
+                images = await self._extract_images_via_gemini(product_url, log, model_preferences)
                 if images:
-                    log.info("amazon_images_extracted_via_gemini", count=len(images))
+                    log.info("amazon_images_extracted_via_llm", count=len(images))
                     return images[:5]
-                # Fallback to direct extraction if Gemini fails
-                log.info("gemini_extraction_failed_trying_direct")
+                # Fallback to direct extraction if LLM fails
+                log.info("llm_extraction_failed_trying_direct")
 
             # Direct HTML extraction for non-Amazon or as fallback
             async with httpx.AsyncClient(
@@ -909,9 +1120,9 @@ Output ONLY valid JSON, no explanations."""
             return []
 
     async def _extract_images_via_gemini(
-        self, product_url: str, log: Any
+        self, product_url: str, log: Any, model_preferences: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        """Use Gemini to extract product image URLs from a page.
+        """Use LLM to extract product image URLs from a page.
 
         This is useful for sites with anti-scraping measures like Amazon.
 
@@ -956,9 +1167,10 @@ If you cannot access the page or find images, return an empty array: []"""
 
             messages = [{"role": "user", "content": prompt}]
 
-            result_text = await self.gemini_client.chat_completion(
+            result_text = await self.llm_client.chat_completion(
                 messages=messages,
                 temperature=0.1,
+                model_preferences=model_preferences,
             )
 
             # Parse JSON response
@@ -991,8 +1203,9 @@ If you cannot access the page or find images, return an empty array: []"""
         self,
         image_urls: list[str],
         log: Any,
+        model_preferences: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Analyze product images to extract color scheme using Gemini vision.
+        """Analyze product images to extract color scheme using LLM vision.
 
         Args:
             image_urls: List of product image URLs
@@ -1048,9 +1261,10 @@ Output ONLY valid JSON, no explanations."""
 
             messages = [{"role": "user", "content": prompt}]
 
-            result_text = await self.gemini_client.chat_completion(
+            result_text = await self.llm_client.chat_completion(
                 messages=messages,
                 temperature=0.3,
+                model_preferences=model_preferences,
             )
 
             # Parse JSON response
@@ -1099,6 +1313,7 @@ Output ONLY valid JSON, no explanations."""
         product_url: str,
         color_scheme: dict[str, Any],
         log: Any,
+        model_preferences: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Generate HTML landing page versions.
 
@@ -1110,11 +1325,12 @@ Output ONLY valid JSON, no explanations."""
             product_url: Original product page URL for purchase links
             color_scheme: Color scheme extracted from product images
             log: Logger instance
+            model_preferences: User's model preferences
 
         Returns:
             List of HTML version objects
         """
-        generator = GeneratePageContentTool(gemini_client=self.gemini_client)
+        generator = GeneratePageContentTool(llm_client=self.llm_client)
 
         result = await generator.execute(
             parameters={
@@ -1125,7 +1341,7 @@ Output ONLY valid JSON, no explanations."""
                 "product_url": product_url,
                 "color_scheme": color_scheme,
             },
-            context={},
+            context={"model_preferences": model_preferences},
         )
 
         return [v for v in result.get("versions", []) if v.get("html_content")]
@@ -1210,11 +1426,11 @@ class TranslateContentTool(AgentTool):
     tone, style, and marketing effectiveness.
     """
 
-    def __init__(self, gemini_client: GeminiClient | None = None):
+    def __init__(self, llm_client: UnifiedLLMClient | None = None):
         """Initialize the translate content tool.
 
         Args:
-            gemini_client: Gemini client for translation
+            llm_client: Unified LLM client for translation (supports both Gemini and Bedrock)
         """
         metadata = ToolMetadata(
             name="translate_content_tool",
@@ -1251,7 +1467,7 @@ class TranslateContentTool(AgentTool):
         )
 
         super().__init__(metadata)
-        self.gemini_client = gemini_client or GeminiClient()
+        self.llm_client = llm_client or UnifiedLLMClient()
 
     async def execute(
         self,
@@ -1262,6 +1478,9 @@ class TranslateContentTool(AgentTool):
         content = parameters.get("content", "")
         target_language = parameters.get("target_language")
         source_language = parameters.get("source_language", "en")
+
+        # Get model preferences from context
+        model_preferences = context.get("model_preferences") if context else None
 
         log = logger.bind(
             tool=self.name,
@@ -1283,9 +1502,10 @@ Provide a natural, culturally appropriate translation that maintains marketing i
 
             messages = [{"role": "user", "content": prompt}]
 
-            translated_text = await self.gemini_client.chat_completion(
+            translated_text = await self.llm_client.chat_completion(
                 messages=messages,
                 temperature=0.3,
+                model_preferences=model_preferences,
             )
 
             log.info("translate_content_complete")
@@ -1308,10 +1528,14 @@ Provide a natural, culturally appropriate translation that maintains marketing i
 
 
 class OptimizeCopyTool(AgentTool):
-    """Tool for optimizing copy for conversions using Gemini."""
+    """Tool for optimizing copy for conversions using LLM."""
 
-    def __init__(self, gemini_client: GeminiClient | None = None):
-        """Initialize the optimize copy tool."""
+    def __init__(self, llm_client: UnifiedLLMClient | None = None):
+        """Initialize the optimize copy tool.
+
+        Args:
+            llm_client: Unified LLM client (supports both Gemini and Bedrock)
+        """
         metadata = ToolMetadata(
             name="optimize_copy_tool",
             description=(
@@ -1342,7 +1566,7 @@ class OptimizeCopyTool(AgentTool):
         )
 
         super().__init__(metadata)
-        self.gemini_client = gemini_client or GeminiClient()
+        self.llm_client = llm_client or UnifiedLLMClient()
 
     async def execute(
         self,
@@ -1352,6 +1576,9 @@ class OptimizeCopyTool(AgentTool):
         """Execute copy optimization."""
         content = parameters.get("content", "")
         optimization_goal = parameters.get("optimization_goal", "conversions")
+
+        # Get model preferences from context
+        model_preferences = context.get("model_preferences") if context else None
 
         log = logger.bind(tool=self.name, optimization_goal=optimization_goal)
         log.info("optimize_copy_start")
@@ -1385,9 +1612,10 @@ Focus on:
 
             messages = [{"role": "user", "content": prompt}]
 
-            optimized_text = await self.gemini_client.chat_completion(
+            optimized_text = await self.llm_client.chat_completion(
                 messages=messages,
                 temperature=0.5,
+                model_preferences=model_preferences,
             )
 
             log.info("optimize_copy_complete")
@@ -1410,21 +1638,21 @@ Focus on:
 
 # Factory function to create all landing page tools
 def create_landing_page_tools(
-    gemini_client: GeminiClient | None = None,
+    llm_client: UnifiedLLMClient | None = None,
     mcp_client: MCPClient | None = None,
 ) -> list[AgentTool]:
     """Create all landing page tools.
 
     Args:
-        gemini_client: Gemini client instance
+        llm_client: Unified LLM client instance (supports both Gemini and Bedrock)
         mcp_client: MCP client instance
 
     Returns:
         List of landing page tools
     """
     return [
-        GeneratePageContentTool(gemini_client=gemini_client),
-        GenerateLandingPageTool(gemini_client=gemini_client, mcp_client=mcp_client),
-        TranslateContentTool(gemini_client=gemini_client),
-        OptimizeCopyTool(gemini_client=gemini_client),
+        GeneratePageContentTool(llm_client=llm_client),
+        GenerateLandingPageTool(llm_client=llm_client, mcp_client=mcp_client),
+        TranslateContentTool(llm_client=llm_client),
+        OptimizeCopyTool(llm_client=llm_client),
     ]

@@ -475,13 +475,21 @@ async def chat_stream(
                     # Human-in-the-loop request
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
+                elif event_type == "done":
+                    # Agent completed - forward done event
+                    log.info("agent_done_received", user_id=request.user_id, session_id=request.session_id)
+                    yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                    return
+
                 elif event_type == "error":
                     # Error occurred
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                     return
 
-            # Send done event
+            # Send done event (if agent didn't send one)
+            log.info("sending_done_event", user_id=request.user_id, session_id=request.session_id)
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            log.info("done_event_sent", user_id=request.user_id, session_id=request.session_id)
 
         except Exception as e:
             log.error("chat_stream_error", error=str(e), exc_info=True)

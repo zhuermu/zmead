@@ -64,12 +64,34 @@ class LandingPageResponse(BaseModel):
 
     @classmethod
     def from_orm_with_changes(cls, obj) -> "LandingPageResponse":
-        """Create response from ORM object with has_unpublished_changes computed."""
+        """Create response from ORM object with has_unpublished_changes computed.
+
+        For draft pages:
+        - url: Frontend edit page URL (e.g., http://localhost:3000/landing-pages/{id})
+        - signed_url: None
+
+        For published pages:
+        - url: CloudFront CDN URL for public access
+        - signed_url: None (not needed for public pages)
+        """
+        from app.core.config import settings
+
+        # Generate appropriate URL based on status
+        if obj.status == LandingPageStatus.DRAFT.value:
+            # Draft pages: return frontend edit page URL
+            url = f"{settings.frontend_url}/landing-pages/{obj.id}"
+            signed_url = None
+        else:
+            # Published pages use CloudFront URL from database
+            url = obj.url or ""
+            signed_url = None
+
         data = {
             "id": obj.id,
             "user_id": obj.user_id,
             "name": obj.name,
-            "url": obj.url,
+            "url": url,
+            "signed_url": signed_url,
             "s3_key": obj.s3_key,
             "product_url": obj.product_url,
             "template": obj.template,

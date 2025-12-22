@@ -27,10 +27,11 @@ class S3Client:
         """Initialize S3 client."""
         settings = get_settings()
         self.s3 = boto3.client("s3", region_name=settings.aws_region)
-        self.bucket_uploads = settings.s3_bucket_uploads
+        # Use creatives bucket for all creative assets (uploaded + AI-generated)
+        self.bucket_creatives = settings.s3_bucket_creatives
         logger.info(
             "s3_client_initialized",
-            bucket=self.bucket_uploads,
+            creatives_bucket=self.bucket_creatives,
             region=settings.aws_region,
         )
 
@@ -43,7 +44,10 @@ class S3Client:
         style: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Upload image for chat display.
+        """Upload AI-generated image to creatives bucket.
+
+        All creative assets (user-uploaded + AI-generated) are stored in the creatives bucket.
+        Path structure: users/{user_id}/generated/{session_id}/{filename}
 
         Args:
             image_bytes: Image data
@@ -56,12 +60,13 @@ class S3Client:
         Returns:
             Upload result with object_name, bucket, s3_url
         """
-        object_name = f"chat-images/{user_id}/{session_id}/{filename}"
+        # Store AI-generated images in creatives bucket under users/{user_id}/generated/
+        object_name = f"users/{user_id}/generated/{session_id}/{filename}"
 
         try:
-            # Upload to S3
+            # Upload to S3 creatives bucket
             self.s3.put_object(
-                Bucket=self.bucket_uploads,
+                Bucket=self.bucket_creatives,
                 Key=object_name,
                 Body=image_bytes,
                 ContentType="image/png",
@@ -69,20 +74,23 @@ class S3Client:
                     "user_id": user_id,
                     "session_id": session_id,
                     "style": style or "",
+                    "source": "ai-generated",
                 },
             )
 
-            s3_url = f"s3://{self.bucket_uploads}/{object_name}"
+            s3_url = f"s3://{self.bucket_creatives}/{object_name}"
 
             logger.info(
                 "s3_upload_success",
+                bucket=self.bucket_creatives,
                 object_name=object_name,
                 size=len(image_bytes),
+                source="ai-generated",
             )
 
             return {
                 "object_name": object_name,
-                "bucket": self.bucket_uploads,
+                "bucket": self.bucket_creatives,
                 "s3_url": s3_url,
                 "size": len(image_bytes),
             }
@@ -98,45 +106,56 @@ class S3Client:
         filename: str,
         user_id: str,
         content_type: str = "video/mp4",
-        prefix: str = "chat-videos",
+        session_id: str | None = None,
         metadata: dict | None = None,
     ) -> dict[str, Any]:
-        """Upload video to S3.
+        """Upload AI-generated video to creatives bucket.
+
+        All creative assets (user-uploaded + AI-generated) are stored in the creatives bucket.
+        Path structure: users/{user_id}/generated/{session_id}/{filename}
 
         Args:
             video_bytes: Video data
             filename: File name
             user_id: User ID
             content_type: Content type
-            prefix: S3 prefix
+            session_id: Session ID (optional, defaults to 'videos')
             metadata: Additional metadata
 
         Returns:
             Upload result
         """
-        object_name = f"{prefix}/{user_id}/{filename}"
+        # Store AI-generated videos in creatives bucket under users/{user_id}/generated/
+        prefix = session_id or "videos"
+        object_name = f"users/{user_id}/generated/{prefix}/{filename}"
+
+        # Ensure metadata includes source
+        upload_metadata = metadata or {}
+        upload_metadata["source"] = "ai-generated"
 
         try:
-            # Upload to S3
+            # Upload to S3 creatives bucket
             self.s3.put_object(
-                Bucket=self.bucket_uploads,
+                Bucket=self.bucket_creatives,
                 Key=object_name,
                 Body=video_bytes,
                 ContentType=content_type,
-                Metadata=metadata or {},
+                Metadata=upload_metadata,
             )
 
-            s3_url = f"s3://{self.bucket_uploads}/{object_name}"
+            s3_url = f"s3://{self.bucket_creatives}/{object_name}"
 
             logger.info(
                 "s3_video_upload_success",
+                bucket=self.bucket_creatives,
                 object_name=object_name,
                 size=len(video_bytes),
+                source="ai-generated",
             )
 
             return {
                 "object_name": object_name,
-                "bucket": self.bucket_uploads,
+                "bucket": self.bucket_creatives,
                 "s3_url": s3_url,
                 "size": len(video_bytes),
             }
@@ -149,12 +168,14 @@ class S3Client:
     def generate_presigned_url(
         self,
         object_name: str,
+        bucket: str | None = None,
         expiration: int = 3600,
     ) -> str:
         """Generate presigned URL for S3 object.
 
         Args:
             object_name: S3 object key
+            bucket: S3 bucket name (defaults to creatives bucket)
             expiration: URL expiration time in seconds (default 1 hour)
 
         Returns:
@@ -163,14 +184,16 @@ class S3Client:
         Raises:
             S3Error: If URL generation fails
         """
+        bucket_name = bucket or self.bucket_creatives
         try:
             url = self.s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": self.bucket_uploads, "Key": object_name},
+                Params={"Bucket": bucket_name, "Key": object_name},
                 ExpiresIn=expiration,
             )
             logger.info(
                 "presigned_url_generated",
+                bucket=bucket_name,
                 object_name=object_name,
                 expiration=expiration,
             )

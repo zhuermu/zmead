@@ -7,14 +7,11 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
-from app.core.storage import GCSStorage
+from app.core.storage import creatives_storage
 from app.core.config import settings
 from app.core.gemini_files import gemini_files_service
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
-
-# Create uploads storage instance
-uploads_storage = GCSStorage(settings.gcs_bucket_uploads)
 
 
 class UploadedFileResponse(BaseModel):
@@ -68,15 +65,15 @@ async def upload_files(
             ext = file.filename.split(".")[-1] if "." in file.filename else ""
             object_name = f"chat-attachments/{current_user.id}/{file_id}.{ext}"
 
-            # Upload to GCS for persistent storage
-            gcs_url = uploads_storage.upload_file(
+            # Upload to S3 creatives bucket for persistent storage
+            s3_url = creatives_storage.upload_file(
                 key=object_name,
                 data=content,
                 content_type=file.content_type or "application/octet-stream",
             )
 
             # Get CDN URL for viewing
-            cdn_url = uploads_storage.get_cdn_url(object_name)
+            cdn_url = creatives_storage.get_cdn_url(object_name)
 
             # Upload to Gemini Files API for AI processing
             gemini_file_uri = None
@@ -96,7 +93,7 @@ async def upload_files(
                     filename=file.filename,
                     contentType=file.content_type or "application/octet-stream",
                     size=len(content),
-                    s3Url=gcs_url,
+                    s3Url=s3_url,
                     cdnUrl=cdn_url,
                     geminiFileUri=gemini_file_uri,
                     geminiFileName=gemini_file_name,

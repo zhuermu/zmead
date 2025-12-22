@@ -10,12 +10,12 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.gemini_files import gemini_files_service
-from app.core.storage import GCSStorage
+from app.core.storage import S3Storage
 
 logger = logging.getLogger(__name__)
 
-# Storage instance
-uploads_storage = GCSStorage(settings.gcs_bucket_uploads)
+# Storage instance - use creatives bucket for all file uploads
+uploads_storage = S3Storage(settings.s3_bucket_creatives)
 
 
 class ProcessedAttachment:

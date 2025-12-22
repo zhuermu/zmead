@@ -8,10 +8,10 @@
         "Service": "cloudfront.amazonaws.com"
       },
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::aae-landing-pages/*",
+      "Resource": "arn:aws:s3:::YOUR-LANDING-PAGES-BUCKET/*",
       "Condition": {
         "StringEquals": {
-          "AWS:SourceArn": "arn:aws:cloudfront::767828766472:distribution/EG1ZSKV9LEAHJ"
+          "AWS:SourceArn": "arn:aws:cloudfront::YOUR-AWS-ACCOUNT-ID:distribution/YOUR-DISTRIBUTION-ID"
         }
       }
     }

@@ -118,3 +118,46 @@ class MCPListToolsResponse(BaseModel):
 
     tools: list[MCPToolDefinition]
     total: int
+
+
+# JSON-RPC 2.0 Types for standard MCP protocol
+
+
+class JSONRPCRequest(BaseModel):
+    """JSON-RPC 2.0 request format."""
+
+    jsonrpc: str = Field("2.0", description="JSON-RPC version")
+    id: int | str | None = Field(None, description="Request ID")
+    method: str = Field(..., description="Method name (e.g., 'tools/list', 'tools/call')")
+    params: dict[str, Any] | None = Field(None, description="Method parameters")
+
+
+class JSONRPCError(BaseModel):
+    """JSON-RPC 2.0 error object."""
+
+    code: int = Field(..., description="Error code")
+    message: str = Field(..., description="Error message")
+    data: Any = Field(None, description="Additional error data")
+
+
+from typing import Literal
+
+
+class JSONRPCSuccessResponse(BaseModel):
+    """JSON-RPC 2.0 success response."""
+
+    jsonrpc: Literal["2.0"] = "2.0"
+    id: int | str | None = None
+    result: Any
+
+
+class JSONRPCErrorResponse(BaseModel):
+    """JSON-RPC 2.0 error response."""
+
+    jsonrpc: Literal["2.0"] = "2.0"
+    id: int | str | None = None
+    error: JSONRPCError
+
+
+# Union type for response
+JSONRPCResponse = JSONRPCSuccessResponse | JSONRPCErrorResponse

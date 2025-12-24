@@ -1002,13 +1002,25 @@ Respond in JSON:
                     # Parameters are in kwargs['kwargs'] as a dict
                     params = kwargs["kwargs"]
                 elif "kwargs" in kwargs and isinstance(kwargs["kwargs"], str):
-                    # Parameters are in kwargs['kwargs'] as a single string value
-                    # Map to the first parameter of the tool
-                    if captured_tool.metadata.parameters:
-                        first_param_name = captured_tool.metadata.parameters[0].name
-                        params = {first_param_name: kwargs["kwargs"]}
-                    else:
-                        params = kwargs
+                    # Parameters are in kwargs['kwargs'] as a string
+                    # Try to parse as JSON first (Strands may serialize complex params)
+                    try:
+                        import json
+                        params = json.loads(kwargs["kwargs"])
+                        if not isinstance(params, dict):
+                            # If not a dict after parsing, map to first parameter
+                            if captured_tool.metadata.parameters:
+                                first_param_name = captured_tool.metadata.parameters[0].name
+                                params = {first_param_name: params}
+                            else:
+                                params = {"value": params}
+                    except (json.JSONDecodeError, ValueError):
+                        # Not JSON - treat as string value for first parameter
+                        if captured_tool.metadata.parameters:
+                            first_param_name = captured_tool.metadata.parameters[0].name
+                            params = {first_param_name: kwargs["kwargs"]}
+                        else:
+                            params = {"value": kwargs["kwargs"]}
                 else:
                     # Use kwargs as-is
                     params = kwargs

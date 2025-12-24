@@ -147,8 +147,11 @@ class MCPClient:
         self.backoff_base = backoff_base
         self.backoff_factor = backoff_factor
 
-        # MCP endpoint
-        self.mcp_endpoint = f"{self.base_url}/api/v1/mcp/v1/execute"
+        # MCP endpoint (JSON-RPC 2.0)
+        self.mcp_endpoint = f"{self.base_url}/api/v1/mcp"
+
+        # Request counter for JSON-RPC IDs
+        self._request_counter = 0
 
         # HTTP client (created on first use or context manager entry)
         self._client: httpx.AsyncClient | None = None
@@ -191,12 +194,12 @@ class MCPClient:
         parameters: dict[str, Any] | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        """Call an MCP tool with retry logic.
+        """Call an MCP tool with retry logic using JSON-RPC 2.0 protocol.
 
         Args:
             tool_name: Name of the MCP tool to call
             parameters: Tool parameters
-            request_id: Optional request ID for tracing
+            request_id: Optional request ID for tracing (used for logging only)
 
         Returns:
             Tool result data
@@ -213,10 +216,19 @@ class MCPClient:
         if parameters is None:
             parameters = {}
 
+        # Generate JSON-RPC ID
+        self._request_counter += 1
+        jsonrpc_id = self._request_counter
+
+        # Build JSON-RPC 2.0 request
         request_payload = {
-            "tool": tool_name,
-            "params": parameters,
-            "request_id": request_id,
+            "jsonrpc": "2.0",
+            "id": jsonrpc_id,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": parameters,
+            },
         }
 
         log = logger.bind(
@@ -282,10 +294,10 @@ class MCPClient:
         log: Any,
         attempt: int,
     ) -> dict[str, Any]:
-        """Execute a single MCP request.
+        """Execute a single MCP request using JSON-RPC 2.0 protocol.
 
         Args:
-            payload: Request payload
+            payload: JSON-RPC 2.0 request payload
             log: Bound logger
             attempt: Current attempt number
 
@@ -328,7 +340,7 @@ class MCPClient:
                     code="PERMISSION_DENIED",
                 )
 
-            # Parse response
+            # Parse JSON-RPC 2.0 response
             try:
                 data = response.json()
             except Exception as e:
@@ -337,31 +349,48 @@ class MCPClient:
                     code="INVALID_RESPONSE",
                 )
 
-            # Check response status
-            status = data.get("status")
+            # Check for JSON-RPC error
+            if "error" in data and data["error"] is not None:
+                error = data["error"]
+                error_code = error.get("code", -32000)
+                error_message = error.get("message", "Unknown error")
+                error_data = error.get("data")
 
-            if status == "success":
-                result = data.get("result", {})
-                return result.get("data", result)
+                # Map JSON-RPC error codes to MCP error codes
+                if error_code == -32601:
+                    mcp_code = "TOOL_NOT_FOUND"
+                elif error_code == -32602:
+                    mcp_code = "INVALID_PARAMS"
+                elif error_code == -32000:
+                    # Server error - parse from message or data
+                    mcp_code = "EXECUTION_ERROR"
+                    if error_data and isinstance(error_data, dict):
+                        mcp_code = error_data.get("code", "EXECUTION_ERROR")
+                else:
+                    mcp_code = "INTERNAL_ERROR"
 
-            # Handle error response
-            error = data.get("error", {})
-            error_code = error.get("code", "UNKNOWN_ERROR")
-            error_message = error.get("message", "Unknown error")
-            error_details = error.get("details", {})
+                # Check for insufficient credits
+                if "INSUFFICIENT_CREDITS" in str(error_message) or mcp_code == "INSUFFICIENT_CREDITS":
+                    raise InsufficientCreditsError(
+                        message=get_user_friendly_message("INSUFFICIENT_CREDITS"),
+                        required=error_data.get("required") if error_data else None,
+                        available=error_data.get("available") if error_data else None,
+                    )
 
-            # Map to specific exceptions
-            if error_code == "INSUFFICIENT_CREDITS":
-                raise InsufficientCreditsError(
-                    message=get_user_friendly_message(error_code),
-                    required=error_details.get("required"),
-                    available=error_details.get("available"),
+                raise MCPToolError(
+                    message=get_user_friendly_message(mcp_code),
+                    code=mcp_code,
+                    details=error_data if isinstance(error_data, dict) else None,
                 )
 
+            # Success - return result
+            if "result" in data:
+                return data["result"]
+
+            # No result or error
             raise MCPToolError(
-                message=get_user_friendly_message(error_code),
-                code=error_code,
-                details=error_details,
+                "Invalid JSON-RPC response: missing result and error",
+                code="INVALID_RESPONSE",
             )
 
         except httpx.TimeoutException as e:

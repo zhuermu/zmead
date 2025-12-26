@@ -53,3 +53,10 @@ client_secret_*.json
 # Test and debug scripts
 test_*.py
 debug_*.py
+
+# Production environment files (contain secrets)
+*.env.production
+.env.production
+backend/.env.production
+frontend/.env.production
+ai-orchestrator/.env.production

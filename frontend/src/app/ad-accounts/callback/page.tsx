@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ interface AvailableAccount {
   managerId?: string;
 }
 
-export default function OAuthCallbackPage() {
+function OAuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -307,5 +307,20 @@ export default function OAuthCallbackPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+export default function OAuthCallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="container mx-auto py-8 max-w-2xl">
+        <Card className="p-12 text-center">
+          <RefreshCw className="w-16 h-16 text-blue-500 mx-auto mb-4 animate-spin" />
+          <h2 className="text-2xl font-bold mb-2">Loading...</h2>
+        </Card>
+      </div>
+    }>
+      <OAuthCallbackContent />
+    </Suspense>
   );
 }

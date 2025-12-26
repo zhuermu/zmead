@@ -1,9 +1,9 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 
-export default function PendingApprovalPage() {
+function PendingContent() {
   const searchParams = useSearchParams();
   const [userEmail, setUserEmail] = useState<string>("");
 
@@ -102,5 +102,13 @@ export default function PendingApprovalPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function PendingApprovalPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+      <PendingContent />
+    </Suspense>
   );
 }

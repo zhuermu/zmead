@@ -26,6 +26,7 @@ class S3Client:
     def __init__(self):
         """Initialize S3 client."""
         settings = get_settings()
+        # Use AWS_REGION for S3 (creatives bucket region)
         self.s3 = boto3.client("s3", region_name=settings.aws_region)
         # Use creatives bucket for all creative assets (uploaded + AI-generated)
         self.bucket_creatives = settings.s3_bucket_creatives

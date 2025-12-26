@@ -101,6 +101,7 @@ def get_s3_client():
             return None
         
         # Configure retry behavior
+        # Use AWS_REGION for S3 (creatives bucket region)
         config = Config(
             region_name=settings.aws_region,
             retries={
@@ -111,7 +112,7 @@ def get_s3_client():
         )
         
         client = session.client("s3", config=config)
-        logger.info("S3 client initialized successfully")
+        logger.info(f"S3 client initialized successfully ({settings.aws_region})")
         return client
         
     except Exception as e:

@@ -30,9 +30,10 @@ class BedrockVideoClient:
         """Initialize Bedrock video client.
 
         Args:
-            region: AWS region (defaults to settings)
+            region: AWS region (defaults to BEDROCK_REGION)
         """
         settings = get_settings()
+        # Use BEDROCK_REGION for Bedrock models
         self.default_region = region or settings.bedrock_region
         self._client = None  # Will be initialized per-request based on model
 
@@ -132,8 +133,14 @@ class BedrockVideoClient:
             else:
                 raise ValueError(f"Unsupported model: {model_id}")
 
-            # S3 output configuration (trailing slash indicates directory)
-            s3_output_uri = f"s3://{settings.s3_bucket_uploads}/video-outputs/{user_id}/"
+            # S3 output bucket must be in same region as model
+            # Nova Reel (us-east-1) -> aae-video-outputs
+            # Luma Ray v2 (us-west-2) -> aae-video-outputs-west
+            if "nova-reel" in model_id:
+                s3_bucket = "aae-video-outputs"  # us-east-1
+            else:
+                s3_bucket = "aae-video-outputs-west"  # us-west-2
+            s3_output_uri = f"s3://{s3_bucket}/video-outputs/{user_id}/"
 
             # Start async invocation
             response = client.start_async_invoke(

@@ -32,9 +32,10 @@ class BedrockImageClient:
         """Initialize Bedrock image client.
 
         Args:
-            region: AWS region (defaults to settings)
+            region: AWS region (defaults to BEDROCK_REGION)
         """
         settings = get_settings()
+        # Use BEDROCK_REGION for Bedrock models
         self.default_region = region or settings.bedrock_region
         self._client = None  # Will be initialized per-request based on model
 

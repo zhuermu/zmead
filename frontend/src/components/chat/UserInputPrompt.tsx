@@ -3,11 +3,12 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import type { UserInputOption } from '@/hooks/useChat';
 
 export interface UserInputPromptProps {
   type: 'confirmation' | 'selection' | 'input';
   message: string;
-  options?: string[];
+  options?: UserInputOption[];
   onRespond: (response: string) => void;
   isLoading?: boolean;
 }
@@ -22,11 +23,11 @@ export function UserInputPrompt({
   const [customInput, setCustomInput] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
 
-  const handleOptionClick = (option: string) => {
-    if (option === '其他' || option === 'other') {
+  const handleOptionClick = (option: UserInputOption) => {
+    if (option.value === '其他' || option.value === 'other') {
       setShowCustomInput(true);
     } else {
-      onRespond(option);
+      onRespond(option.value);
     }
   };
 
@@ -84,9 +85,13 @@ export function UserInputPrompt({
                 onClick={() => handleOptionClick(option)}
                 disabled={isLoading}
                 variant="outline"
-                className="w-full justify-start text-left"
+                className="w-full justify-start text-left flex-col items-start h-auto py-3"
+                title={option.description}
               >
-                {index + 1}️⃣ {option}
+                <span className="font-semibold">{index + 1}️⃣ {option.label}</span>
+                {option.description && (
+                  <span className="text-xs text-gray-500 mt-1">{option.description}</span>
+                )}
               </Button>
             ))}
             

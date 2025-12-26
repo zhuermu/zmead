@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { useChatStore } from '@/lib/store';
 import { useConversationSync } from '@/hooks/useConversationSync';
-import { useFileUpload, type FileAttachment } from '@/hooks/useFileUpload';
+import { useFileUpload, type FileAttachment as UploadedFileAttachment } from '@/hooks/useFileUpload';
 import { MessageBubble } from './MessageBubble';
 import type { Message, AgentStatus } from '@/hooks/useChat';
 
@@ -13,13 +13,8 @@ interface ChatDrawerProps {
   onClose: () => void;
 }
 
-// File attachment interface
-interface FileAttachment {
-  id: string;
-  file: File;
-  preview?: string;
-  type: 'image' | 'video' | 'document' | 'spreadsheet' | 'presentation' | 'text' | 'file';
-}
+// File type categories
+type FileType = 'image' | 'video' | 'document' | 'spreadsheet' | 'presentation' | 'text' | 'file';
 
 // Supported file extensions
 const ACCEPTED_FILE_TYPES = [
@@ -34,7 +29,7 @@ const ACCEPTED_FILE_TYPES = [
 ].join(',');
 
 // Get file type category
-const getFileCategory = (file: File): FileAttachment['type'] => {
+const getFileCategory = (file: File): FileType => {
   const mimeType = file.type.toLowerCase();
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
   if (mimeType.startsWith('image/')) return 'image';
@@ -48,8 +43,8 @@ const getFileCategory = (file: File): FileAttachment['type'] => {
 
 
 // File type icon component
-const FileTypeIcon = ({ type, className = "w-5 h-5" }: { type: FileAttachment['type']; className?: string }) => {
-  const icons: Record<FileAttachment['type'], { color: string; path: string }> = {
+const FileTypeIcon = ({ type, className = "w-5 h-5" }: { type: FileType; className?: string }) => {
+  const icons: Record<FileType, { color: string; path: string }> = {
     image: { color: 'text-green-600', path: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
     video: { color: 'text-purple-600', path: 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z' },
     document: { color: 'text-blue-600', path: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
@@ -147,7 +142,7 @@ export function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   const [isComposing, setIsComposing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
-  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  const [attachments, setAttachments] = useState<UploadedFileAttachment[]>([]);
 
   // Use file upload hook for GCS
   const {

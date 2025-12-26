@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { handleOAuthCallback, mapUserResponse, storeTokens } from '@/lib/auth';
 import { useAuth } from '@/components/auth';
@@ -10,12 +10,30 @@ function OAuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login } = useAuth();
+  // Prevent duplicate callback processing in React StrictMode
+  const hasProcessedCallback = useRef(false);
 
   useEffect(() => {
     const processCallback = async () => {
       const code = searchParams.get('code');
       const state = searchParams.get('state');
       const errorParam = searchParams.get('error');
+
+      // Skip if already processed to prevent duplicate requests
+      if (hasProcessedCallback.current) {
+        console.log('[OAuth Callback] Already processed, skipping duplicate request');
+        return;
+      }
+
+      // Check if this code was already used (store in sessionStorage)
+      const usedCode = sessionStorage.getItem('last_used_oauth_code');
+      if (code && usedCode === code) {
+        console.log('[OAuth Callback] This code was already used, redirecting to login');
+        setError('This login link has expired. Please try logging in again.');
+        return;
+      }
+
+      hasProcessedCallback.current = true;
 
       // Handle OAuth error
       if (errorParam) {
@@ -29,6 +47,11 @@ function OAuthCallbackContent() {
         return;
       }
 
+      // Mark this code as used
+      if (code) {
+        sessionStorage.setItem('last_used_oauth_code', code);
+      }
+
       // Validate state for CSRF protection
       const storedState = sessionStorage.getItem('oauth_state');
       if (state && storedState && state !== storedState) {
@@ -40,7 +63,7 @@ function OAuthCallbackContent() {
       try {
         // Exchange code for tokens
         const authResponse = await handleOAuthCallback(code, state || undefined);
-        
+
         // Store tokens and update auth state
         storeTokens(authResponse.tokens);
         const user = mapUserResponse(authResponse.user);
@@ -50,8 +73,54 @@ function OAuthCallbackContent() {
         const redirectPath = sessionStorage.getItem('redirect_after_login') || '/dashboard';
         sessionStorage.removeItem('redirect_after_login');
         router.push(redirectPath);
-      } catch (err) {
+      } catch (err: any) {
         console.error('OAuth callback error:', err);
+        console.error('OAuth callback error response:', err?.response);
+        console.error('OAuth callback error data:', err?.response?.data);
+
+        // Reset flag to allow retry if needed (e.g., for manual retry button)
+        hasProcessedCallback.current = false;
+
+        // Check multiple possible error structures for PENDING_APPROVAL
+
+        // Structure 1: FastAPI standard - err.response.data.detail
+        const errorDetail = err?.response?.data?.detail || err?.detail;
+        if (errorDetail && typeof errorDetail === 'object' && errorDetail.code === 'PENDING_APPROVAL') {
+          const userEmail = errorDetail.user_email || '';
+          console.log('[OAuth Callback] Redirecting to pending page (FastAPI format):', userEmail);
+          router.push(`/auth/pending?email=${encodeURIComponent(userEmail)}`);
+          return;
+        }
+
+        // Structure 2: Direct response.data
+        const responseData = err?.response?.data;
+        if (responseData && typeof responseData === 'object' && responseData.code === 'PENDING_APPROVAL') {
+          const userEmail = responseData.user_email || '';
+          console.log('[OAuth Callback] Redirecting to pending page (direct format):', userEmail);
+          router.push(`/auth/pending?email=${encodeURIComponent(userEmail)}`);
+          return;
+        }
+
+        // Structure 3: Next.js API route wrapped error - err.response.data.error.message contains stringified dict
+        const errorWrapper = err?.response?.data?.error;
+        if (errorWrapper && errorWrapper.message && typeof errorWrapper.message === 'string') {
+          console.log('[OAuth Callback] Checking error.message:', errorWrapper.message);
+
+          // Check if message contains PENDING_APPROVAL
+          if (errorWrapper.message.includes('PENDING_APPROVAL')) {
+            console.log('[OAuth Callback] Found PENDING_APPROVAL in error message');
+
+            // Try to extract email from the message string
+            // Message format: "{'code': 'PENDING_APPROVAL', ..., 'user_email': 'email@example.com'}"
+            const emailMatch = errorWrapper.message.match(/'user_email':\s*'([^']+)'/);
+            const userEmail = emailMatch ? emailMatch[1] : '';
+
+            console.log('[OAuth Callback] Extracted email from error message:', userEmail);
+            router.push(`/auth/pending?email=${encodeURIComponent(userEmail)}`);
+            return;
+          }
+        }
+
         setError('Failed to complete authentication. Please try again.');
       }
     };

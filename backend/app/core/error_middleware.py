@@ -27,6 +27,25 @@ class GlobalErrorHandlerMiddleware(BaseHTTPMiddleware):
             return response
 
         except Exception as exc:
+            # Check if it's a RateLimitExceeded exception first
+            from app.core.rate_limit import RateLimitExceeded
+
+            if isinstance(exc, RateLimitExceeded):
+                # Handle rate limit exceeded specifically
+                return JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={
+                        "error": {
+                            "message": "Too many requests. Please slow down.",
+                            "code": "RATE_LIMIT_EXCEEDED",
+                            "retry_after": getattr(exc, "retry_after", 60),
+                        }
+                    },
+                    headers={
+                        "Retry-After": str(getattr(exc, "retry_after", 60))
+                    }
+                )
+
             # Log the full error with traceback for debugging
             logger.error(
                 f"❌ Exception caught by GlobalErrorHandlerMiddleware",

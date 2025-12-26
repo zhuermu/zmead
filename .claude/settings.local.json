@@ -129,7 +129,15 @@
       "Bash(for port in 3000 8000 8001)",
       "Bash(do echo \"Port $port:\")",
       "Bash(done)",
-      "Bash(timeout 120 tail:*)"
+      "Bash(timeout 120 tail:*)",
+      "Bash(redis-cli:*)",
+      "Bash(docker exec:*)",
+      "Bash(node test_login_check.mjs:*)",
+      "Bash(mcp__playwright__browser_navigate http://localhost:3000/login)",
+      "Bash(1)",
+      "Bash(npx tsc:*)",
+      "Bash(docker ps:*)",
+      "Bash(timeout 2 tail:*)"
     ],
     "deny": [],
     "ask": []

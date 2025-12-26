@@ -10,8 +10,17 @@ interface User {
   email: string;
   displayName: string;
   avatarUrl?: string;
+  oauthProvider?: string;
   giftedCredits: number;
   purchasedCredits: number;
+  language?: string;
+  timezone?: string;
+  conversationalProvider?: string;
+  conversationalModel?: string;
+  isApproved?: boolean;
+  isSuperAdmin?: boolean;
+  createdAt?: string;
+  lastLoginAt?: string;
 }
 
 interface AuthState {

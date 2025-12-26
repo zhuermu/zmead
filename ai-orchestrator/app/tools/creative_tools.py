@@ -268,13 +268,14 @@ class GenerateImageTool(AgentTool):
                         style=style,
                     )
 
-                    # Return as attachment (unified format)
+                    # Return as attachment (unified format - only path, no presigned URL)
                     image_objects.append({
                         "id": f"image_{idx}_{upload_result['object_name'].split('/')[-1].split('.')[0]}",
                         "filename": filename,
                         "contentType": "image/png",
                         "size": len(image_bytes),
-                        "s3Url": upload_result["object_name"],  # S3 object key for fetching presigned URL
+                        "s3_path": upload_result["object_name"],  # S3 path - frontend will fetch presigned URL
+                        "s3Url": upload_result["object_name"],  # Deprecated: for backward compatibility
                         "type": "image",
                     })
 
@@ -769,7 +770,8 @@ class GenerateVideoTool(AgentTool):
                             "filename": filename,
                             "contentType": "video/mp4",
                             "size": upload_result["size"],
-                            "s3Url": upload_result["object_name"],  # S3 object key for fetching presigned URL
+                            "s3_path": upload_result["object_name"],  # S3 path - frontend will fetch presigned URL
+                            "s3Url": upload_result["object_name"],  # Deprecated: for backward compatibility
                             "type": "video",
                         }]
                         log.info(
@@ -888,7 +890,8 @@ class GenerateVideoTool(AgentTool):
                                 "filename": filename,
                                 "contentType": "video/mp4",
                                 "size": upload_result["size"],
-                                "s3Url": upload_result["object_name"],  # S3 object key for fetching presigned URL
+                                "s3_path": upload_result["object_name"],  # S3 path - frontend will fetch presigned URL
+                                "s3Url": upload_result["object_name"],  # Deprecated: for backward compatibility
                                 "type": "video",
                             }]
                             log.info(

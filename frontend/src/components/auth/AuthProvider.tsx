@@ -46,6 +46,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const refreshUser = useCallback(async () => {
+    // Skip user fetch if on auth pages to prevent redirect loop
+    const isAuthPage = typeof window !== 'undefined' && (
+      window.location.pathname === '/login' ||
+      window.location.pathname === '/auth/callback' ||
+      window.location.pathname === '/auth/pending'
+    );
+
+    if (isAuthPage) {
+      console.log('[AuthProvider] Skipping user fetch on auth page');
+      setIsLoading(false);
+      return;
+    }
+
+    // Skip if no tokens are stored
+    if (!hasStoredTokens()) {
+      console.log('[AuthProvider] No tokens found, skipping user fetch');
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
+
     try {
       // Try to get current user - backend handles dev mode internally
       // If DISABLE_AUTH=true, backend returns a mock user without requiring token
@@ -55,17 +76,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
         email: userData.email,
         displayName: userData.displayName,
         avatarUrl: userData.avatarUrl,
+        oauthProvider: userData.oauthProvider,
         giftedCredits: userData.giftedCredits,
         purchasedCredits: userData.purchasedCredits,
+        language: userData.language,
+        timezone: userData.timezone,
+        conversationalProvider: userData.conversationalProvider,
+        conversationalModel: userData.conversationalModel,
+        isApproved: userData.isApproved,
+        isSuperAdmin: userData.isSuperAdmin,
+        createdAt: userData.createdAt,
+        lastLoginAt: userData.lastLoginAt,
       });
     } catch (error) {
-      // If no token and API call fails, clear auth state
-      if (!hasStoredTokens()) {
-        setUser(null);
-      } else {
-        // Token invalid or expired, clear auth state
-        clearStore();
-      }
+      console.error('[AuthProvider] Failed to refresh user:', error);
+      // Token invalid or expired, clear auth state silently
+      // Don't redirect here - let the API interceptor handle it
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
@@ -82,8 +109,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
       email: userData.email,
       displayName: userData.displayName,
       avatarUrl: userData.avatarUrl,
+      oauthProvider: userData.oauthProvider,
       giftedCredits: userData.giftedCredits,
       purchasedCredits: userData.purchasedCredits,
+      language: userData.language,
+      timezone: userData.timezone,
+      conversationalProvider: userData.conversationalProvider,
+      conversationalModel: userData.conversationalModel,
+      isApproved: userData.isApproved,
+      isSuperAdmin: userData.isSuperAdmin,
+      createdAt: userData.createdAt,
+      lastLoginAt: userData.lastLoginAt,
     });
   }, [setUser]);
 
@@ -101,12 +137,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
       email: user.email,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
-      oauthProvider: 'google',
+      oauthProvider: user.oauthProvider || 'google',
       giftedCredits: user.giftedCredits,
       purchasedCredits: user.purchasedCredits,
-      language: 'en',
-      timezone: 'UTC',
-      createdAt: '',
+      language: user.language || 'en',
+      timezone: user.timezone || 'UTC',
+      conversationalProvider: user.conversationalProvider || 'gemini',
+      conversationalModel: user.conversationalModel || 'gemini-2.5-flash',
+      isApproved: user.isApproved || false,
+      isSuperAdmin: user.isSuperAdmin || false,
+      createdAt: user.createdAt || '',
+      lastLoginAt: user.lastLoginAt,
     } : null,
     isAuthenticated,
     isLoading,

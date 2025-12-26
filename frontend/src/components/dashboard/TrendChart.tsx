@@ -59,14 +59,15 @@ export function TrendChart({ data, loading = false }: TrendChartProps) {
             style={{ fontSize: '12px' }}
             label={{ value: 'ROAS / CPA', angle: 90, position: 'insideRight', style: { fontSize: '12px' } }}
           />
-          <Tooltip 
-            contentStyle={{ 
-              backgroundColor: '#fff', 
+          <Tooltip
+            contentStyle={{
+              backgroundColor: '#fff',
               border: '1px solid #e5e7eb',
               borderRadius: '8px',
               padding: '12px'
             }}
-            formatter={(value: number, name: string) => {
+            formatter={(value: number | undefined, name: string | undefined) => {
+              if (value === undefined || name === undefined) return ['--', name || ''];
               if (name === 'spend') return [`$${value.toFixed(2)}`, 'Spend'];
               if (name === 'roas') return [value.toFixed(2), 'ROAS'];
               if (name === 'cpa') return [`$${value.toFixed(2)}`, 'CPA'];

@@ -19,7 +19,11 @@ uploads_storage = S3Storage(settings.s3_bucket_creatives)
 
 
 class ProcessedAttachment:
-    """Processed attachment result."""
+    """Processed attachment result.
+
+    Note: Only stores storage path, not presigned URLs.
+    URLs should be generated on-demand via /api/v1/storage/presigned-url endpoint.
+    """
 
     def __init__(
         self,
@@ -27,9 +31,7 @@ class ProcessedAttachment:
         filename: str,
         content_type: str,
         size: int,
-        permanent_key: str,
-        permanent_url: str,
-        cdn_url: str,
+        storage_path: str,
         gemini_file_uri: str | None = None,
         gemini_file_name: str | None = None,
     ):
@@ -37,9 +39,7 @@ class ProcessedAttachment:
         self.filename = filename
         self.content_type = content_type
         self.size = size
-        self.permanent_key = permanent_key
-        self.permanent_url = permanent_url
-        self.cdn_url = cdn_url
+        self.storage_path = storage_path  # S3 object key/path
         self.gemini_file_uri = gemini_file_uri
         self.gemini_file_name = gemini_file_name
 
@@ -50,16 +50,14 @@ class ProcessedAttachment:
             "filename": self.filename,
             "contentType": self.content_type,
             "size": self.size,
-            "permanentKey": self.permanent_key,
-            "permanentUrl": self.permanent_url,
-            "cdnUrl": self.cdn_url,
+            "storagePath": self.storage_path,
             "geminiFileUri": self.gemini_file_uri,
             "geminiFileName": self.gemini_file_name,
         }
 
 
 async def process_attachment(
-    gcs_path: str,
+    storage_path: str,
     file_id: str,
     user_id: str,
     filename: str,
@@ -68,13 +66,15 @@ async def process_attachment(
     Process a file attachment that's already in permanent storage.
 
     Steps:
-    1. Download file from storage
-    2. Upload to Gemini Files API
-    3. Generate signed URLs
-    4. Return processed attachment info
+    1. Verify file exists in S3
+    2. Get file metadata
+    3. Upload to Gemini Files API (for AI processing)
+    4. Return processed attachment info (path only, no URLs)
+
+    Note: Presigned URLs should be generated on-demand via API endpoint.
 
     Args:
-        gcs_path: GCS file path (e.g., "{user_id}/chat-attachments/{session_id}/{file_id}.ext")
+        storage_path: S3 file path (e.g., "{user_id}/chat-attachments/{session_id}/{file_id}.ext")
         file_id: Unique file ID
         user_id: User ID (for permission check)
         filename: Original filename
@@ -84,24 +84,33 @@ async def process_attachment(
     """
     try:
         # Verify file belongs to user
-        if not gcs_path.startswith(f"{user_id}/"):
+        if not storage_path.startswith(f"{user_id}/"):
             logger.error(
-                f"Permission denied: file {gcs_path} does not belong to user {user_id}"
+                f"Permission denied: file {storage_path} does not belong to user {user_id}"
             )
             return None
 
         # Check if file exists
-        if not uploads_storage.file_exists(gcs_path):
-            logger.error(f"File not found: {gcs_path}")
+        if not uploads_storage.file_exists(storage_path):
+            logger.error(f"File not found: {storage_path}")
             return None
 
-        # Download from storage
-        file_blob = uploads_storage.bucket.blob(gcs_path)
-        file_data = file_blob.download_as_bytes()
-        content_type = file_blob.content_type or "application/octet-stream"
-        file_size = len(file_data)
+        # Get file info from S3
+        file_info = uploads_storage.get_file_info(storage_path)
+        if not file_info:
+            logger.error(f"Failed to get file info: {storage_path}")
+            return None
 
-        # Upload to Gemini Files API
+        content_type = file_info.get("content_type", "application/octet-stream")
+        file_size = file_info.get("size", 0)
+
+        # Download file data for Gemini upload
+        file_data = uploads_storage.download_file(storage_path)
+        if not file_data:
+            logger.error(f"Failed to download file: {storage_path}")
+            return None
+
+        # Upload to Gemini Files API (for AI processing)
         gemini_file_uri = None
         gemini_file_name = None
 
@@ -120,29 +129,18 @@ async def process_attachment(
         else:
             logger.warning(f"Failed to upload file to Gemini: {filename}")
 
-        # Generate signed URL (valid for 1 hour)
-        permanent_url = uploads_storage.generate_presigned_download_url(
-            key=gcs_path,
-            expires_in=3600,
-        )
-
-        # Get CDN URL
-        cdn_url = uploads_storage.get_cdn_url(gcs_path)
-
         return ProcessedAttachment(
             file_id=file_id,
             filename=filename,
             content_type=content_type,
             size=file_size,
-            permanent_key=gcs_path,
-            permanent_url=permanent_url,
-            cdn_url=cdn_url,
+            storage_path=storage_path,
             gemini_file_uri=gemini_file_uri,
             gemini_file_name=gemini_file_name,
         )
 
     except Exception as e:
-        logger.error(f"Error processing attachment {gcs_path}: {e}", exc_info=True)
+        logger.error(f"Error processing attachment {storage_path}: {e}", exc_info=True)
         return None
 
 
@@ -154,7 +152,7 @@ async def process_attachments(
     Process multiple file attachments.
 
     Args:
-        attachments: List of attachment dicts with gcsPath, fileId, filename
+        attachments: List of attachment dicts with gcsPath/storagePath, fileId, filename
         user_id: User ID for permission check
 
     Returns:
@@ -163,16 +161,17 @@ async def process_attachments(
     processed = []
 
     for attachment in attachments:
-        gcs_path = attachment.get("gcsPath")
+        # Support both old (gcsPath) and new (storagePath) field names
+        storage_path = attachment.get("storagePath") or attachment.get("gcsPath")
         file_id = attachment.get("fileId")
         filename = attachment.get("filename")
 
-        if not gcs_path or not file_id or not filename:
+        if not storage_path or not file_id or not filename:
             logger.warning(f"Invalid attachment: {attachment}")
             continue
 
         result = await process_attachment(
-            gcs_path=gcs_path,
+            storage_path=storage_path,
             file_id=file_id,
             user_id=user_id,
             filename=filename,
@@ -214,9 +213,9 @@ async def process_temp_attachments(
             logger.warning(f"Invalid temp attachment: {temp_file}")
             continue
 
-        # Use fileKey as gcs_path for legacy format
+        # Use fileKey as storage_path for legacy format
         result = await process_attachment(
-            gcs_path=file_key,
+            storage_path=file_key,
             file_id=file_id,
             user_id=user_id,
             filename=filename,

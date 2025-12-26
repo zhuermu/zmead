@@ -143,6 +143,17 @@ class Settings(BaseSettings):
     # Development - Disable authentication for local development
     disable_auth: bool = False
 
+    # Beta Access - Super Admin emails (comma-separated)
+    super_admin_emails: str = Field(default="")
+
+    @computed_field
+    @property
+    def super_admin_list(self) -> list[str]:
+        """Parse comma-separated super admin emails."""
+        if not self.super_admin_emails:
+            return []
+        return [email.strip() for email in self.super_admin_emails.split(",") if email.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:

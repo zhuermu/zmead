@@ -31,6 +31,8 @@ class UserResponse(BaseModel):
     video_generation_provider: str = "sagemaker"
     video_generation_model: str = "wan2.2"
     is_active: bool
+    is_approved: bool = False
+    is_super_admin: bool = False  # Computed field, not stored in DB
     created_at: datetime
     updated_at: datetime | None = None
     last_login_at: datetime | None = None
@@ -187,3 +189,42 @@ class ModelPreferencesUpdateRequest(BaseModel):
     video_generation_model: str | None = Field(
         None, min_length=1, max_length=100, description="Specific video generation model ID"
     )
+
+
+# ============================================================================
+# Admin User Management Schemas
+# ============================================================================
+
+class AdminUserListItem(BaseModel):
+    """User list item for admin panel (simplified view)."""
+
+    id: int
+    email: EmailStr
+    display_name: str
+    avatar_url: str | None = None
+    oauth_provider: str
+    total_credits: Decimal
+    is_active: bool
+    is_approved: bool
+    is_super_admin: bool
+    created_at: datetime
+    last_login_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class AdminUserListResponse(BaseModel):
+    """Paginated user list response for admin."""
+
+    users: list[AdminUserListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class UserApprovalRequest(BaseModel):
+    """Request to approve/reject a user."""
+
+    approved: bool = Field(description="True to approve, False to reject/revoke")
+    note: str | None = Field(None, max_length=500, description="Optional admin note")

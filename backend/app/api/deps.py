@@ -168,3 +168,26 @@ async def verify_service_token(
 
 # Type alias for service token verification
 ServiceTokenVerified = Annotated[bool, Depends(verify_service_token)]
+
+
+def is_super_admin(email: str) -> bool:
+    """Check if email is in super admin list."""
+    return email.lower() in [e.lower() for e in settings.super_admin_list]
+
+
+async def get_current_super_admin(current_user: CurrentUser) -> User:
+    """Get current user and verify they are a super admin.
+
+    Raises:
+        HTTPException: If user is not a super admin
+    """
+    if not is_super_admin(current_user.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required",
+        )
+    return current_user
+
+
+# Type alias for super admin verification
+CurrentSuperAdmin = Annotated[User, Depends(get_current_super_admin)]

@@ -23,11 +23,10 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class FileAttachment(BaseModel):
     """File attachment for chat messages."""
 
-    gcs_path: str = Field(..., description="GCS object path")
+    s3_path: str = Field(..., description="S3 object path (key)")
     filename: str = Field(..., description="Original filename")
     content_type: str = Field(..., description="MIME type")
     file_size: int = Field(..., description="File size in bytes")
-    download_url: str | None = Field(None, description="Signed download URL")
 
 
 class TempFileAttachment(BaseModel):
@@ -109,13 +108,13 @@ async def chat_stream(
             logger.info(f"Processing {len(msg.attachments)} attachments for message")
 
             # Convert attachments to dict format for AI orchestrator
+            # Note: Only store S3 paths, not presigned URLs
             processed_msg["attachments"] = [
                 {
-                    "gcs_path": att.gcs_path,
+                    "s3_path": att.s3_path,
                     "filename": att.filename,
                     "content_type": att.content_type,
                     "file_size": att.file_size,
-                    "download_url": att.download_url,
                 }
                 for att in msg.attachments
             ]

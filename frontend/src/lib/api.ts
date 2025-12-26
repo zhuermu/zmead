@@ -57,10 +57,21 @@ api.interceptors.response.use(
           return api(originalRequest);
         }
       } catch {
-        // Refresh failed, clear tokens and redirect to login
+        // Refresh failed, clear tokens
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
-        window.location.href = '/login';
+
+        // Only redirect to login if not already on an auth page
+        if (typeof window !== 'undefined') {
+          const currentPath = window.location.pathname;
+          const isAuthPage = currentPath === '/login' ||
+                             currentPath === '/auth/callback' ||
+                             currentPath === '/auth/pending';
+
+          if (!isAuthPage) {
+            window.location.href = '/login';
+          }
+        }
       }
     }
     

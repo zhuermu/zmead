@@ -48,6 +48,9 @@ async def oauth_callback(
     auth_service = AuthService(db)
     try:
         return await auth_service.authenticate_with_google(request.code)
+    except HTTPException:
+        # Re-raise HTTPException as-is (e.g., PENDING_APPROVAL error)
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -65,6 +68,9 @@ async def oauth_callback_get(
     auth_service = AuthService(db)
     try:
         return await auth_service.authenticate_with_google(code)
+    except HTTPException:
+        # Re-raise HTTPException as-is (e.g., PENDING_APPROVAL error)
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -100,6 +106,8 @@ async def logout(current_user: CurrentUser) -> dict[str, str]:
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(current_user: CurrentUser) -> UserResponse:
     """Get current authenticated user information."""
+    from app.api.deps import is_super_admin
+
     return UserResponse(
         id=current_user.id,
         email=current_user.email,
@@ -111,7 +119,11 @@ async def get_current_user_info(current_user: CurrentUser) -> UserResponse:
         total_credits=current_user.total_credits,
         language=current_user.language,
         timezone=current_user.timezone,
+        conversational_provider=current_user.conversational_provider,
+        conversational_model=current_user.conversational_model,
         is_active=current_user.is_active,
+        is_approved=current_user.is_approved,
+        is_super_admin=is_super_admin(current_user.email),
         created_at=current_user.created_at,
         last_login_at=current_user.last_login_at,
     )
@@ -120,18 +132,20 @@ async def get_current_user_info(current_user: CurrentUser) -> UserResponse:
 @router.post("/dev/login", response_model=AuthResponse)
 async def dev_login(db: DbSession) -> AuthResponse:
     """Development-only login endpoint that bypasses OAuth.
-    
+
     Only available when DISABLE_AUTH=true in environment.
     Creates or returns a test user with tokens.
     """
+    from app.api.deps import is_super_admin
+
     if not settings.disable_auth:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Development login is only available when DISABLE_AUTH is enabled",
         )
-    
+
     auth_service = AuthService(db)
-    
+
     # Get or create dev user
     user, _ = await auth_service.get_or_create_user(
         oauth_provider="dev",
@@ -140,10 +154,16 @@ async def dev_login(db: DbSession) -> AuthResponse:
         display_name="Dev User",
         avatar_url=None,
     )
-    
+
+    # Dev users are always approved
+    if not user.is_approved:
+        user.is_approved = True
+        await db.flush()
+        await db.commit()
+
     # Create tokens
     tokens = auth_service.create_tokens(user)
-    
+
     return AuthResponse(
         tokens=tokens,
         user=UserResponse(
@@ -157,7 +177,11 @@ async def dev_login(db: DbSession) -> AuthResponse:
             total_credits=user.total_credits,
             language=user.language,
             timezone=user.timezone,
+            conversational_provider=user.conversational_provider,
+            conversational_model=user.conversational_model,
             is_active=user.is_active,
+            is_approved=user.is_approved,
+            is_super_admin=is_super_admin(user.email),
             created_at=user.created_at,
             last_login_at=user.last_login_at,
         ),

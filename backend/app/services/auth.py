@@ -87,6 +87,8 @@ class AuthService:
         avatar_url: str | None = None,
     ) -> tuple[User, bool]:
         """Get existing user or create new one. Returns (user, is_new)."""
+        from app.api.deps import is_super_admin
+
         # Try to find existing user by OAuth ID
         stmt = select(User).where(
             User.oauth_provider == oauth_provider,
@@ -98,6 +100,11 @@ class AuthService:
         if user:
             # Update last login
             user.last_login_at = datetime.now(UTC)
+
+            # Auto-approve super admins
+            if is_super_admin(user.email) and not user.is_approved:
+                user.is_approved = True
+
             await self.db.flush()
             return user, False
 
@@ -113,10 +120,18 @@ class AuthService:
             existing_user.last_login_at = datetime.now(UTC)
             if avatar_url and not existing_user.avatar_url:
                 existing_user.avatar_url = avatar_url
+
+            # Auto-approve super admins
+            if is_super_admin(existing_user.email) and not existing_user.is_approved:
+                existing_user.is_approved = True
+
             await self.db.flush()
             return existing_user, False
 
         # Create new user with registration bonus
+        # Super admins are auto-approved
+        is_admin = is_super_admin(email)
+
         new_user = User(
             email=email,
             display_name=display_name,
@@ -126,6 +141,7 @@ class AuthService:
             gifted_credits=Decimal("500.00"),  # Registration bonus
             purchased_credits=Decimal("0.00"),
             last_login_at=datetime.now(UTC),
+            is_approved=is_admin,  # Auto-approve super admins
         )
         self.db.add(new_user)
         await self.db.flush()
@@ -144,7 +160,14 @@ class AuthService:
         )
 
     async def authenticate_with_google(self, code: str) -> AuthResponse:
-        """Complete Google OAuth flow and return auth response."""
+        """Complete Google OAuth flow and return auth response.
+
+        Raises:
+            HTTPException: If user is not approved (status 403)
+        """
+        from fastapi import HTTPException, status
+        from app.api.deps import is_super_admin
+
         # Exchange code for tokens
         token_data = await self.exchange_google_code(code)
         google_access_token = token_data["access_token"]
@@ -160,6 +183,20 @@ class AuthService:
             display_name=user_info.name,
             avatar_url=user_info.picture,
         )
+
+        # Commit the database transaction to save user changes
+        await self.db.commit()
+
+        # Check if user is approved (unless they're a super admin)
+        if not user.is_approved and not is_super_admin(user.email):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PENDING_APPROVAL",
+                    "message": "Your account is pending approval. Please wait for an administrator to approve your access.",
+                    "user_email": user.email,
+                },
+            )
 
         # Create JWT tokens
         tokens = self.create_tokens(user)
@@ -177,7 +214,11 @@ class AuthService:
                 total_credits=user.total_credits,
                 language=user.language,
                 timezone=user.timezone,
+                conversational_provider=user.conversational_provider,
+                conversational_model=user.conversational_model,
                 is_active=user.is_active,
+                is_approved=user.is_approved,
+                is_super_admin=is_super_admin(user.email),
                 created_at=user.created_at,
                 last_login_at=user.last_login_at,
             ),

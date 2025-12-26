@@ -34,7 +34,11 @@ class UserResponse(BaseModel):
     total_credits: Decimal
     language: str
     timezone: str
+    conversational_provider: str = "gemini"
+    conversational_model: str = "gemini-2.5-flash"
     is_active: bool
+    is_approved: bool = False
+    is_super_admin: bool = False  # Computed field, not stored in DB
     created_at: datetime
     last_login_at: datetime | None = None
 

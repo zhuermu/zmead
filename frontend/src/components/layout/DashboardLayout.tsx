@@ -104,6 +104,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   // Sidebar collapsed state: collapsed when chat is open on large screens
   const sidebarCollapsed = chatOpen;
 
+  // Redirect to pending page if user is logged in but not approved
+  useEffect(() => {
+    if (user && !user.isApproved) {
+      // Only redirect if not already on pending page
+      if (typeof window !== 'undefined' && window.location.pathname !== '/auth/pending') {
+        window.location.href = `/auth/pending?email=${encodeURIComponent(user.email)}`;
+      }
+    }
+  }, [user]);
+
   // Keyboard shortcut: Cmd+K or Ctrl+K to open chat
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -210,6 +220,49 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </Link>
             );
           })}
+
+          {/* Admin menu - only visible to super admins */}
+          {user?.isSuperAdmin && (
+            <Link
+              href="/admin/users"
+              className={`
+                flex items-center rounded-lg text-sm font-medium transition-all duration-300 group relative
+                ${sidebarCollapsed
+                  ? 'lg:justify-center lg:px-0 lg:py-3 px-4 py-3 gap-3'
+                  : 'px-4 py-3 gap-3'
+                }
+                ${
+                  pathname.startsWith('/admin')
+                    ? 'bg-purple-50 text-purple-600'
+                    : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                }
+              `}
+              onClick={() => setSidebarOpen(false)}
+              title={sidebarCollapsed ? 'User Management' : undefined}
+            >
+              <span className="flex-shrink-0">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              </span>
+              <span className={`
+                transition-opacity duration-300 whitespace-nowrap
+                ${sidebarCollapsed ? 'lg:hidden' : ''}
+              `}>
+                User Management
+              </span>
+              {/* Tooltip for collapsed state */}
+              {sidebarCollapsed && (
+                <span className="
+                  absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-xs rounded
+                  opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap
+                  pointer-events-none z-50 hidden lg:block
+                ">
+                  User Management
+                </span>
+              )}
+            </Link>
+          )}
         </nav>
 
         {/* Expand/Collapse button for sidebar (only on desktop when chat is open) */}
@@ -248,37 +301,37 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
             {/* Right side */}
             <div className="flex items-center gap-4 ml-auto">
-              {/* Notifications dropdown */}
-              <NotificationDropdown />
-
-              {/* User menu */}
+              {/* Only show notifications and user menu when authenticated */}
               {user && (
-                <div className="flex items-center gap-3">
-                  {user.avatarUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={user.avatarUrl}
-                      alt={user.displayName}
-                      className="w-8 h-8 rounded-full"
-                    />
-                  ) : (
-                    <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-medium text-gray-600">
-                        {user.displayName.charAt(0).toUpperCase()}
-                      </span>
+                <>
+                  <NotificationDropdown />
+                  <div className="flex items-center gap-3">
+                    {user.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={user.avatarUrl}
+                        alt={user.displayName}
+                        className="w-8 h-8 rounded-full"
+                      />
+                    ) : (
+                      <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
+                        <span className="text-sm font-medium text-gray-600">
+                          {user.displayName.charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                    )}
+                    <div className={`hidden sm:block transition-opacity duration-300 ${chatOpen ? 'lg:hidden xl:block' : ''}`}>
+                      <p className="text-sm font-medium text-gray-700">{user.displayName}</p>
+                      <p className="text-xs text-gray-500">{user.email}</p>
                     </div>
-                  )}
-                  <div className={`hidden sm:block transition-opacity duration-300 ${chatOpen ? 'lg:hidden xl:block' : ''}`}>
-                    <p className="text-sm font-medium text-gray-700">{user.displayName}</p>
-                    <p className="text-xs text-gray-500">{user.email}</p>
+                    <button
+                      onClick={logout}
+                      className={`hidden sm:block px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors ${chatOpen ? 'lg:hidden xl:block' : ''}`}
+                    >
+                      Logout
+                    </button>
                   </div>
-                  <button
-                    onClick={logout}
-                    className={`hidden sm:block px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors ${chatOpen ? 'lg:hidden xl:block' : ''}`}
-                  >
-                    Logout
-                  </button>
-                </div>
+                </>
               )}
             </div>
           </div>

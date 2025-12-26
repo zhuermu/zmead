@@ -15,6 +15,8 @@ export interface User {
   timezone: string;
   conversationalProvider: string;
   conversationalModel: string;
+  isApproved: boolean;
+  isSuperAdmin: boolean;
   createdAt: string;
   lastLoginAt?: string;
 }

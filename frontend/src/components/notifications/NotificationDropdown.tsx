@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Notification } from '@/types';
+import { api } from '@/lib/api';
 
 interface NotificationDropdownProps {
   className?: string;
@@ -48,14 +49,9 @@ export function NotificationDropdown({ className = '' }: NotificationDropdownPro
   const fetchNotifications = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/v1/notifications?limit=10', {
-        credentials: 'include',
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setNotifications(data.notifications || []);
-        setUnreadCount(data.unread_count || 0);
-      }
+      const response = await api.get('/notifications?limit=10');
+      setNotifications(response.data.items || []);
+      setUnreadCount(response.data.unread_count || 0);
     } catch (error) {
       console.error('Failed to fetch notifications:', error);
     } finally {
@@ -65,13 +61,8 @@ export function NotificationDropdown({ className = '' }: NotificationDropdownPro
 
   const fetchUnreadCount = async () => {
     try {
-      const response = await fetch('/api/v1/notifications/unread', {
-        credentials: 'include',
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setUnreadCount(data.unread_count || 0);
-      }
+      const response = await api.get('/notifications/unread');
+      setUnreadCount(response.data.unread_count || 0);
     } catch (error) {
       console.error('Failed to fetch unread count:', error);
     }
@@ -79,19 +70,14 @@ export function NotificationDropdown({ className = '' }: NotificationDropdownPro
 
   const markAsRead = async (notificationId: number) => {
     try {
-      const response = await fetch(`/api/v1/notifications/${notificationId}/read`, {
-        method: 'PUT',
-        credentials: 'include',
-      });
-      if (response.ok) {
-        // Update local state
-        setNotifications(prev =>
-          prev.map(n =>
-            n.id === notificationId ? { ...n, isRead: true, readAt: new Date().toISOString() } : n
-          )
-        );
-        setUnreadCount(prev => Math.max(0, prev - 1));
-      }
+      await api.put(`/notifications/${notificationId}/read`);
+      // Update local state
+      setNotifications(prev =>
+        prev.map(n =>
+          n.id === notificationId ? { ...n, isRead: true, readAt: new Date().toISOString() } : n
+        )
+      );
+      setUnreadCount(prev => Math.max(0, prev - 1));
     } catch (error) {
       console.error('Failed to mark notification as read:', error);
     }

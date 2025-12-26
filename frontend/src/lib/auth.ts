@@ -28,7 +28,11 @@ export interface UserApiResponse {
   total_credits: number;
   language: string;
   timezone: string;
+  conversational_provider: string;
+  conversational_model: string;
   is_active: boolean;
+  is_approved: boolean;
+  is_super_admin: boolean;
   created_at: string;
   last_login_at: string | null;
 }
@@ -47,6 +51,10 @@ export function mapUserResponse(apiUser: UserApiResponse): User {
     purchasedCredits: apiUser.purchased_credits,
     language: apiUser.language,
     timezone: apiUser.timezone,
+    conversationalProvider: apiUser.conversational_provider,
+    conversationalModel: apiUser.conversational_model,
+    isApproved: apiUser.is_approved,
+    isSuperAdmin: apiUser.is_super_admin,
     createdAt: apiUser.created_at,
     lastLoginAt: apiUser.last_login_at ?? undefined,
   };

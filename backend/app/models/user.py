@@ -71,6 +71,8 @@ class User(Base):
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_super_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(
